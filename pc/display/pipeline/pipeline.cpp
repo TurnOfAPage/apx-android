@@ -137,10 +137,16 @@ bool Pipeline::start(const PipelineConfig& cfg, std::string* err) {
         monitor_->onReset = [this] { return transport_ && transport_->reset(); };
         monitor_->onReconnect = [this] {
             if (!transport_) return false;
+            // CAS 门禁：encodeThread 也可能独立判定断线并重连，两者必须串行
+            if (reconnecting_.exchange(true)) {
+                APX_LOG_I("另一条路径已在重连，跳过本次 LinkMonitor 重连");
+                return false;
+            }
             transport_->close();
             const bool ok = transport_->open(spec_);
-            if (ok && !handshake(nullptr)) return false;
-            return ok;
+            const bool hsOk = ok && (!cfg_.enableHandshake || handshake(nullptr));
+            reconnecting_.store(false);
+            return ok && hsOk;
         };
         monitor_->start();
     }
@@ -341,15 +347,27 @@ void Pipeline::encodeThread() {
             // v1.10：no-handshake 模式（心跳禁用）下发送连续失败 = 链路真断
             // （WiFi 抖动/手机端断开）——自动重连，否则永久黑屏（真机「推一会
             // 就断」根因）。手机端 EOF 后会重新 accept，两端天然握手。
+            // v1.11：加 CAS 门禁 —— LinkMonitor（心跳）与 encodeThread（发送失败）
+            // 可能独立触发重连，两者共享同一 transport_ 实例，并发 close()+open()
+            // 会互相踩 socket（后到者把先到者刚建好的关掉）。同一时刻只允许一个重连者。
             if (++sendFailStreak_ >= 30) {
                 sendFailStreak_ = 0;
-                APX_LOG_W("连续 30 帧发送失败，尝试重连传输…");
-                transport_->close();
-                if (transport_->open(spec_)) {
-                    APX_LOG_I("传输重连成功，恢复推流");
-                    frameWriter_->setMaxFragment(cfg_.maxFragmentBytes);
+                if (!reconnecting_.exchange(true)) {
+                    APX_LOG_W("连续 30 帧发送失败，尝试重连传输…");
+                    transport_->close();
+                    const bool ok = transport_->open(spec_);
+                    if (ok) {
+                        APX_LOG_I("传输重连成功，恢复推流");
+                        frameWriter_->setMaxFragment(cfg_.maxFragmentBytes);
+                        if (cfg_.enableHandshake && !handshake(nullptr)) {
+                            APX_LOG_E("重连后握手失败：%s", lastError());
+                        }
+                    } else {
+                        APX_LOG_E("重连失败：%s（继续尝试）", transport_->lastError().c_str());
+                    }
+                    reconnecting_.store(false);
                 } else {
-                    APX_LOG_E("重连失败：%s（继续尝试）", transport_->lastError().c_str());
+                    APX_LOG_W("连续 30 帧发送失败，但 LinkMonitor 已在重连，等待…");
                 }
             }
         } else {
