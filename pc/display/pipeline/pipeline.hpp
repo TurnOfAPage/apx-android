@@ -146,6 +146,13 @@ private:
     ClockSync clock_{};
     uint32_t sendFailStreak_ = 0;   // v1.10：连续发送失败计数（触发自动重连）
     uint32_t slowEncodeStreak_ = 0; // v1.10：编码缓慢连续计数（触发编码器重建自愈）
+    // v1.11：close()+open() 互斥门禁 —— LinkMonitor 和 encodeThread 可能独立判定断线
+    // 并同时发起重连，两者共享同一 transport_ 实例，并发 close()/open() 会导致：
+    //   • 后到的 close() 把先到者刚建好的 socket 关掉；
+    //   • 服务端模式下一个在 listenAndAccept 阻塞、另一个去 close 它但发现 opened_ 仍为 true，
+    //     然后 listen_ 已被前一个 close() 关闭 —— 永久阻塞。
+    // 用 test-and-set 确保同一时刻只有一个重连者；后来者 CAS 失败直接放弃，等下一轮再试。
+    std::atomic<bool> reconnecting_{false};
     VideoParams usedVp_{};          // v1.10：实际生效的编码参数（抓屏尺寸优先）
     // v1.10：真实帧率统计——fpsActual 此前从未被赋值（统计行恒显示 0.0 fps，
     // 真机 2026-09-21 21:05）。按 500ms 滑窗统计发送帧数换算 fps。
