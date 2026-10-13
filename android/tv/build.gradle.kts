@@ -5,22 +5,20 @@ plugins {
 
 android {
     namespace = "com.allperiph.tv"
-    // Kotlin 侧不需要 JNI 也能跑（ServerSocket + 自绘 UI），
-    // 只有**虚拟手柄**需要一小段 C：`/dev/uinput` 必须用 ioctl 建虚拟设备，
-    // 纯 Java 做不到。它只依赖系统头 + liblog，不引入任何第三方依赖。
     compileSdk = 34
 
     defaultConfig {
         applicationId = "com.allperiph.tv"
-        // 老 Android TV 兼容底线：API 23（Android 6.0）。leanback 界面与
-        // ServerSocket / 前台服务在 23 上均可用；不引用任何 23 之后才引入的 API。
         minSdk = 23
         targetSdk = 34
         versionCode = 1
         versionName = "0.1.0"
+        // Android 14 要求 foregroundService 必须声明类型，否则 startForeground() 会抛异常
+        // TV 端用 connectedDevice（与手机端一致），允许在被控时保持前台服务
+        manifestPlaceholders["foregroundServiceType"] = "connectedDevice"
     }
 
-    // 复用主工程自签 keystore，便于产生可安装 release（与主 app 同源证书体系）
+    // 复用主工程自签 keystore
     signingConfigs {
         create("release") {
             storeFile = file("../apx-release.keystore")
@@ -35,13 +33,10 @@ android {
             signingConfig = signingConfigs.getByName("release")
         }
         debug {
-            // 调试包也用同源证书，避免与 release 重装冲突
             signingConfig = signingConfigs.getByName("release")
         }
     }
 
-    // API 23 运行时不支持 Java 9+ 标准库 API；本模块只用 framework + Kotlin 标准库，
-    // 不引入 Java 8 流式/时间 API，故无需 coreLibraryDesugaring。
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -55,8 +50,6 @@ android {
         buildConfig = true
     }
 
-    // 虚拟手柄（uinput）：存在性判断 —— 文件缺失时本模块仍可独立编译，
-    // 只是摇杆不可用（按钮仍走 evdev / root）。
     if (file("src/main/cpp/CMakeLists.txt").exists()) {
         externalNativeBuild {
             cmake {
@@ -65,13 +58,11 @@ android {
         }
     }
 
-    // v1.7：lint 误报会阻塞发布质量把关，手工 review 替代
     lint {
         checkReleaseBuilds = false
     }
 }
 
-// 与 :app 一致：零第三方依赖，仅 framework API
 dependencies {
     implementation(project(":shared"))
 }
