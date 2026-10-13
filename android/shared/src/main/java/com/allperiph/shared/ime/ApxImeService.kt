@@ -47,7 +47,13 @@ class ApxImeService : InputMethodService() {
         /** 当前系统输入法是不是我们（是 → 文本可以走最稳的 InputConnection） */
         fun isActive(): Boolean = instance != null
 
-        /** 往当前聚焦输入框提交文本；必须在主线程调用（被控服务端已切主线程） */
+        /**
+         * 往当前聚焦输入框提交文本；必须在主线程调用（被控服务端已切主线程）
+         *
+         * ⚠️ currentInputConnection 可能为 null（输入框失焦或窗口切换时系统会回收），
+         *    此时 return false 让调用方走 fallback（无障碍/粘贴），不抛异常。
+         *    InputMethodService 的 InputConnection 由系统持有，调用方不能假设它永远非空。
+         */
         fun commit(text: String): Boolean {
             if (text.isEmpty()) return false
             val s = instance ?: return false
