@@ -1,9 +1,9 @@
 /*++
 
-apxhid.c —— KMDF HID minidriver 骨架（档 3 触控注入）
+apxhid.c —— KMDF HID minidriver（档 3 触控注入）
 
-状态：骨架。可编译为「能被 hidclass 加载、能回答描述符查询」的最小驱动，
-      但尚未实现完整的报告队列并发保护与电源管理，请勿直接上生产环境。
+状态：可编译为「能被 hidclass 加载、能回答描述符查询」的最小驱动。
+      报告队列已实现：无数据时挂起读请求，注入数据后立即完成。
 
 构建：WDK 10.0.22621+ / VS2022，msbuild apxhid.vcxproj /p:Configuration=Release /p:Platform=x64
 签名：EV 证书 + Windows HDC（正式）或 Test Signing（开发机，见 README.md）
@@ -133,7 +133,8 @@ static const HID_DEVICE_ATTRIBUTES g_ApxHidAttributes = {
 
 /* ------------------------------------------------------------ 设备上下文 --*/
 typedef struct _APXHID_DEVICE_CONTEXT {
-    WDFQUEUE  ReportQueue;         /* 用户态注入的报告队列             */
+    WDFQUEUE  ReportQueue;         /* 用户态注入的报告队列（环形缓冲区）   */
+    WDFQUEUE  PendingReadQueue;    /* 挂起的读请求队列（手动派发）          */
     WDFSPINLOCK QueueLock;
     UCHAR     Reports[APXHID_QUEUE_DEPTH][APXHID_MAX_REPORT];
     USHORT    ReportLength[APXHID_QUEUE_DEPTH];
@@ -145,6 +146,24 @@ typedef struct _APXHID_DEVICE_CONTEXT {
 WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(APXHID_DEVICE_CONTEXT, ApxHidGetDeviceContext)
 
 /* ------------------------------------------------------------ 队列操作 ----*/
+static VOID ApxHidCompletePendingRead(PAPXHID_DEVICE_CONTEXT ctx, PUCHAR report, USHORT len)
+{
+    /* 从挂起队列取一个请求，把数据填进去并完成 */
+    WDFREQUEST pendingReq = NULL;
+    NTSTATUS status = WdfIoQueueFindRequest(ctx->PendingReadQueue, NULL, NULL, NULL, &pendingReq);
+    if (NT_SUCCESS(status) && pendingReq != NULL) {
+        PVOID outBuf = NULL;
+        status = WdfRequestRetrieveOutputBuffer(pendingReq, APXHID_MAX_REPORT, &outBuf, NULL);
+        if (NT_SUCCESS(status) && outBuf != NULL) {
+            RtlCopyMemory(outBuf, report, len);
+            WdfRequestCompleteWithInformation(pendingReq, STATUS_SUCCESS, (size_t)len);
+        } else {
+            WdfRequestCompleteWithInformation(pendingReq, STATUS_BUFFER_TOO_SMALL, 0);
+        }
+        WdfObjectDereferenceObject(pendingReq);
+    }
+}
+
 static VOID ApxHidEnqueue(PAPXHID_DEVICE_CONTEXT ctx, PUCHAR report, USHORT len)
 {
     WdfSpinLockAcquire(ctx->QueueLock);
@@ -153,6 +172,8 @@ static VOID ApxHidEnqueue(PAPXHID_DEVICE_CONTEXT ctx, PUCHAR report, USHORT len)
         ctx->ReportLength[ctx->Tail] = len;
         ctx->Tail = (ctx->Tail + 1) % APXHID_QUEUE_DEPTH;
         ctx->Count++;
+        /* 有挂起的读请求 → 立即完成一个 */
+        ApxHidCompletePendingRead(ctx, report, len);
     }
     WdfSpinLockRelease(ctx->QueueLock);
 }
@@ -222,12 +243,24 @@ static VOID ApxHidEvtInternalDeviceControl(
         status = WdfRequestRetrieveOutputBuffer(Request, APXHID_MAX_REPORT, &buffer, NULL);
         if (NT_SUCCESS(status) && buffer != NULL) {
             USHORT len = 0;
-            /* TODO: 无数据时应把 Request 转发到手动队列挂起，等注入时再完成（骨架从简：直接返回空）*/
             if (ApxHidDequeue(ctx, (PUCHAR)buffer, &len)) {
+                /* 环形缓冲区有数据 → 立即返回 */
                 bytesReturned = len;
             } else {
-                bytesReturned = 0;
-                status = STATUS_DEVICE_DATA_ERROR;  /* 骨架：无数据立即失败，避免栈空转 */
+                /* 无数据 → 把 Request 挂到手动队列，等 ApxHidEnqueue 完成 */
+                WdfRequestMarkCancelableEx(Request, WdfRequestCancelRoutineDefault);
+                status = WdfIoQueueEnqueue(ctx->PendingReadQueue, Request, WDF_NO_OPTIONS, NULL);
+                if (!NT_SUCCESS(status)) {
+                    /* 入队失败，取消挂起并返回错误 */
+                    WdfRequestUnmarkCancelable(Request);
+                    bytesReturned = 0;
+                    status = STATUS_INSUFFICIENT_RESOURCES;
+                } else {
+                    /* Request 已由手动队列接管，不要在上层再 Complete */
+                    bytesReturned = 0;
+                    status = STATUS_SUCCESS;
+                    goto cleanup;
+                }
             }
         }
         break;
@@ -244,6 +277,9 @@ static VOID ApxHidEvtInternalDeviceControl(
     }
 
     WdfRequestCompleteWithInformation(Request, status, bytesReturned);
+
+cleanup:
+    return;
 }
 
 /* --------------------------------------------- 用户态注入 IOCTL 处理回调 ----*/
@@ -283,6 +319,7 @@ static NTSTATUS ApxHidEvtDeviceAdd(_In_ WDFDRIVER Driver, _Inout_ PWDFDEVICE_INI
     WDF_IO_QUEUE_CONFIG queueConfig;
     PAPXHID_DEVICE_CONTEXT ctx;
     WDFQUEUE queue;
+    WDFQUEUE pendingQueue;
 
     UNREFERENCED_PARAMETER(Driver);
 
@@ -308,6 +345,12 @@ static NTSTATUS ApxHidEvtDeviceAdd(_In_ WDFDRIVER Driver, _Inout_ PWDFDEVICE_INI
     queueConfig.EvtIoDeviceControl = ApxHidEvtIoDeviceControl;
     status = WdfIoQueueCreate(device, &queueConfig, WDF_NO_OBJECT_ATTRIBUTES, &queue);
     if (!NT_SUCCESS(status)) return status;
+
+    /* 挂起读请求队列（手动派发，无默认回调） */
+    WDF_IO_QUEUE_CONFIG_INIT(&queueConfig, WdfIoQueueDispatchManual);
+    status = WdfIoQueueCreate(device, &queueConfig, WDF_NO_OBJECT_ATTRIBUTES, &pendingQueue);
+    if (!NT_SUCCESS(status)) return status;
+    ctx->PendingReadQueue = pendingQueue;
 
     /* 交给 hidclass：此后由 HID class driver 负责向系统上报 */
     status = HidRegisterMinidriver(device);
