@@ -11,6 +11,11 @@
 #include <netioapi.h>
 #pragma comment(lib, "iphlpapi.lib")
 #pragma comment(lib, "ws2_32.lib")
+// Windows 平台类型适配
+using apx_socket_t = SOCKET;
+constexpr apx_socket_t APX_INVALID_SOCKET = INVALID_SOCKET;
+using apx_socklen_t = int;
+using apx_dword_t = DWORD;
 #else
 #include <arpa/inet.h>
 #include <ifaddrs.h>
@@ -19,6 +24,12 @@
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <cerrno>
+// Linux 平台类型适配
+using apx_socket_t = int;
+constexpr apx_socket_t APX_INVALID_SOCKET = -1;
+using apx_socklen_t = socklen_t;
+using apx_dword_t = uint32_t;
 #endif
 
 #include "apxdisp/transport/i_transport.hpp"
@@ -35,6 +46,15 @@
 namespace apxdisp {
 
 namespace {
+
+// 平台无关的 close
+inline void apx_close_socket(apx_socket_t s) {
+#ifdef _WIN32
+    closesocket(s);
+#else
+    close(s);
+#endif
+}
 
 struct FrameHeader {
     uint8_t  magic[4];   // "APXN"
@@ -59,35 +79,30 @@ inline uint32_t decodeLength(const uint8_t* in) {
 
 class NcmChannel : public IChannel {
 public:
-    NcmChannel(SOCKET sock, uint8_t sid, bool reliable)
+    NcmChannel(apx_socket_t sock, uint8_t sid, bool reliable)
         : sock_(sock), sid_(sid), reliable_(reliable) {}
 
     size_t write(const uint8_t* data, size_t len, uint32_t timeoutMs) override {
-        if (sock_ == INVALID_SOCKET) return 0;
-        DWORD t = timeoutMs;
+        if (sock_ == APX_INVALID_SOCKET) return 0;
+        apx_dword_t t = timeoutMs;
         setsockopt(sock_, SOL_SOCKET, SO_SNDTIMEO, (const char*)&t, sizeof(t));
 
         uint8_t hdr[kFrameHeaderSize] = {'A','P','X','N', sid_, 0,0,0};
-        encodeLength(hdr + 3, (uint32_t)len);
-        // 修正：magic 占4字节，streamId 在索引4，长度在索引5-7
         hdr[4] = sid_;
         encodeLength(hdr + 5, (uint32_t)len);
 
         size_t sent = 0;
-        // 先发头
         while (sent < 5) {
             int n = send(sock_, (const char*)(hdr + sent), (int)(5 - sent), 0);
             if (n <= 0) return 0;
             sent += n;
         }
-        // 再发3字节长度
         sent = 0;
         while (sent < 3) {
             int n = send(sock_, (const char*)(hdr + 5 + sent), (int)(3 - sent), 0);
             if (n <= 0) return 0;
             sent += n;
         }
-        // 发数据
         sent = 0;
         while (sent < len) {
             int n = send(sock_, (const char*)(data + sent), (int)(len - sent), 0);
@@ -98,8 +113,8 @@ public:
     }
 
     size_t read(uint8_t* buf, size_t cap, uint32_t timeoutMs) override {
-        if (sock_ == INVALID_SOCKET) return 0;
-        DWORD t = timeoutMs;
+        if (sock_ == APX_INVALID_SOCKET) return 0;
+        apx_dword_t t = timeoutMs;
         setsockopt(sock_, SOL_SOCKET, SO_RCVTIMEO, (const char*)&t, sizeof(t));
 
         uint8_t hdr[kFrameHeaderSize];
@@ -124,17 +139,13 @@ public:
 
     bool reliable() const override { return reliable_; }
     void cancel() override {
-#ifdef _WIN32
-        closesocket(sock_);
-#else
-        close(sock_);
-#endif
-        sock_ = INVALID_SOCKET;
+        apx_close_socket(sock_);
+        sock_ = APX_INVALID_SOCKET;
     }
     std::string lastError() const override { return err_; }
 
 private:
-    SOCKET sock_;
+    apx_socket_t sock_;
     uint8_t sid_;
     bool reliable_;
     std::string err_;
@@ -145,7 +156,7 @@ private:
 // ---------------------------------------------------------- NcmTransport impl --
 
 struct NcmTransport::Impl {
-    SOCKET          sock = INVALID_SOCKET;
+    apx_socket_t    sock = APX_INVALID_SOCKET;
     bool            open = false;
     bool            isServer = false;
     uint16_t        port = 9512;
@@ -219,40 +230,40 @@ bool NcmTransport::open(const TransportSpec& spec) {
 #endif
 
     if (impl_->isServer) {
-        SOCKET ls = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-        if (ls==INVALID_SOCKET) { impl_->lastError="socket fail"; return false; }
+        apx_socket_t ls = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (ls==APX_INVALID_SOCKET) { impl_->lastError="socket fail"; return false; }
         int opt=1; setsockopt(ls,SOL_SOCKET,SO_REUSEADDR,(const char*)&opt,sizeof(opt));
         struct sockaddr_in addr={}; addr.sin_family=AF_INET; addr.sin_port=htons(impl_->port);
         if (impl_->localIp.empty()) addr.sin_addr.s_addr=INADDR_ANY;
         else inet_pton(AF_INET,impl_->localIp.c_str(),&addr.sin_addr);
         if (bind(ls,(struct sockaddr*)&addr,sizeof(addr))||listen(ls,1)) {
             impl_->lastError="bind/listen fail";
-#ifdef _WIN32 closesocket(ls); #else close(ls); #endif
+            apx_close_socket(ls);
             return false;
         }
-        APX_LOGI("NCM listen :%u", impl_->port);
+        APX_LOGI("NCM listen :%u", (unsigned)impl_->port);
         struct timeval tv={5,0}; setsockopt(ls,SOL_SOCKET,SO_RCVTIMEO,(const char*)&tv,sizeof(tv));
-        struct sockaddr_in ca={}; socklen_t cl=sizeof(ca);
-        SOCKET c=accept(ls,(struct sockaddr*)&ca,&cl);
-#ifdef _WIN32 closesocket(ls); #else close(ls); #endif
-        if (c==INVALID_SOCKET) { impl_->lastError="accept timeout"; return false; }
+        struct sockaddr_in ca={}; apx_socklen_t cl=sizeof(ca);
+        apx_socket_t c=accept(ls,(struct sockaddr*)&ca,&cl);
+        apx_close_socket(ls);
+        if (c==APX_INVALID_SOCKET) { impl_->lastError="accept timeout"; return false; }
         char ip[INET_ADDRSTRLEN]={}; inet_ntop(AF_INET,&ca.sin_addr,ip,sizeof(ip));
         impl_->peerIp=ip; impl_->sock=c;
         APX_LOGI("NCM client: %s", ip);
     } else {
         if (impl_->peerIp.empty()) { impl_->lastError="peerIp required"; return false; }
-        SOCKET s=socket(AF_INET,SOCK_STREAM,IPPROTO_TCP);
-        if (s==INVALID_SOCKET) { impl_->lastError="socket fail"; return false; }
+        apx_socket_t s=socket(AF_INET,SOCK_STREAM,IPPROTO_TCP);
+        if (s==APX_INVALID_SOCKET) { impl_->lastError="socket fail"; return false; }
         struct sockaddr_in a={}; a.sin_family=AF_INET; a.sin_port=htons(impl_->port);
         inet_pton(AF_INET,impl_->peerIp.c_str(),&a.sin_addr);
         struct timeval tv={5,0}; setsockopt(s,SOL_SOCKET,SO_RCVTIMEO,(const char*)&tv,sizeof(tv));
         if (connect(s,(struct sockaddr*)&a,sizeof(a))) {
             impl_->lastError="connect fail";
-#ifdef _WIN32 closesocket(s); #else close(s); #endif
+            apx_close_socket(s);
             return false;
         }
         impl_->sock=s;
-        APX_LOGI("NCM connect %s:%u", impl_->peerIp.c_str(), impl_->port);
+        APX_LOGI("NCM connect %s:%u", impl_->peerIp.c_str(), (unsigned)impl_->port);
     }
 
     impl_->video=std::make_unique<NcmChannel>(impl_->sock,kStreamVideo,false);
@@ -263,10 +274,10 @@ bool NcmTransport::open(const TransportSpec& spec) {
 }
 
 void NcmTransport::close() {
-    if (impl_->sock!=INVALID_SOCKET) {
+    if (impl_->sock!=APX_INVALID_SOCKET) {
         impl_->video.reset(); impl_->control.reset(); impl_->touch.reset();
-#ifdef _WIN32 closesocket(impl_->sock); #else close(impl_->sock); #endif
-        impl_->sock=INVALID_SOCKET;
+        apx_close_socket(impl_->sock);
+        impl_->sock=APX_INVALID_SOCKET;
     }
     impl_->open=false; impl_->linkUp=false;
 }
