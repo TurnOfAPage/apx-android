@@ -1,5 +1,6 @@
 package com.allperiph.touchpad
 
+import android.animation.FloatValueHolder
 import android.animation.SpringAnimation
 import android.animation.SpringForce
 import android.view.View
@@ -9,6 +10,11 @@ import android.view.View
  *
  * 仅用 framework API（android.animation.SpringAnimation），
  * 不引入第三方依赖，符合 build.gradle 的依赖约束。
+ *
+ * 实现要点：
+ * - SpringAnimation(FloatValueHolder) 构造函数接受独立值持有器，
+ *   避免 View.SCALE_X (Property) 与 FloatProperty 类型不匹配
+ * - 通过 addUpdateListener 把动画值写回 View
  */
 object ExpressiveFeedback {
 
@@ -18,7 +24,6 @@ object ExpressiveFeedback {
     private const val RELEASE_STIFFNESS = 800f
     private const val CANCEL_DAMPING = 0.5f
     private const val CANCEL_STIFFNESS = 600f
-    private const val TAG_SPRING = 0x7f0a0001
 
     fun press(v: View, scale: Float = 0.95f) {
         springScale(v, scale, PRESS_DAMPING, PRESS_STIFFNESS)
@@ -34,26 +39,32 @@ object ExpressiveFeedback {
 
     private fun springScale(v: View, targetScale: Float, dampingRatio: Float, stiffness: Float) {
         v.animate().cancel()
-        val old = v.getTag(TAG_SPRING) as? SpringAnimation
-        old?.cancel()
 
-        val springX = SpringAnimation(v, View.SCALE_X)
-        springX.setSpring(
+        val startX = v.scaleX
+        val startY = v.scaleY
+
+        // X 轴弹簧
+        val holderX = FloatValueHolder(startX)
+        val animX = SpringAnimation(holderX)
+        animX.setSpring(
             SpringForce(targetScale)
                 .setDampingRatio(dampingRatio)
                 .setStiffness(stiffness)
         )
+        animX.addUpdateListener { _, value, _ -> v.scaleX = value }
 
-        val springY = SpringAnimation(v, View.SCALE_Y)
-        springY.setSpring(
+        // Y 轴弹簧
+        val holderY = FloatValueHolder(startY)
+        val animY = SpringAnimation(holderY)
+        animY.setSpring(
             SpringForce(targetScale)
                 .setDampingRatio(dampingRatio)
                 .setStiffness(stiffness)
         )
+        animY.addUpdateListener { _, value, _ -> v.scaleY = value }
 
-        v.setTag(TAG_SPRING, springX)
-        springX.start()
-        springY.start()
+        animX.start()
+        animY.start()
     }
 
     fun morphTo(v: View, targetAlpha: Float, targetScale: Float = 1f) {
