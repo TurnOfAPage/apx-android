@@ -30,6 +30,7 @@ option(APXDISP_HAVE_NVENC_SDK "已放置 NVIDIA Video Codec SDK 头文件"    OF
 option(APXDISP_HAVE_VPL_SDK   "已放置 Intel oneVPL / MediaSDK 头文件"   OFF)
 option(APXDISP_HAVE_AMF_SDK   "已放置 AMD AMF SDK 头文件"              OFF)
 option(APXDISP_ENABLE_DDA     "启用 Desktop Duplication 抓屏（Windows）" ON)
+option(APXDISP_ENABLE_NCM     "启用 NCM 传输（TCP over USB-ECM，Issue #14）" ON)
 
 if(APXDISP_HAVE_NVENC_SDK)
   add_compile_definitions(APXDISP_HAVE_NVENC_SDK=1)
@@ -85,6 +86,13 @@ set(APXDISP_TRANSPORT_SRC
   "${APXDISP_ROOT}/transport/link_monitor.cpp"
   "${APXDISP_ROOT}/transport/transport_factory.cpp"
 )
+
+# NCM 传输（Issue #14）：跨平台（Windows/Linux），内部有 #ifdef 保护
+if(APXDISP_ENABLE_NCM)
+  list(APPEND APXDISP_TRANSPORT_SRC "${APXDISP_ROOT}/transport/ncm_transport.cpp")
+  add_compile_definitions(APXDISP_ENABLE_NCM=1)
+  message(STATUS "[display] 启用 NCM 传输（TCP over USB-ECM）")
+endif()
 
 set(APXDISP_INJECT_SRC
   "${APXDISP_ROOT}/inject/inject_factory.cpp"
@@ -152,16 +160,13 @@ target_link_libraries(apxdisp_inject PUBLIC apxdisp_common)
 
 add_library(apxdisp_pipeline STATIC ${APXDISP_PIPELINE_SRC})
 target_include_directories(apxdisp_pipeline PUBLIC "${APXDISP_ROOT}")
-# apxdisp_inject 是**必需**依赖：Pipeline 会调 createInjector / parseTouchFrame
-# （触控注入与触控帧解析）。此前漏声明，只因为 apxdisp.exe 自己又链了一遍才没暴露；
-# 一旦有别的目标单独链接 apxdisp_pipeline（如桌面端面板复用副屏管线），
-# 就会在链接期报 createInjector / parseTouchFrame 未解析。
 target_link_libraries(apxdisp_pipeline PUBLIC apxdisp_common apxdisp_capture apxdisp_encode apxdisp_transport apxdisp_inject)
 
 if(WIN32)
   target_link_libraries(apxdisp_capture    PUBLIC d3d11 dxgi dxguid)
   target_link_libraries(apxdisp_encode     PUBLIC mfplat mfuuid ole32)
-  target_link_libraries(apxdisp_transport  PUBLIC setupapi winusb cfgmgr32 ws2_32 uuid)
+  # iphlpapi：NCM 枚举网络适配器（GetAdaptersAddresses）
+  target_link_libraries(apxdisp_transport  PUBLIC setupapi winusb cfgmgr32 ws2_32 uuid iphlpapi)
   target_link_libraries(apxdisp_inject     PUBLIC user32)
 endif()
 if(APXDISP_USE_LIBUSB)
@@ -177,9 +182,6 @@ if(APXDISP_BUILD_APP)
     apxdisp_common apxdisp_capture apxdisp_encode apxdisp_transport apxdisp_inject apxdisp_pipeline
     apx_shared)
   if(WIN32)
-    # GUID_DEVINTERFACE_USB_DEVICE 等接口 GUID 定义在 uuid.lib
-    # winmm：timeBeginPeriod(1)——把系统定时器粒度从默认 15.6ms 提到 1ms，
-    # 否则抓屏节流的 sleep 会被撑大，30fps 目标实测只能跑出 ~21fps。
     target_link_libraries(apxdisp PRIVATE uuid winmm)
   endif()
   install(TARGETS apxdisp RUNTIME DESTINATION bin)
@@ -195,4 +197,4 @@ if(APXDISP_BUILD_TESTS AND WIN32)
 endif()
 
 # ---------------------------------------------------------------- 提示 ----
-message(STATUS "[display] 平台=${CMAKE_SYSTEM_NAME} DDA=${APXDISP_ENABLE_DDA} libusb=${APXDISP_USE_LIBUSB} shared=${APX_HAVE_SHARED}")
+message(STATUS "[display] 平台=${CMAKE_SYSTEM_NAME} DDA=${APXDISP_ENABLE_DDA} NCM=${APXDISP_ENABLE_NCM} libusb=${APXDISP_USE_LIBUSB} shared=${APX_HAVE_SHARED}")
