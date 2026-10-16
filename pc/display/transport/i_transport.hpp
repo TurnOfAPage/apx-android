@@ -8,11 +8,13 @@
 //   - 触控上行（streamId=2）走 bulk IN，读取线程优先处理。
 //
 // AOA / NCM：UsbFilter.kind 决定走 AOA bulk 还是 NCM（TCP over USB-ECM）。
-// AOA/WinUSB bulk 已实现；NCM 接口已定义（Issue #14），实现待后续阶段。#pragma once
+// AOA/WinUSB bulk 已实现；NCM 接口已定义（Issue #14），实现见 ncm_transport.cpp。
+#pragma once
 
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <vector>
 #include <functional>
 
 namespace apxdisp {
@@ -48,6 +50,16 @@ enum class TransportKind {
     Auto = 0, WinUsb = 1, LibUsb = 2, Loopback = 3, Tcp = 4, Ncm = 5
 };
 
+// ——— NCM 网络配置（必须定义在 TransportSpec 之前） ———
+struct NcmConfig {
+    std::string interfaceName;   // 可选：指定网络接口（如 "USB Ethernet"）
+    std::string localIp;         // 本端 IP（空=DHCP 自动）
+    std::string peerIp;          // 对端 IP（空=不校验）
+    uint16_t    port = 9512;     // TCP 端口（默认 9512，区别于 AOA 的 9511）
+    bool        isServer = true; // true=本端监听，false=连接对端
+    std::string token;           // 配对令牌
+};
+
 // 统一传输描述：USB 用 usb，TCP 用 host/port，NCM 用 netConfig。互斥。
 struct TransportSpec {
     TransportKind kind = TransportKind::Auto;
@@ -71,7 +83,6 @@ struct TransportSpec {
     }
 };
 
-// NCM 网络配置
 class IChannel {
 public:
     virtual ~IChannel() = default;
@@ -109,46 +120,22 @@ public:
 //
 class NcmTransport : public ITransport {
 public:
-    // 枚举系统中已存在的 NCM/RNDIS 网络适配器
-    // 返回适配器列表（名称 + GUID）
     static std::vector<std::string> listAdapters();
-
-    // 打开 NCM 设备并建立网络通道
-    // spec.kind 必须为 TransportKind::Ncm
     bool open(const TransportSpec& spec) override;
     void close() override;
     bool isOpen() const override;
-
-    // NCM 模式下三个逻辑通道共享同一条 TCP 连接
-    // 内部通过 streamId 帧头区分（PROTOCOL §3）
     IChannel* videoChannel()   override;
     IChannel* controlChannel() override;
     IChannel* touchChannel()   override;
-
     bool reset() override;
     std::string lastError() const override;
     TransportKind kind() const override { return TransportKind::Ncm; }
-
-    // NCM 特有：获取本端/对端 IP（用于诊断）
     std::string localIp() const;
     std::string peerIp() const;
-
-    // NCM 特有：检查网卡是否就绪（carrier on）
     bool isLinkUp() const;
-
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
-};
-
-// NCM 网络配置
-struct NcmConfig {
-    std::string interfaceName;   // 可选：指定网络接口（如 "USB Ethernet"）
-    std::string localIp;         // 本端 IP（空=DHCP 自动）
-    std::string peerIp;          // 对端 IP（空=不校验）
-    uint16_t    port = 9512;     // TCP 端口（默认 9512，区别于 AOA 的 9511）
-    bool        isServer = true; // true=本端监听，false=连接对端
-    std::string token;           // 配对令牌
 };
 
 std::unique_ptr<ITransport> createTransport(const TransportSpec& spec);
