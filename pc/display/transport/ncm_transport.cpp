@@ -51,7 +51,6 @@ inline void apx_close_socket(apx_socket_t s) {
 #endif
 }
 
-// FrameHeader: magic(4B) + streamId(1B) + length(3B, big-endian) = 8 bytes total
 constexpr size_t kFrameHeaderSize = 8;
 constexpr uint8_t kStreamVideo   = 0;
 constexpr uint8_t kStreamTouch   = 2;
@@ -67,7 +66,6 @@ inline uint32_t decodeLength(const uint8_t* in) {
     return ((uint32_t)in[0] << 16) | ((uint32_t)in[1] << 8) | (uint32_t)in[2];
 }
 
-// Build frame header: "APXN" + streamId + 3-byte big-endian length
 inline void buildHeader(uint8_t* hdr, uint8_t streamId, uint32_t payloadLen) {
     hdr[0] = 'A'; hdr[1] = 'P'; hdr[2] = 'X'; hdr[3] = 'N';
     hdr[4] = streamId;
@@ -83,11 +81,8 @@ public:
         if (sock_ == APX_INVALID_SOCKET) return 0;
         apx_dword_t t = timeoutMs;
         setsockopt(sock_, SOL_SOCKET, SO_SNDTIMEO, (const char*)&t, sizeof(t));
-
         uint8_t hdr[kFrameHeaderSize];
         buildHeader(hdr, sid_, (uint32_t)len);
-
-        // Send header then payload
         size_t sent = 0;
         while (sent < kFrameHeaderSize) {
             int n = send(sock_, (const char*)(hdr + sent), (int)(kFrameHeaderSize - sent), 0);
@@ -108,7 +103,6 @@ public:
         if (sock_ == APX_INVALID_SOCKET) return 0;
         apx_dword_t t = timeoutMs;
         setsockopt(sock_, SOL_SOCKET, SO_RCVTIMEO, (const char*)&t, sizeof(t));
-
         uint8_t hdr[kFrameHeaderSize];
         size_t got = 0;
         while (got < kFrameHeaderSize) {
@@ -119,7 +113,6 @@ public:
         if (hdr[0]!='A'||hdr[1]!='P'||hdr[2]!='X'||hdr[3]!='N') return 0;
         uint32_t payloadLen = decodeLength(hdr + 5);
         if (payloadLen == 0 || payloadLen > kMaxFrameSize || payloadLen > cap) return 0;
-
         got = 0;
         while (got < payloadLen) {
             int n = recv(sock_, (char*)buf + got, (int)(payloadLen - got), 0);
@@ -206,7 +199,7 @@ bool NcmTransport::open(const TransportSpec& spec) {
     auto adapters = listAdapters();
     if (adapters.empty()) { impl_->lastError="No NCM adapter found"; return false; }
     impl_->adapterName = adapters[0];
-    APX_LOGI("NCM adapter: %s", impl_->adapterName.c_str());
+    APX_LOG_I("NCM adapter: %s", impl_->adapterName.c_str());
 
     impl_->linkUp = isLinkUp();
     if (!impl_->linkUp) { impl_->lastError="NCM link down"; return false; }
@@ -228,7 +221,7 @@ bool NcmTransport::open(const TransportSpec& spec) {
             apx_close_socket(ls);
             return false;
         }
-        APX_LOGI("NCM listen :%u", (unsigned)impl_->port);
+        APX_LOG_I("NCM listen :%u", (unsigned)impl_->port);
         struct timeval tv={5,0}; setsockopt(ls,SOL_SOCKET,SO_RCVTIMEO,(const char*)&tv,sizeof(tv));
         struct sockaddr_in ca={}; apx_socklen_t cl=sizeof(ca);
         apx_socket_t c=accept(ls,(struct sockaddr*)&ca,&cl);
@@ -236,7 +229,7 @@ bool NcmTransport::open(const TransportSpec& spec) {
         if (c==APX_INVALID_SOCKET) { impl_->lastError="accept timeout"; return false; }
         char ip[INET_ADDRSTRLEN]={}; inet_ntop(AF_INET,&ca.sin_addr,ip,sizeof(ip));
         impl_->peerIp=ip; impl_->sock=c;
-        APX_LOGI("NCM client: %s", ip);
+        APX_LOG_I("NCM client: %s", ip);
     } else {
         if (impl_->peerIp.empty()) { impl_->lastError="peerIp required"; return false; }
         apx_socket_t s=socket(AF_INET,SOCK_STREAM,IPPROTO_TCP);
@@ -250,7 +243,7 @@ bool NcmTransport::open(const TransportSpec& spec) {
             return false;
         }
         impl_->sock=s;
-        APX_LOGI("NCM connect %s:%u", impl_->peerIp.c_str(), (unsigned)impl_->port);
+        APX_LOG_I("NCM connect %s:%u", impl_->peerIp.c_str(), (unsigned)impl_->port);
     }
 
     impl_->video=std::make_unique<NcmChannel>(impl_->sock,kStreamVideo,false);
