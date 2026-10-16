@@ -12,7 +12,6 @@ import android.view.View
  */
 object ExpressiveFeedback {
 
-    // Spring 参数（M3 Expressive 规范）
     private const val PRESS_DAMPING = 0.6f
     private const val PRESS_STIFFNESS = 500f
     private const val RELEASE_DAMPING = 0.4f
@@ -57,14 +56,5 @@ object ExpressiveFeedback {
         v.animate().cancel()
         v.animate().alpha(targetAlpha).setDuration(200).start()
         springScale(v, targetScale, RELEASE_DAMPING, RELEASE_STIFFNESS)
-    }
-
-    fun scrollInertia(v: View, property: Int, from: Float, velocity: Float): SpringAnimation {
-        val anim = SpringAnimation(v, property)
-        anim.spring = SpringForce(from)
-            .setStartVelocity(velocity)
-            .setDampingRatio(0.85f)
-            .setStiffness(SpringForce.STIFFNESS_LOW)
-        return anim
     }
 }
