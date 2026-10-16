@@ -30,8 +30,8 @@ using apx_socklen_t = socklen_t;
 using apx_dword_t = uint32_t;
 #endif
 
-#include "apxdisp/transport/i_transport.hpp"
-#include "apxdisp/log.hpp"
+#include "transport/i_transport.hpp"
+#include "common/log.hpp"
 
 #include <algorithm>
 #include <cstring>
