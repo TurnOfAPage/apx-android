@@ -293,7 +293,7 @@ jobs:
   # 跑在 windows-latest 上 —— Inno Setup 编译器只在 Windows 上有
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [pc]
+    needs: [pc, android]
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -303,7 +303,20 @@ jobs:
       - name: Download PC artifacts
         uses: actions/download-artifact@v4
         with:
-          path: dist
+          name: pc-exes-webview2
+          path: dist/pc-exes-webview2
+
+      - name: Download Android APKs
+        uses: actions/download-artifact@v4
+        with:
+          name: apk-app
+          path: dist/apk-app
+
+      - name: Download TV APK
+        uses: actions/download-artifact@v4
+        with:
+          name: apk-tv
+          path: dist/apk-tv
 
       - name: Build single-EXE Setup with Inno
         run: |
@@ -336,6 +349,15 @@ jobs:
           Get-ChildItem out/
         shell: pwsh
 
+      - name: Collect Android APKs
+        run: |
+          Set-Location $env:GITHUB_WORKSPACE
+          $VER = $env:GITHUB_REF_NAME
+          Copy-Item dist/apk-app/app-release.apk "out/AllPeriph-${VER}-app.apk"
+          Copy-Item dist/apk-tv/tv-release.apk "out/AllPeriph-${VER}-tv.apk"
+          Get-ChildItem out/
+        shell: pwsh
+
       - name: Upload Release
         uses: softprops/action-gh-release@v2
         with:
@@ -346,7 +368,7 @@ jobs:
           body: |
             ## 全能外设 ${{ github.ref_name }}
 
-            ### 推荐：单文件安装包
+            ### 推荐：单文件安装包（Windows）
             下载 **AllPeriph-${{ github.ref_name }}-Setup.exe** —— 一个 exe 搞定一切：
             - 双击进入现代 Windows 安装向导（欢迎 → 功能勾选 → 进度 → 完成）
             - 默认装到 `%LOCALAPPDATA%\Programs\AllPeriph`（免管理员）
@@ -355,5 +377,9 @@ jobs:
             - 卸载自动进「应用和功能」
             - 安装包自动压缩了 apxdesktop + apxhost + WebView2Loader + web/* 全部资源
 
-            ### 便携版（zip）
+            ### 便携版（Windows zip）
             解压到任意目录直接双击 apxdesktop.exe 运行，绿色免安装。
+
+            ### Android
+            - **AllPeriph-${{ github.ref_name }}-app.apk** —— 手机端（触控板/键盘/副屏）
+            - **AllPeriph-${{ github.ref_name }}-tv.apk** —— 电视端（被控/接收）
