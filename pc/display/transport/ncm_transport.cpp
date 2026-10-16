@@ -11,7 +11,6 @@
 #include <netioapi.h>
 #pragma comment(lib, "iphlpapi.lib")
 #pragma comment(lib, "ws2_32.lib")
-// Windows 平台类型适配
 using apx_socket_t = SOCKET;
 constexpr apx_socket_t APX_INVALID_SOCKET = INVALID_SOCKET;
 using apx_socklen_t = int;
@@ -25,7 +24,6 @@ using apx_dword_t = DWORD;
 #include <sys/socket.h>
 #include <unistd.h>
 #include <cerrno>
-// Linux 平台类型适配
 using apx_socket_t = int;
 constexpr apx_socket_t APX_INVALID_SOCKET = -1;
 using apx_socklen_t = socklen_t;
@@ -36,10 +34,8 @@ using apx_dword_t = uint32_t;
 #include "apxdisp/log.hpp"
 
 #include <algorithm>
-#include <atomic>
 #include <cstring>
 #include <memory>
-#include <mutex>
 #include <string>
 #include <vector>
 
@@ -47,7 +43,6 @@ namespace apxdisp {
 
 namespace {
 
-// 平台无关的 close
 inline void apx_close_socket(apx_socket_t s) {
 #ifdef _WIN32
     closesocket(s);
@@ -56,17 +51,12 @@ inline void apx_close_socket(apx_socket_t s) {
 #endif
 }
 
-struct FrameHeader {
-    uint8_t  magic[4];   // "APXN"
-    uint8_t  streamId;
-    uint8_t  len[3];     // 大端
-};
-
-constexpr uint8_t  kStreamVideo   = 0;
-constexpr uint8_t  kStreamTouch   = 2;
-constexpr uint8_t  kStreamControl = 3;
-constexpr size_t   kFrameHeaderSize = 6;
-constexpr size_t   kMaxFrameSize = 1 << 20;
+// FrameHeader: magic(4B) + streamId(1B) + length(3B, big-endian) = 8 bytes total
+constexpr size_t kFrameHeaderSize = 8;
+constexpr uint8_t kStreamVideo   = 0;
+constexpr uint8_t kStreamTouch   = 2;
+constexpr uint8_t kStreamControl = 3;
+constexpr size_t  kMaxFrameSize = 1 << 20;
 
 inline void encodeLength(uint8_t* out, uint32_t len) {
     out[0] = (uint8_t)(len >> 16);
@@ -75,6 +65,13 @@ inline void encodeLength(uint8_t* out, uint32_t len) {
 }
 inline uint32_t decodeLength(const uint8_t* in) {
     return ((uint32_t)in[0] << 16) | ((uint32_t)in[1] << 8) | (uint32_t)in[2];
+}
+
+// Build frame header: "APXN" + streamId + 3-byte big-endian length
+inline void buildHeader(uint8_t* hdr, uint8_t streamId, uint32_t payloadLen) {
+    hdr[0] = 'A'; hdr[1] = 'P'; hdr[2] = 'X'; hdr[3] = 'N';
+    hdr[4] = streamId;
+    encodeLength(hdr + 5, payloadLen);
 }
 
 class NcmChannel : public IChannel {
@@ -87,22 +84,17 @@ public:
         apx_dword_t t = timeoutMs;
         setsockopt(sock_, SOL_SOCKET, SO_SNDTIMEO, (const char*)&t, sizeof(t));
 
-        uint8_t hdr[kFrameHeaderSize] = {'A','P','X','N', sid_, 0,0,0};
-        hdr[4] = sid_;
-        encodeLength(hdr + 5, (uint32_t)len);
+        uint8_t hdr[kFrameHeaderSize];
+        buildHeader(hdr, sid_, (uint32_t)len);
 
+        // Send header then payload
         size_t sent = 0;
-        while (sent < 5) {
-            int n = send(sock_, (const char*)(hdr + sent), (int)(5 - sent), 0);
+        while (sent < kFrameHeaderSize) {
+            int n = send(sock_, (const char*)(hdr + sent), (int)(kFrameHeaderSize - sent), 0);
             if (n <= 0) return 0;
             sent += n;
         }
-        sent = 0;
-        while (sent < 3) {
-            int n = send(sock_, (const char*)(hdr + 5 + sent), (int)(3 - sent), 0);
-            if (n <= 0) return 0;
-            sent += n;
-        }
+        if (len == 0) return 0;
         sent = 0;
         while (sent < len) {
             int n = send(sock_, (const char*)(data + sent), (int)(len - sent), 0);
@@ -138,10 +130,7 @@ public:
     }
 
     bool reliable() const override { return reliable_; }
-    void cancel() override {
-        apx_close_socket(sock_);
-        sock_ = APX_INVALID_SOCKET;
-    }
+    void cancel() override { apx_close_socket(sock_); sock_ = APX_INVALID_SOCKET; }
     std::string lastError() const override { return err_; }
 
 private:
@@ -152,8 +141,6 @@ private:
 };
 
 }  // namespace
-
-// ---------------------------------------------------------- NcmTransport impl --
 
 struct NcmTransport::Impl {
     apx_socket_t    sock = APX_INVALID_SOCKET;
