@@ -38,14 +38,18 @@ object ExpressiveFeedback {
         old?.cancel()
 
         val springX = SpringAnimation(v, View.SCALE_X)
-        springX.spring = SpringForce(targetScale)
-            .setDampingRatio(dampingRatio)
-            .setStiffness(stiffness)
+        springX.setSpring(
+            SpringForce(targetScale)
+                .setDampingRatio(dampingRatio)
+                .setStiffness(stiffness)
+        )
 
         val springY = SpringAnimation(v, View.SCALE_Y)
-        springY.spring = SpringForce(targetScale)
-            .setDampingRatio(dampingRatio)
-            .setStiffness(stiffness)
+        springY.setSpring(
+            SpringForce(targetScale)
+                .setDampingRatio(dampingRatio)
+                .setStiffness(stiffness)
+        )
 
         v.setTag(TAG_SPRING, springX)
         springX.start()
