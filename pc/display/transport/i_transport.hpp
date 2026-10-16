@@ -120,6 +120,8 @@ public:
 //
 class NcmTransport : public ITransport {
 public:
+    NcmTransport();          // MSVC C2600：必须声明才能在 .cpp 定义
+    ~NcmTransport() override;
     static std::vector<std::string> listAdapters();
     bool open(const TransportSpec& spec) override;
     void close() override;
