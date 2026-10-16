@@ -10,36 +10,25 @@ import android.view.View
  * 仅用 framework API（android.animation.SpringAnimation），
  * 不引入第三方依赖，符合 build.gradle 的依赖约束。
  *
- * 替代原来基于 duration + OvershootInterpolator 的固定动画，
- * 获得真实弹簧物理反馈（阻尼/刚度可调）。
- *
  * 用法：
  * ```kotlin
- * // 按下
- * ExpressiveFeedback.press(v)
- * // 松手
- * ExpressiveFeedback.release(v)
- * // 取消
- * ExpressiveFeedback.cancel(v)
+ * ExpressiveFeedback.press(v)   // 按下
+ * ExpressiveFeedback.release(v) // 松手
+ * ExpressiveFeedback.cancel(v)  // 取消
  * ```
  */
 object ExpressiveFeedback {
 
     // —————— Spring 参数（Material 3 Expressive 规范） ——————
-    // 按下：中低刚度，略过阻尼（轻微下沉感）
     private const val PRESS_DAMPING = 0.6f
     private const val PRESS_STIFFNESS = 500f
-
-    // 松手回弹：低阻尼 + 中刚度 → overshoot 弹性
     private const val RELEASE_DAMPING = 0.4f
     private const val RELEASE_STIFFNESS = 800f
-
-    // 取消（手指滑出）：中阻尼，快速归位
     private const val CANCEL_DAMPING = 0.5f
     private const val CANCEL_STIFFNESS = 600f
 
     // Spring 动画 tag key（避免同一 View 多个 Spring 冲突）
-    private val TAG_SPRING = IntArray(1)
+    private const val TAG_SPRING_ID = 0x7f0a0001
 
     /**
      * 按下：scale → targetScale（Spring 物理动画）
@@ -85,7 +74,6 @@ object ExpressiveFeedback {
                     .setDampingRatio(dampingRatio)
                     .setStiffness(stiffness)
             )
-        // 同步 scaleY
         val springY = SpringAnimation(v, SpringAnimation.SCALE_Y)
             .setSpring(
                 SpringForce(targetScale)
@@ -116,33 +104,21 @@ object ExpressiveFeedback {
 
     /**
      * 用于触控板滚动的惯性动画：给定初始速度，Spring 自然衰减
+     * 返回 SpringAnimation，调用方负责把值映射到滚动位置
      */
     fun scrollInertia(
         v: View,
         property: Int,  // View.TRANSLATION_X 或 View.TRANSLATION_Y
         from: Float,
-        velocity: Float,
-        onUpdate: (Float) -> Unit
+        velocity: Float
     ): SpringAnimation {
-        val anim = SpringAnimation(FloatValueHolder(from)).apply {
-            spring = SpringForce(from)
-                .setStartVelocity(velocity)
-                .setDampingRatio(0.85f)
-                .setStiffness(SpringForce.STIFFNESS_LOW)
-        }
-        // 简化：用 ViewProperty 版本
-        val va = SpringAnimation(v, property)
+        val anim = SpringAnimation(v, property)
             .setSpring(
                 SpringForce(from)
                     .setStartVelocity(velocity)
                     .setDampingRatio(0.85f)
                     .setStiffness(SpringForce.STIFFNESS_LOW)
             )
-        return va
+        return anim
     }
-
-    private const val TAG_SPRING_ID = 0x7f0a0001
-
-    // FloatValueHolder 用于不依附 View 的独立 Spring
-    private class FloatValueHolder(var value: Float)
 }
