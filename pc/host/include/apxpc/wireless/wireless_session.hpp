@@ -134,7 +134,7 @@ private:
 
     void worker();
     void publish(LinkPhase ph, Mode m);
-    void onBeacon(const std::string& host, uint16_t port);
+    void onBeacon(const std::string& host, uint16_t port, bool phone);
     void beaconLoop();
 
     mutable std::mutex mu_;
@@ -143,6 +143,7 @@ private:
     bool haveBeacon_ = false;
     std::string beaconHost_;
     uint16_t beaconPort_ = 0;
+    bool beaconPhone_ = false;   // 待连信标是否来自手机（APX1PH）—— 手机优先于 TV，见 onBeacon
     bool manualFailed_ = false;
 
     std::atomic<bool> running_{false};

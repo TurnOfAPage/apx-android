@@ -2,10 +2,13 @@ package com.allperiph.audio
 
 import android.content.Context
 import android.media.AudioAttributes
+import android.media.AudioDeviceInfo
 import android.media.AudioFormat
+import android.media.AudioManager
 import android.media.AudioRecord
 import android.media.AudioTrack
 import android.media.MediaRecorder
+import android.os.SystemClock
 import com.allperiph.core.AlsaPcm
 import com.allperiph.core.AudioConst
 import com.allperiph.shared.util.Log
@@ -48,6 +51,19 @@ class AudioModule(private val app: Context) : Module {
     private var micToPc: Thread? = null
     private var pcToSpk: Thread? = null
 
+    // ---- 方向子开关（修复⑭：与 Wi‑Fi 音频同款）：音箱（PC→手机）/ 麦克风（手机→PC）
+    // 可在设置页分别启停、持久化记忆；start 读初值，apply* 运行中热切换。 ----
+    @Volatile
+    private var spkOn = true
+    @Volatile
+    private var micOn = true
+    @Volatile
+    private var micRun = false
+    @Volatile
+    private var spkRun = false
+    private var micOk = false
+    private var spkOk = false
+
     @Volatile
     private var lastError: String? = null
 
@@ -75,15 +91,12 @@ class AudioModule(private val app: Context) : Module {
         Log.i(TAG, "定位到 UAC2 声卡：card=$card")
 
         running = true
-        val txOk = startMicToPc(card)
-        val rxOk = startPcToSpeaker(card)
+        micOn = isMicOn(app)
+        spkOn = isSpeakerOn(app)
 
-        state = when {
-            txOk && rxOk -> ModuleState.RUNNING
-            txOk || rxOk -> ModuleState.DEGRADED
-            else -> ModuleState.ERROR
-        }
-        if (state == ModuleState.ERROR) lastError = "两条音频流都无法打开"
+        val txOk = if (micOn) { micOk = startMicToPc(card); micOk } else { micOk = false; false }
+        val rxOk = if (spkOn) { spkOk = startPcToSpeaker(card); spkOk } else { spkOk = false; false }
+        recomputeState(txOk, rxOk)
         Log.i(TAG, "音频启动：mic→PC=$txOk  speaker←PC=$rxOk  state=$state")
     }
 
@@ -94,6 +107,8 @@ class AudioModule(private val app: Context) : Module {
         }
         state = ModuleState.STOPPING
         running = false
+        micRun = false
+        spkRun = false
         runCatching { micToPc?.join(800) }
         runCatching { pcToSpk?.join(800) }
         micToPc = null
@@ -104,12 +119,60 @@ class AudioModule(private val app: Context) : Module {
 
     override fun statusText(): String = when (state) {
         ModuleState.RUNNING -> "音频运行中 · 双向 48kHz/16bit"
-        ModuleState.DEGRADED -> "音频运行中 · 单向（另一方向未打开）"
+        ModuleState.DEGRADED -> if (!micOn && !spkOn) "音频待命 · 音箱/麦克风均已关闭"
+        else "音频单向 · 音箱${if (spkOk) "开" else "关"} 麦克风${if (micOk) "开" else "关"}"
         ModuleState.ERROR -> lastError ?: "音频错误"
         else -> when (state) {
             ModuleState.STARTING -> "音频启动中"
             ModuleState.STOPPED, ModuleState.IDLE -> "音频已停止"
             else -> state.name
+        }
+    }
+
+    // ————————————————————————————— 方向热切换（修复⑭） —————————————————————————————
+
+    /** 运行中热切换：扬声器方向（PC → 手机）。模块未运行时只落盘，下次 start 生效。 */
+    fun applySpeaker(ctx: Context, on: Boolean) {
+        prefs(ctx).edit().putBoolean(K_SPK, on).apply()
+        spkOn = on
+        if (!running) return
+        if (on && pcToSpk?.isAlive != true) {
+            val card = if (cardIndex >= 0) cardIndex else locateCard()?.also { cardIndex = it } ?: -1
+            spkOk = card >= 0 && startPcToSpeaker(card)
+            recomputeState(micOk, spkOk)
+        } else if (!on && spkRun) {
+            spkRun = false
+            pcToSpk?.let { runCatching { it.join(800) } }
+            pcToSpk = null
+            spkOk = false
+            recomputeState(micOk, false)
+        }
+    }
+
+    /** 运行中热切换：麦克风方向（手机 → PC） */
+    fun applyMic(ctx: Context, on: Boolean) {
+        prefs(ctx).edit().putBoolean(K_MIC, on).apply()
+        micOn = on
+        if (!running) return
+        if (on && micToPc?.isAlive != true) {
+            val card = if (cardIndex >= 0) cardIndex else locateCard()?.also { cardIndex = it } ?: -1
+            micOk = card >= 0 && startMicToPc(card)
+            recomputeState(micOk, spkOk)
+        } else if (!on && micRun) {
+            micRun = false
+            micToPc?.let { runCatching { it.join(800) } }
+            micToPc = null
+            micOk = false
+            recomputeState(false, spkOk)
+        }
+    }
+
+    private fun recomputeState(txOk: Boolean, rxOk: Boolean) {
+        state = when {
+            txOk && rxOk -> ModuleState.RUNNING
+            txOk || rxOk -> ModuleState.DEGRADED
+            !micOn && !spkOn -> ModuleState.DEGRADED   // 两个方向都被用户关闭：挂起待命
+            else -> ModuleState.ERROR.also { lastError = "两条音频流都无法打开" }
         }
     }
 
@@ -138,6 +201,7 @@ class AudioModule(private val app: Context) : Module {
             return false
         }
 
+        micRun = true
         micToPc = thread(start = true, name = "apx-audio-tx") {
             var rec: AudioRecord? = null
             val fx = mutableListOf<android.media.audiofx.AudioEffect>()
@@ -152,6 +216,13 @@ class AudioModule(private val app: Context) : Module {
                 if (rec.state != AudioRecord.STATE_INITIALIZED) {
                     Log.w(TAG, "AudioRecord 初始化失败（缺 RECORD_AUDIO 权限？）")
                     return@thread
+                }
+                // 显式路由到内建麦克风：USB 声卡在场时系统可能把录音路由到 UAC2 capture（回环）
+                runCatching {
+                    val am = app.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+                    am.getDevices(AudioManager.GET_DEVICES_INPUTS)
+                        .firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_MIC }
+                        ?.let { rec.setPreferredDevice(it) }
                 }
                 android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_URGENT_AUDIO)
                 val sid = rec.audioSessionId
@@ -175,7 +246,7 @@ class AudioModule(private val app: Context) : Module {
                 }
                 rec.startRecording()
                 val buf = ByteArray(FRAME_BYTES)
-                while (running) {
+                while (micRun) {
                     val n = rec.read(buf, 0, buf.size)
                     if (n <= 0) continue
                     val rc = stream.write(if (n == buf.size) buf else buf.copyOf(n))
@@ -197,6 +268,7 @@ class AudioModule(private val app: Context) : Module {
         val path = "/dev/snd/pcmC${card}D0c"
         val stream = AlsaPcm.open(path, playback = false) ?: return false
 
+        spkRun = true
         pcToSpk = thread(start = true, name = "apx-audio-rx") {
             var track: AudioTrack? = null
             try {
@@ -220,11 +292,33 @@ class AudioModule(private val app: Context) : Module {
                     .setTransferMode(AudioTrack.MODE_STREAM)
                     .setPerformanceMode(AudioTrack.PERFORMANCE_MODE_LOW_LATENCY)
                     .build()
+                // 显式路由到内建扬声器（修复⑮）：gadget 自建的 UAC2 声卡在场时，
+                // Android 会把 USAGE_MEDIA 自动路由到 USB 声卡，形成 PC→手机→USB 回环，
+                // 扬声器永远不响。setPreferredDevice 把这条流钉死在内建扬声器上。
+                runCatching {
+                    val am = app.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+                    val spk = am.getDevices(AudioManager.GET_DEVICES_OUTPUTS).let { ds ->
+                        ds.firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }
+                            ?: ds.firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER_SAFE }
+                    }
+                    spk?.let { track.setPreferredDevice(it) }
+                        ?: Log.w(TAG, "未找到内建扬声器设备，回环风险仍在")
+                }
                 track.play()
                 val buf = ByteArray(FRAME_BYTES)
-                while (running) {
+                var lastDiag = 0L
+                var total = 0L
+                while (spkRun) {
                     val n = stream.read(buf)
-                    if (n > 0) track.write(buf, 0, n)
+                    if (n > 0) {
+                        total += n
+                        track.write(buf, 0, n)
+                        val now = SystemClock.elapsedRealtime()
+                        if (now - lastDiag > 5000) {
+                            lastDiag = now
+                            Log.i(TAG, "PC→spk 收流中：累计 ${total / 1024}KB")
+                        }
+                    }
                 }
             } catch (t: Throwable) {
                 Log.w(TAG, "PC→speaker 线程异常：${t.message}")
@@ -239,6 +333,18 @@ class AudioModule(private val app: Context) : Module {
 
     companion object {
         private const val TAG = "AudioModule"
+
+        private const val PREFS = "apx_usb_audio"
+        private const val K_SPK = "spk_on"
+        private const val K_MIC = "mic_on"
+
+        /** 方向子开关初值（设置页读取）；运行中由 applySpeaker/applyMic 热切换并落盘 */
+        fun isSpeakerOn(c: Context): Boolean = prefs(c).getBoolean(K_SPK, true)
+
+        fun isMicOn(c: Context): Boolean = prefs(c).getBoolean(K_MIC, true)
+
+        private fun prefs(c: Context) =
+            c.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
         private const val CARDS = "/proc/asound/cards"
 

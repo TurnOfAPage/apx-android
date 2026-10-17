@@ -100,13 +100,27 @@ class TouchpadFragment : Fragment() {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
+        // 防御性入口：onCreateView 返回 null（寄生式）时平台根本不回调本方法
+        // （FragmentManagerImpl 只在 mView!=null 时才调），真正的绑定入口是
+        // 宿主挂载后显式调用的 ensureViews()。
+        ensureViews()
+    }
+
+    /**
+     * 幂等绑定宿主交来的视图 + 挂液态光标。此前绑定全压在 onViewCreated 里
+     * 而它从不执行 → touchCursor 只在这里赋值，viewsReady 恒 false —— v196 起
+     * 液态光标从未渲染、长按拖拽提示从没出过（手势核心经 host.feedGesture 转发
+     * 一直活着，所以无人报障）。与 StatusFragment.ensureBooted 同款修法。
+     */
+    fun ensureViews() {
+        if (::touchHint.isInitialized) return
         val h = host ?: return
         // 视图由宿主交过来（见 Host 注释：自己 findViewById 会因时序拿不到， lateinit 闪退）
         touchHint = h.hostTouchHint()
         chipRow = h.hostChipRow()
         touchArea = h.hostTouchArea()
         touchCursor = TouchCursorView(h.hostTouchArea().context)
-        // 幂等：宿主视图可能已挂过光标（横竖屏切换或重建），先摘掉自己那份再挂，避免叠加
+        // 先摘掉自己那份再挂（万一被重复调用），避免光标叠加
         (touchArea as? FrameLayout)?.let { area ->
             area.removeView(touchCursor)
             area.addView(touchCursor, FrameLayout.LayoutParams(-1, -1))

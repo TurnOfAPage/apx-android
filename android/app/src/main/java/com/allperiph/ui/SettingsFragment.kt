@@ -678,6 +678,7 @@ class SettingsFragment : Fragment() {
         val h = host ?: return
         swHotkeySort.isChecked = HotkeyStore.isAutoSort(activity)
         swHotkeySort.setOnCheckedChangeListener { _, on ->
+            Feedback.tap(swHotkeySort)
             HotkeyStore.setAutoSort(activity, on)
             h.renderChips()
         }

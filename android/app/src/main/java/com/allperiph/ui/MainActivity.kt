@@ -215,8 +215,12 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
         // 以及 PC 端发现本机都依赖这些服务真的在跑。
         if (anyTransportOn()) AgentForegroundService.start(this)
         bindViews()
-        buildLinkRows()
-        buildModuleRows()
+        // buildLinkRows()/buildModuleRows() 不在这里再调：bindViews() 末尾挂载
+        // statusFragment 时 ensureBooted() 已把链路行/模块行/开关监听完整建好。
+        // 修复⑦把挂载从 buildSettingsPanels 挪进 bindViews 后，下面这两行转发
+        // 从"挂载前 statusFragment==null 落空"变成了"实跑第二遍"——
+        // populateModuleRows 此前不清容器，导致设置页「功能开关」每个模块行
+        // 出现两个开关（v200 真机踩坑）。Fragment 侧已幂等化，这里直接删掉。
         buildTabs()
         bindActions()
         buildSettingsPanels()
@@ -412,6 +416,11 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
                     .add(android.R.id.content, fp, "touchpad")
                     .commitNow()
             }
+        // onCreateView 返回 null → onViewCreated 永不回调，液态光标/拖拽提示的
+        // 绑定必须在挂载后显式触发；进程回收恢复的旧实例同样要补（v200 修复，
+        // 此前液态光标自 v196 起从未渲染过）。视图树一套不重建（旋屏只调显隐），
+        // 幂等守卫即可，无需实例比较重绑。
+        touchpadFragment?.ensureViews()
 
         // 设置页 Fragment（v196 第 3 步）：模板/主题/配色/TV控制/文件/键位映射都由它渲染。
         // 注意与 FileFragment 的分工：**只接SettingsFragment**，FileFragment 不接 ——
@@ -424,12 +433,17 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
             }
 
         // 状态页 Fragment（v196 第 4 步）：启动开关 / 传输开关 / 模块行 / 链路诊断。
-        // 放在最后挂：它 onViewCreated 里会读 Activity 的 hostState/env，这些要在前两步之后。
+        // 放在最后挂：它初始化里会读 Activity 的 hostState/env，这些要在前两步之后。
+        // ⚠️ onViewCreated 不可依赖（onCreateView 返回 null → 平台 Fragment 不回调），
+        // 挂载后必须显式 ensureBooted()：否则三个传输开关的监听永不绑定，「有线（USB）」
+        // 开关拨了没反应、分组/模块行全空白（v199 真机踩坑）。恢复的旧实例同样要补。
         statusFragment = (fragmentManager.findFragmentByTag("status") as? StatusFragment)
+            ?.also { it.ensureBooted() }
             ?: StatusFragment().also { fp ->
                 fragmentManager.beginTransaction()
                     .add(android.R.id.content, fp, "status")
                     .commitNow()
+                fp.ensureBooted()
             }
     }
 

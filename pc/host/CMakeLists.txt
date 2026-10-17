@@ -286,7 +286,7 @@ if(WIN32 AND APXPC_BUILD_UI)
       "${APXPC_ROOT}/src/ui/webview2_runtime.cpp")
     add_library(apxpc_webpanel STATIC ${APXPC_WEBPANEL_SRC})
     target_include_directories(apxpc_webpanel PUBLIC "${APXPC_ROOT}/include")
-    target_link_libraries(apxpc_webpanel PUBLIC apxpc_core apxpc_wireless apxpc_media apxpc_screen apxpc_service)
+    target_link_libraries(apxpc_webpanel PUBLIC apxpc_core apxpc_wireless apxpc_media apxpc_screen apxpc_service apxpc_discovery)
 
     if(DEFINED WEBVIEW2_SDK_DIR)
       target_include_directories(apxpc_webpanel PUBLIC

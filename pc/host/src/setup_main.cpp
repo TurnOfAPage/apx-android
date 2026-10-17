@@ -85,6 +85,7 @@ std::wstring programsDir() { return knownFolder(FOLDERID_Programs); }
 /// 用户配置留在 %LOCALAPPDATA%\AllPeriph —— 两者分开，卸载才不会顺手清掉设置。
 std::wstring installDir() { return localAppData() + L"\\Programs\\" + kAppId; }
 std::wstring startMenuLnk() { return programsDir() + L"\\" + kLnkName; }
+std::wstring desktopLnk() { return knownFolder(FOLDERID_Desktop) + L"\\" + kLnkName; }
 std::wstring uninstallKey() { return std::wstring(kUninstRoot) + L"\\" + kAppId; }
 
 bool pathExists(const std::wstring& p) {
@@ -346,6 +347,9 @@ bool doInstall(bool silent, std::wstring& err) {
         return false;
     }
 
+    // 桌面快捷方式（用户主入口；失败不阻断安装 —— 桌面可能被重定向到 OneDrive 等）
+    createShortcut(desktopLnk(), appExe, dir);
+
     // 自启迁移：原本开着就改指到安装位置；原本没开就不擅自开（尊重用户现状）
     std::wstring oldRun;
     if (regGetString(HKEY_CURRENT_USER, kRunKey, kAppId, oldRun)) {
@@ -410,6 +414,7 @@ bool doUninstall(bool silent, std::wstring& err) {
 
     // 2) 快捷方式 / 注册表
     DeleteFileW(startMenuLnk().c_str());
+    DeleteFileW(desktopLnk().c_str());
     std::wstring runVal;
     if (regGetString(HKEY_CURRENT_USER, kRunKey, kAppId, runVal) &&
         runVal.find(kAppId) != std::wstring::npos) {

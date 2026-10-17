@@ -71,6 +71,10 @@ class GadgetManager(
     @Volatile
     private var lastError: String? = null
 
+    /** usb0 IPv4LL 地址是否已记录过日志（防刷屏；stop 时复位） */
+    @Volatile
+    private var usb0AddrLogged = false
+
     /**
      * 当前失败 / 退避重试的原因，**公开**给 UI。
      *
@@ -471,6 +475,11 @@ class GadgetManager(
                         }.onFailure { Log.w(TAG, "重绑失败：${it.message}") }
                     }
                 }
+                // 修复⑬：USB 网络层——f_ncm 创建的 usb0 默认**没有 IP**，两端停在链路层，
+                // 「NCM→TCP 9511，插线即被 PC 发现」（ConfigFsLayout 注释的承诺）从未兑现：
+                // PC 端拿 APIPA、信标发不出（WirelessBeacon 只向有地址的网卡广播）、TCP 无路由。
+                // 每秒幂等 ensure——usb0 在重绑/插拔后会重建、地址会丢，所以必须放 watchdog 轮询。
+                ensureUsb0Address()
                 sendStatusReport()
                 val elapsed = android.os.SystemClock.elapsedRealtime() - lastHeartbeatMs
                 if (everConnected && lastHeartbeatMs > 0 && elapsed > HEARTBEAT_TIMEOUT_MS) {
@@ -479,6 +488,35 @@ class GadgetManager(
             }
         }
         watchdog = t
+    }
+
+    /**
+     * 修复⑬：给 usb0 配 IPv4LL 地址（169.254.53.2/16）。
+     *
+     * 为什么选 169.254（IPv4LL）而不是 192.168.53.x：PC 端 Windows 对 NCM 网卡**自动 APIPA**
+     * （169.254.x.y/16），同段直接二层互通、零 PC 侧配置；给 PC 配静态 IP 需要 netsh 管理员
+     * 权限，per-user 安装的 apxdesktop 没有。选 .53.2 撞上其它 APIPA 地址的概率可忽略
+     * （点对点 USB 链路只有两个端点）。
+     *
+     * 地址就位后全链路自动通：WirelessBeacon 按网卡子网定向广播（169.254.255.255）
+     * → PC 端 9501（INADDR_ANY）收到 APX1PH → 会话/媒体通道连 169.254.53.2:9511/9502。
+     */
+    private fun ensureUsb0Address() {
+        val sh = shell ?: return
+        if (sh.isBroken) return
+        val probe = sh.exec(
+            "test -d /sys/class/net/usb0 && ip -4 addr show dev usb0 2>/dev/null " +
+                "| grep -q 'inet 169\\.254\\.' && echo yes"
+        )
+        if (probe.out.contains("yes")) return
+        val add = sh.exec(
+            "test -d /sys/class/net/usb0 && ip addr replace 169.254.53.2/16 dev usb0 " +
+                "&& ip link set usb0 up && echo added"
+        )
+        if (add.out.contains("added") && !usb0AddrLogged) {
+            usb0AddrLogged = true
+            Log.i(TAG, "USB 网络层就绪：usb0 = 169.254.53.2/16（IPv4LL，与 PC APIPA 同段互通）")
+        }
     }
 
     private fun sendStatusReport() {
@@ -514,6 +552,7 @@ class GadgetManager(
             arbiter?.release(); arbiter = null
             sh?.close(); shell = null
             udc = null; everConnected = false; lastHeartbeatMs = 0L; healCount = 0
+            usb0AddrLogged = false
             state = ModuleState.STOPPED
             publishState("stopped")
         }

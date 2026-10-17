@@ -70,6 +70,9 @@ class StatusFragment : Fragment() {
      */
     private var viewsBound = false
 
+    /** [ensureBooted] 是否已成功执行（幂等守卫：开关监听/行构建/事件订阅只做一次） */
+    private var booted = false
+
     /** 绑定状态页全部视图；任一缺失即返回 false（布局差异、横竖屏差异都会命中）。 */
     private fun bindViews(): Boolean {
         val act = activity ?: return false
@@ -167,35 +170,35 @@ class StatusFragment : Fragment() {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
-        val h = host ?: return
+        // 防御性调用：本 Fragment 的 onCreateView 返回 null（寄生宿主视图层级），平台
+        // android.app.Fragment 在 view == null 时**不会回调 onViewCreated**，正常路径
+        // 走 ensureBooted()（宿主挂载点显式调用 + refresh 每秒兜底重试）。
+        ensureBooted()
+    }
 
-        // 页面状态视图
-        val activity = activity ?: return
- tvOverall = activity.findViewById(R.id.tvOverall)
-        tvOverallSub = activity.findViewById(R.id.tvOverallSub)
-        swWifi = activity.findViewById(R.id.swWifi)
-        swBt = activity.findViewById(R.id.swBt)
-        swUsb = activity.findViewById(R.id.swUsb)
-        rowsLink = activity.findViewById(R.id.rowsLink)
-        tvLinkRtt = activity.findViewById(R.id.tvLinkRtt)
-        boxRunning = activity.findViewById(R.id.boxRunning)
-        tvRunningSummary = activity.findViewById(R.id.tvRunningSummary)
-        tvIdleHint = activity.findViewById(R.id.tvIdleHint)
-        boxIdleFeatures = activity.findViewById(R.id.boxIdleFeatures)
-
-        // 模块行视图（在设置页布局中）
-        groupWifi = activity.findViewById(R.id.groupWifi)
-        groupBt = activity.findViewById(R.id.groupBt)
-        groupUsb = activity.findViewById(R.id.groupUsb)
-        rowsWifi = activity.findViewById(R.id.rowsWifi)
-        rowsBt = activity.findViewById(R.id.rowsBt)
-        rowsUsb = activity.findViewById(R.id.rowsUsb)
-
+    /**
+     * 幂等初始化：绑视图 → 建 AgentController → 建链路/模块行 → **绑传输开关监听** → 订阅事件。
+     *
+     * ⚠️ 不能只放在 [onViewCreated]：本 Fragment 的 [onCreateView] 返回 null（复用宿主
+     * Activity 的视图层级，不独立 inflate），而平台 android.app.Fragment 在 view == null 时
+     * **根本不会回调 onViewCreated**（FragmentManagerImpl 只在 `f.mView != null` 时才调）。
+     * 真机后果（v199 踩坑）：三个传输开关的监听从未绑定 —— 拨「有线（USB）」开关毫无反应
+     * （transport.usb 没写、模块没热启、USB 分组不出现），模块行/链路行也从未构建（分组空白）。
+     * 与 SettingsFragment.ensureViews 同款修法：幂等 + 失败可重试，由 [refresh]（每秒
+     * ticker）与宿主挂载点显式调用兜底，不再依赖任何生命周期时机。
+     */
+    fun ensureBooted(): Boolean {
+        if (booted) return true
+        val h = host ?: return false
+        if (!ensureViews()) return false
         h.buildAgentController()
         buildLinkRows()
         buildModuleRows()
         bindActions()
         subscribe()
+        booted = true
+        Log.i(TAG, "状态页初始化完成：传输开关监听 / 模块行 / 事件订阅已就绪")
+        return true
     }
 
     override fun onResume() {
@@ -261,6 +264,15 @@ class StatusFragment : Fragment() {
     ) {
         val inflater = LayoutInflater.from(activity) ?: return
         moduleRows.clear()
+        // 幂等重建：先把三个分组容器清空。populateModuleRows 可能被调用多次
+        // （挂载点 ensureBooted 一遍、Activity 的历史转发点再一遍）——此前只清
+        // moduleRows map 不清容器，旧行仍挂在 rowsWifi/rowsBt/rowsUsb 上 →
+        // 设置页「功能开关」每个模块行出现两个开关，且只有 map 里的那套
+        // detail/dot 会刷新，另一套永远静止（拨了"没反应"）。
+        // 与 buildLinkRows 的 rowsLink.removeAllViews() 同款策略。
+        rowsWifi.removeAllViews()
+        rowsBt.removeAllViews()
+        rowsUsb.removeAllViews()
         for ((moduleId, label) in modules) {
             val groups = groupsOf(moduleId)
             if (groups.isEmpty()) continue
@@ -280,12 +292,14 @@ class StatusFragment : Fragment() {
                 if (groups.size > 1) {
                     row.sw.isChecked = isExitEnabled(moduleId, g)
                     row.sw.setOnCheckedChangeListener { _, checked ->
+                        Feedback.tap(row.sw)
                         host?.setExitEnabled(moduleId, g, checked)
                         refresh()
                     }
                 } else {
                     row.sw.isChecked = isEnabled(moduleId)
                     row.sw.setOnCheckedChangeListener { _, checked ->
+                        Feedback.tap(row.sw)
                         host?.setModuleEnabled(moduleId, checked)
                         views.forEach { it.sw.isChecked = checked }
                         refresh()
@@ -304,36 +318,67 @@ class StatusFragment : Fragment() {
             if (moduleId == ModuleId.WIFI_AUDIO) {
                 addAudioSubRows(inflater)
             }
+            // USB 音频（UAC2）方向子开关（修复⑭）：AudioModule 一启动双向全开，
+            // 开关层拆开 —— 与 Wi‑Fi 音频同款，落在「有线（USB）」分组下。
+            if (moduleId == ModuleId.AUDIO) {
+                addUsbAudioSubRows(inflater)
+            }
         }
     }
 
     private fun addAudioSubRows(inflater: LayoutInflater) {
         val ctx = activity ?: return
-        fun subRow(label: String, initial: Boolean, onToggle: (Boolean) -> Unit): View {
-            val sub = inflater.inflate(R.layout.item_module_row, rowsWifi, false)
-            sub.findViewById<TextView>(R.id.tvName).text = label
-            sub.findViewById<TextView>(R.id.tvDetail).visibility = View.GONE
-            sub.findViewById<ImageView>(R.id.dot).visibility = View.GONE
-            val sw = sub.findViewById<Switch>(R.id.sw)
-            sw.isChecked = initial
-            sw.setOnCheckedChangeListener { _, c -> onToggle(c) }
-            rowsWifi.addView(sub)
-            return sub
-        }
-        subRow(
-            getString(R.string.ui_main_label_speaker),
-            com.allperiph.audio.WirelessAudioModule.isSpeakerOn(ctx)
-        ) { on ->
+        makeSubRow(inflater, getString(R.string.ui_main_label_speaker),
+            com.allperiph.audio.WirelessAudioModule.isSpeakerOn(ctx), rowsWifi) { on ->
             (AgentController.module(ModuleId.WIFI_AUDIO)
                 as? com.allperiph.audio.WirelessAudioModule)?.applySpeaker(ctx, on)
         }
-        subRow(
-            getString(R.string.ui_main_label_mic),
-            com.allperiph.audio.WirelessAudioModule.isMicOn(ctx)
-        ) { on ->
+        makeSubRow(inflater, getString(R.string.ui_main_label_mic),
+            com.allperiph.audio.WirelessAudioModule.isMicOn(ctx), rowsWifi) { on ->
             (AgentController.module(ModuleId.WIFI_AUDIO)
                 as? com.allperiph.audio.WirelessAudioModule)?.applyMic(ctx, on)
         }
+    }
+
+    /**
+     * USB 音频（UAC2）方向子开关（修复⑭）：模块层一启动就是双向（麦克风→PC +
+     * PC→扬声器两条线程），此前没有任何分开开关。镜像 Wi‑Fi 音频的音箱/麦克风
+     * 子开关，落在「有线（USB）」分组下；未运行时切换只落盘、下次 start 生效。
+     */
+    private fun addUsbAudioSubRows(inflater: LayoutInflater) {
+        val ctx = activity ?: return
+        makeSubRow(inflater, getString(R.string.ui_main_label_speaker),
+            com.allperiph.audio.AudioModule.isSpeakerOn(ctx), rowsUsb) { on ->
+            (AgentController.module(ModuleId.AUDIO)
+                as? com.allperiph.audio.AudioModule)?.applySpeaker(ctx, on)
+        }
+        makeSubRow(inflater, getString(R.string.ui_main_label_mic),
+            com.allperiph.audio.AudioModule.isMicOn(ctx), rowsUsb) { on ->
+            (AgentController.module(ModuleId.AUDIO)
+                as? com.allperiph.audio.AudioModule)?.applyMic(ctx, on)
+        }
+    }
+
+    /** 造一行方向子开关（无 detail/状态点，仅名称+Switch）；target 指定所属分组容器 */
+    private fun makeSubRow(
+        inflater: LayoutInflater,
+        label: String,
+        initial: Boolean,
+        target: android.view.ViewGroup,
+        onToggle: (Boolean) -> Unit,
+    ): View {
+        val sub = inflater.inflate(R.layout.item_module_row, target, false)
+        sub.findViewById<TextView>(R.id.tvName).text = label
+        sub.findViewById<TextView>(R.id.tvDetail).visibility = View.GONE
+        sub.findViewById<ImageView>(R.id.dot).visibility = View.GONE
+        val sw = sub.findViewById<Switch>(R.id.sw)
+        sw.isChecked = initial
+        sw.setOnCheckedChangeListener { _, c ->
+            Feedback.tap(sw)
+            onToggle(c)
+        }
+        target.addView(sub)
+        return sub
     }
 
     // ==================== Actions ====================
@@ -344,9 +389,18 @@ class StatusFragment : Fragment() {
         swWifi.isChecked = h.isTransportEnabled("wifi")
         swBt.isChecked = h.isTransportEnabled("bt")
         swUsb.isChecked = h.isTransportEnabled("usb")
-        swWifi.setOnCheckedChangeListener { _, c -> onTransportToggle("wifi", c) }
-        swBt.setOnCheckedChangeListener { _, c -> onTransportToggle("bt", c) }
-        swUsb.setOnCheckedChangeListener { _, c -> onTransportToggle("usb", c) }
+        swWifi.setOnCheckedChangeListener { _, c ->
+            Feedback.tap(swWifi)
+            onTransportToggle("wifi", c)
+        }
+        swBt.setOnCheckedChangeListener { _, c ->
+            Feedback.tap(swBt)
+            onTransportToggle("bt", c)
+        }
+        swUsb.setOnCheckedChangeListener { _, c ->
+            Feedback.tap(swUsb)
+            onTransportToggle("usb", c)
+        }
     }
 
     private fun onTransportToggle(t: String, on: Boolean) {
@@ -387,6 +441,10 @@ class StatusFragment : Fragment() {
     private fun subscribe() {
         val h = host ?: return
         val actHandler = h.getStatusHandler()
+        // 防御：ensureBooted 若被重置重跑（宿主变更等），先解绑旧订阅，
+        // 避免同一事件触发两次 refresh。
+        for (d in disposables) d.dispose()
+        disposables.clear()
         disposables += EventBus.on<GadgetStateEvent>(actHandler) { ev ->
             if (ev.state == ModuleState.ERROR || ev.detail.startsWith("retry")) {
                 // 诊断文本由 Activity 渲染（tvDiag 在设置页）
@@ -407,7 +465,9 @@ class StatusFragment : Fragment() {
 
     /** 每秒刷新状态页所有动态内容 */
     fun refresh() {
-        if (!ensureViews()) return
+        // 兜底重试点：ensureBooted 失败（宿主未就绪/布局暂缺）时，每秒都有机会补上 ——
+        // 传输开关监听、模块行全在这里才真正接上（见 ensureBooted 注释）。
+        if (!ensureBooted()) return
         val h = host ?: return
         val anyOn = anyTransportOn()
 

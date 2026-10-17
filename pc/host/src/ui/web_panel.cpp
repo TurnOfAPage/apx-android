@@ -43,6 +43,9 @@
 #include "apxpc/media/audio_capture.hpp"
 #include "apxpc/media/mic_bridge.hpp"
 #include "apxpc/autostart.hpp"
+#include "apxpc/tray/tray_win32.hpp"
+#include "apxpc/discovery/discovery.hpp"
+#include "apxpc/discovery/enumerator.hpp"
 
 #include <wil/com.h>
 #include <WebView2.h>
@@ -109,6 +112,7 @@ template <typename Fn> ICoreWebView2WebMessageReceivedEventHandler*             
 constexpr UINT_PTR kStateTimer = 1;     // 状态推流定时器（400ms）
 constexpr UINT kMsgPostQuitCustom = WM_APP + 10;
 constexpr UINT kMsgWv2Ready = WM_APP + 11;   // WebView2 自动安装完成 → 重试创建环境
+constexpr UINT kMsgWv2Failed = WM_APP + 12;  // WebView2 自动安装失败（后台线程只持 HWND）→ 真退出
 
 LPCWSTR kClassName = L"AllPeriphWebPanel";
 LPCWSTR kWindowTitle = L"全能外设";
@@ -121,6 +125,20 @@ struct Panel {
     wil::com_ptr<ICoreWebView2> webview;
     std::atomic<bool> running{false};
     std::wstring lastRepaintKey;    // 状态指纹：没变就不推
+    unsigned forceTick = 0;         // tick 计数：定期强制重推（覆盖前端监听器晚挂）
+
+    // USB 传输探测缓存（SetupAPI 全量枚举较重，节流 ~10s 一次）
+    bool usbScanned = false;
+    bool usbDevice = false, usbNcm = false, usbHid = false;
+    std::string usbName, usbSpeed;
+    uint64_t usbNextMs = 0;
+
+    // 媒体建链泵（对齐老面板 pumpMediaConnect）：控制连接就绪后，后台节流
+    // 发起媒体连接（手机 9502）。副屏/音箱/麦克风共用这条通道——它不通，
+    // 三张功能卡全停在「等待媒体连接」、开关 disabled 点不开。
+    std::thread mediaThread;
+    std::atomic<bool> mediaBusy{false};
+    uint64_t mediaNextMs = 0;
 };
 Panel* g_panel = nullptr;
 
@@ -142,6 +160,29 @@ std::string phaseName(LinkPhase p) {
     }
 }
 
+// ———————————————— USB 传输探测（gadget 挂载诊断） ————————————————
+// 全量枚举要打开父集线器读配置描述符（几十 ms 级），不能进 400ms tick，
+// 缓存结果 ~10s 刷一次。三态：未检测到设备（线没插/手机侧没起来）→
+// 设备在线但 NCM 未挂载（手机端 USB 传输开关没生效）→ NCM 已挂载（可用）。
+void refreshUsbStatus(Panel* p) {
+    p->usbDevice = p->usbNcm = p->usbHid = false;
+    p->usbName.clear();
+    p->usbSpeed.clear();
+    try {
+        for (const auto& d : usb::enumerateDevices()) {
+            if (!p->usbDevice) {
+                p->usbDevice = true;
+                p->usbName = d.displayName.empty() ? d.vidPid() : d.displayName;
+                p->usbSpeed = discovery::speedName(d.speed);
+            }
+            if (d.has(usb::Role::Ncm)) p->usbNcm = true;
+            if (d.has(usb::Role::Hid)) p->usbHid = true;
+        }
+    } catch (...) {
+        APX_LOGW("USB 枚举失败，按未检测到设备呈现");
+    }
+}
+
 // ———————————————— 状态构建（每 400ms 一次） ———————————————
 void buildState(const HostBundle& b, Json& out) {
     out = Json::makeObject();
@@ -155,7 +196,10 @@ void buildState(const HostBundle& b, Json& out) {
 
     if (b.session) {
         const auto s = b.session->snapshot();
-        link["phase"] = std::to_string(static_cast<int>(s.phase));
+        // ★ 数字而非字符串：前端 phaseSentence 用 `case 3:` 数字严格比较，
+        //   曾写成 std::to_string → "3" !== 3 永远落 default「尚未连接」，
+        //   控制链路明明已连上（RTT/时长都显示），句子却一直说尚未连接。
+        link["phase"] = static_cast<double>(s.phase);
         link["phaseName"] = phaseName(s.phase);
         link["peer"] = s.peer;
         link["rttMs"] = s.rttMs;
@@ -231,6 +275,15 @@ void buildState(const HostBundle& b, Json& out) {
         transports["btSupported"] = true;
     }
 
+    // USB 传输状态（设置页「传输状态」区块消费）
+    if (Panel* gp = g_panel; gp && gp->usbScanned) {
+        transports["usbDevice"] = gp->usbDevice;
+        transports["usbNcm"] = gp->usbNcm;
+        transports["usbHid"] = gp->usbHid;
+        transports["usbName"] = gp->usbName;
+        transports["usbSpeed"] = gp->usbSpeed;
+    }
+
     out["link"] = link;
     out["media"] = media;
     out["transports"] = transports;
@@ -238,16 +291,70 @@ void buildState(const HostBundle& b, Json& out) {
     out["config"] = cfg;
 }
 
+// ———————————————— UTF-8 ↔ UTF-16 转换（Win32 原生 API） ———————————————
+// PostWebMessageAsJson 要求 UTF-16。std::wstring(s.begin(), s.end()) 是逐字节
+// 拷贝，多字节 UTF-8（中文）会变成 mojibake；必须走 MultiByteToWideChar。
+static std::wstring utf8ToWide(const std::string& s) {
+    if (s.empty()) return {};
+    const int n = ::MultiByteToWideChar(CP_UTF8, 0, s.data(), static_cast<int>(s.size()), nullptr, 0);
+    std::wstring w(static_cast<size_t>(n), L'\0');
+    ::MultiByteToWideChar(CP_UTF8, 0, s.data(), static_cast<int>(s.size()), w.data(), n);
+    return w;
+}
+static std::string wideToUtf8(const std::wstring& w) {
+    if (w.empty()) return {};
+    const int n = ::WideCharToMultiByte(CP_UTF8, 0, w.data(), static_cast<int>(w.size()), nullptr, 0, nullptr, nullptr);
+    std::string s(static_cast<size_t>(n), '\0');
+    ::WideCharToMultiByte(CP_UTF8, 0, w.data(), static_cast<int>(w.size()), s.data(), n, nullptr, nullptr);
+    return s;
+}
+
 // ———————————————— 把状态推给前端（400ms tick） ———————————————
 void tickState(Panel* p) {
+    // USB 探测节流：首拍立即做，此后 ~10s 一次（状态变化会让指纹变化 → 自动推送）
+    const uint64_t nowMs = ::GetTickCount64();
+    if (nowMs >= p->usbNextMs) {
+        refreshUsbStatus(p);
+        p->usbNextMs = nowMs + 10000;
+    }
+    // 媒体建链泵：控制连接已就绪而媒体未连时，后台节流重试连手机 9502
+    //（副屏/音箱/麦克风共用；建链是 3s 级阻塞操作，绝不能在 UI 线程直接调）。
+    // 新面板此前缺失这段 —— 老面板 panel_win32.cpp 的 tick 里一直有 pumpMediaConnect。
+    {
+        const HostBundle& b = p->bundle;
+        if (b.media && b.session && !b.media->status().connected) {
+            const auto snap = b.session->snapshot();
+            const std::string peer = snap.peer;                 // host:port（已连上时）
+            const size_t colon = peer.rfind(':');
+            const std::string host = (colon == std::string::npos) ? peer : peer.substr(0, colon);
+            if (snap.phase == LinkPhase::Connected && !host.empty() &&
+                !p->mediaBusy.load() && nowMs >= p->mediaNextMs) {
+                p->mediaNextMs = nowMs + 4000;                  // 失败 4s 后再试
+                if (p->mediaThread.joinable()) p->mediaThread.join();
+                p->mediaBusy.store(true);
+                apxpc::media::MediaSession* media = b.media;    // 宿主栈对象，生命周期覆盖面板
+                p->mediaThread = std::thread([p, media, host] {
+                    if (media->connect(host, apxpc::media::kMediaPort)) {
+                        APX_LOGI("媒体通道已连接 {}:{}", host,
+                                 static_cast<unsigned>(apxpc::media::kMediaPort));
+                    }
+                    p->mediaBusy.store(false);
+                });
+            }
+        }
+    }
     Json state;
     buildState(p->bundle, state);
     std::string json = state.stringify();
-    // 指纹：没变就不推（避免无谓渲染）
+    // 指纹：没变就不推（避免无谓渲染）。
+    // ★ 例外：每 25 tick（约 10s）强制重推一次。前端 React 挂载晚于首次推送时，
+    //   消息会在监听器挂上之前被丢弃；若状态此后恰无变化，前端将永远停在
+    //   「等待宿主状态…」。首次 tick 必推，此后周期性兜底重推。
+    const bool force = (++p->forceTick % 25) == 1;
     std::wstring key;
     key.reserve(json.size());
     for (char c : json) key.push_back(static_cast<wchar_t>(static_cast<unsigned char>(c)));
-    if (key == p->lastRepaintKey) return;
+    if (!force && key == p->lastRepaintKey) return;
     p->lastRepaintKey = key;
 
     Json push = Json::makeObject();
@@ -255,16 +362,21 @@ void tickState(Panel* p) {
     push["t"] = static_cast<double>(GetTickCount64());
     push["data"] = state;
     std::string s = push.stringify();
-    std::wstring w(s.begin(), s.end());
-    p->webview->PostWebMessageAsJson(w.c_str());
+    p->webview->PostWebMessageAsJson(utf8ToWide(s).c_str());
 }
 
 // ———————————————— 回传前端请求的响应 ———————————————
-void postResponse(Panel* p, const std::string& id, Json resp) {
+// ★ kind 字段必须带上：前端 bridge.ts 只认 msg.kind === 'act-response' /
+//   'query-response' / 'open-file-response' 的消息。此前 handleAct 全部响应
+//   （okResp/failResp）都没设 kind —— 前端永远匹配不上，act 请求只能等 10s
+//   超时 reject，且卡片层 await 没 catch：表现为「开关点了没任何反应」。
+//   （handleQuery/handleOpenFile 的作者记得设 kind，恰好漏了 handleAct 一族。）
+void postResponse(Panel* p, const std::string& id, Json resp, const char* kind = "act-response") {
+    if (!resp.find("kind")) resp["kind"] = std::string(kind);
     resp["id"] = id;
     std::string s = resp.stringify();
-    std::wstring w(s.begin(), s.end());
-    p->webview->PostWebMessageAsJson(w.c_str());
+    p->webview->PostWebMessageAsJson(utf8ToWide(s).c_str());
+    APX_LOGI("postResponse: kind={} id={} len={}", kind, id.c_str(), s.size());
 }
 
 // ———————————————— 推送事件给前端（非请求-响应型，如对端请求输入 / 收到文件）——
@@ -276,12 +388,12 @@ void postEvent(Panel* p, const std::string& name, Json data = Json::makeObject()
     push["name"] = name;
     push["data"] = data;
     std::string s = push.stringify();
-    std::wstring w(s.begin(), s.end());
-    p->webview->PostWebMessageAsJson(w.c_str());
+    p->webview->PostWebMessageAsJson(utf8ToWide(s).c_str());
 }
 
 // ———————————————— 动作分发（前端 act 请求） ———————————————
 void handleAct(Panel* p, const std::string& id, const std::string& name, const Json& payload) {
+    APX_LOGI("handleAct: name={} id={}", name.c_str(), id.c_str());
     const HostBundle& b = p->bundle;
 
     // —— 连接控制 ——
@@ -321,6 +433,13 @@ void handleAct(Panel* p, const std::string& id, const std::string& name, const J
         opt.mirrorMode = false; opt.bitrateKbps = 8000;
         std::string err;
         const bool ok = b.screenPush->start(b.media, opt, &err);
+        if (ok) {
+            // 唤起手机副屏页（控制面 0x05）：手机端 ControlledService 收到后广播
+            // ScreenOpenRequestEvent → 前台直接弹 ScreenActivity；后台被拦时走通知兜底。
+            // 老面板 panel_win32.cpp 一直这么干；新面板此前漏了这一步，PC 在推流而
+            // 手机副屏页没开 → 帧全进 Renderer.droppedNoSurface，手机毫无反应。
+            if (b.session) p->bundle.session->requestOpenScreen();
+        }
         return postResponse(p, id, ok ? okResp() : failResp(err));
     }
 
@@ -398,9 +517,9 @@ void handleQuery(Panel* p, const std::string& id, const std::string& name) {
     if (name == "state") {
         Json s; buildState(p->bundle, s);
         Json r; r["kind"] = std::string("query-response");
-        return postResponse(p, id, okResp(s));
+        return postResponse(p, id, okResp(s), "query-response");
     }
-    postResponse(p, id, failResp("未知查询: " + name));
+    postResponse(p, id, failResp("未知查询: " + name), "query-response");
 }
 
 void handleOpenFile(Panel* p, const std::string& id, const std::string& filter) {
@@ -432,11 +551,20 @@ void handleOpenFile(Panel* p, const std::string& id, const std::string& filter) 
 
 // ———————————————— 处理 WebView2 的 WebMessageReceived ———————————————
 void onWebMessageReceived(ICoreWebView2*, ICoreWebView2WebMessageReceivedEventArgs* args) {
+    // ★ 必须用 get_WebMessageAsJson：页面 postMessage 发的是 **对象**（{kind:'act',...}），
+    //   WebView2 的 TryGetWebMessageAsString 只对「字符串消息」成功，对对象消息直接返回
+    //   失败 —— 此前一直用它，前端所有 act/query/open-file 全部石沉大海（表现：开关
+    //   点击后后端毫无反应、10s 超时、UI 无任何提示）。get_WebMessageAsJson 对两类
+    //   消息都能取（对象=原 JSON 文本；字符串=带引号的 JSON 字面量）。
     LPWSTR rawJson = nullptr;
-    if (FAILED(args->TryGetWebMessageAsString(&rawJson)) || !rawJson) return;
+    if (FAILED(args->get_WebMessageAsJson(&rawJson)) || !rawJson) {
+        APX_LOGW("WebView2: 消息取出失败（get_WebMessageAsJson）");
+        return;
+    }
     std::wstring w(rawJson);
     ::CoTaskMemFree(rawJson);
-    std::string s; s.reserve(w.size()); for (wchar_t c : w) s.push_back(static_cast<char>(c)); // VS 2026 规避 wchar_t→char C4244
+    std::string s = wideToUtf8(w); // 原生 UTF-16→UTF-8，前端发来的中文不乱码
+    APX_LOGI("WebView2 收到页面消息: {}", s.substr(0, 120).c_str());
 
     std::string err;
     auto j = Json::parse(s, &err);
@@ -471,9 +599,11 @@ void onWebMessageReceived(ICoreWebView2*, ICoreWebView2WebMessageReceivedEventAr
 void onWebView2EnvFailed(Panel* p, unsigned hresult) {
     APX_LOGE("WebView2 环境创建失败: HRESULT=0x{:08X}", hresult);
     if (isWebView2RuntimeInstalled()) {
+        wchar_t code[32]{};
+        std::swprintf(code, 32, L"0x%08X", hresult);
         MessageBoxW(p->hwnd,
-            L"WebView2 初始化失败（运行组件已安装仍无法创建环境）。\n"
-            L"详细错误码见日志。",
+            (std::wstring(L"WebView2 初始化失败（运行组件已安装仍无法创建环境）。\n错误码：") +
+             code + L"\n\n详细日志：%LOCALAPPDATA%\\AllPeriph\\apxdesktop.log").c_str(),
             L"全能外设", MB_OK | MB_ICONERROR);
         p->running.store(false);
         ::PostMessageW(p->hwnd, WM_CLOSE, 0, 0);
@@ -502,7 +632,9 @@ void onWebView2EnvFailed(Panel* p, unsigned hresult) {
                 (L"WebView2 运行组件自动安装失败：\n" + werr +
                  L"\n\n可手动下载安装：https://aka.ms/webviewruntime").c_str(),
                 L"全能外设", MB_OK | MB_ICONERROR);
-            ::PostMessageW(hw, WM_CLOSE, 0, 0);
+            // 后台线程只持 HWND（不持 Panel*），无法置 running；经窗口过程置退出标志。
+            // 不能直接发 WM_CLOSE —— X 键现在语义是「最小化」而不是退出（见 WM_CLOSE）。
+            ::PostMessageW(hw, kMsgWv2Failed, 0, 0);
         }
     }).detach();
 }
@@ -527,7 +659,7 @@ void startWebView2Env(Panel* p) {
                 }
                 p->env = env;
                 auto* ctrlCb = mkCtrlCb(
-                    [p, wdir](HRESULT hr3, ICoreWebView2Controller* controller) -> HRESULT {
+                    [p, exeDir, wdir](HRESULT hr3, ICoreWebView2Controller* controller) -> HRESULT {
                         if (FAILED(hr3) || !controller) {
                             APX_LOGE("CreateCoreWebView2Controller 失败: 0x{:08X}", static_cast<unsigned>(hr3));
                             return S_OK;
@@ -539,6 +671,17 @@ void startWebView2Env(Panel* p) {
                             return S_OK;
                         }
                         p->webview = wv;
+
+                        // ★ 初始 bounds：Controller 创建后必须立即设置，否则渲染区
+                        //   为 0×0，窗口表现为空白（WM_SIZE 只在尺寸变化时触发）。
+                        {
+                            RECT rc; ::GetClientRect(p->hwnd, &rc);
+                            controller->put_Bounds({0, 0, rc.right, rc.bottom});
+                        }
+                        // 新 webview 就绪（含 WebView2 自动安装后重启环境的路径）：
+                        // 清空指纹，确保首个 tick 必推。
+                        p->lastRepaintKey.clear();
+                        p->forceTick = 0;
 
                         // 设置：启用 dev tools（开发期方便调试；release 可关）
                         wil::com_ptr<ICoreWebView2Settings> settings;
@@ -554,10 +697,32 @@ void startWebView2Env(Panel* p) {
                                     return S_OK;
                                 }), nullptr);
 
-                        // 加载前端 dist/index.html
-                        { std::string wdirA; wdirA.reserve(wdir.size()); for (wchar_t c : wdir) wdirA.push_back(static_cast<char>(c)); // VS 2026 规避 wchar_t→char C4244
-                        APX_LOGI("WebView2 加载: {}", wdirA.c_str()); }
-                        wv->Navigate(wdir.c_str());
+                        // 加载前端 dist/index.html。
+                        // ★ 必须用虚拟主机映射（ICoreWebView2_3）而不是 file://：
+                        //   ① Navigate() 只接受完整 URI，裸 Windows 路径无效；
+                        //   ② file:// 页面加载 type=module 的 ES 模块会被 CORS 拦截
+                        //     （origin 为 opaque，crossorigin 必失败）→ 前端白屏。
+                        //   映射后以 https://app.allperiph/ 访问本地 web 目录，两类问题同时解决。
+                        const wchar_t* kWebHost = L"app.allperiph";
+                        bool navigated = false;
+                        wil::com_ptr<ICoreWebView2_3> wv3;
+                        if (*exeDir != L'\0' && SUCCEEDED(wv->QueryInterface(wv3.put()))) {
+                            std::wstring webDir(exeDir); webDir += L"\\web";
+                            if (SUCCEEDED(wv3->SetVirtualHostNameToFolderMapping(
+                                    kWebHost, webDir.c_str(),
+                                    COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND_ALLOW))) {
+                                APX_LOGI("WebView2 加载: https://app.allperiph/index.html（虚拟主机映射已启用）");
+                                wv->Navigate((std::wstring(L"https://") + kWebHost + L"/index.html").c_str());
+                                navigated = true;
+                            }
+                        }
+                        if (!navigated) {
+                            // 兜底：极老系统没有 _3 接口 → 退回 file:// URI（前端若有非 module 资源仍可部分工作）
+                            std::wstring url = L"file:///" + wdir;
+                            for (auto& c : url) if (c == L'\\') c = L'/';
+                            APX_LOGW("虚拟主机映射不可用，退回 file:// 导航（ES module 可能被 CORS 拦截）");
+                            wv->Navigate(url.c_str());
+                        }
 
                         // 事件回调：对端（手机/TV）请求本机输入 → 前端弹远程输入浮层
                         if (p->bundle.session) {
@@ -612,6 +777,13 @@ LRESULT CALLBACK webWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
         return 0;
     }
+    if (msg == kMsgWv2Failed) {
+        // WebView2 自动安装失败（后台线程转发）：没有界面就没有继续跑的意义，真退出
+        Panel* p = reinterpret_cast<Panel*>(::GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+        if (p) p->running.store(false);
+        ::DestroyWindow(hwnd);
+        return 0;
+    }
     if (msg == WM_DESTROY) {
         ::KillTimer(hwnd, kStateTimer);
         Panel* p = reinterpret_cast<Panel*>(::GetWindowLongPtrW(hwnd, GWLP_USERDATA));
@@ -619,6 +791,15 @@ LRESULT CALLBACK webWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     }
     if (msg == WM_CLOSE) {
+        // 点 X ≠ 退出（与老面板 panel_win32 的 WM_CLOSE 语义一致）：最小化到任务栏，
+        // 后台服务（9511 控制 / 9502 媒体 / 推流）继续跑。真退出只走前端「退出」按钮
+        // （window.quit，先 running=false 再发 WM_CLOSE）与 WebView2 初始化失败路径
+        // —— 这两处的 WM_CLOSE 都带着 running=false，据此区分，不能反过来判。
+        Panel* p = reinterpret_cast<Panel*>(::GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+        if (p && p->running.load()) {
+            ::ShowWindow(hwnd, SW_MINIMIZE);
+            return 0;
+        }
         ::DestroyWindow(hwnd);
         return 0;
     }
@@ -663,12 +844,31 @@ int runWebPanel(const HostBundle& bundle, const std::string& /*webDir*/) {
     g_panel = &panel;
     panel.running.store(true);
 
+    // ★ WebView2 依赖 COM：UI 线程必须先初始化 STA，否则 CreateCoreWebView2Environment
+    //   必然返回 0x800401F0（CO_E_NOTINITIALIZED）。
+    //   S_FALSE（已初始化过）不算失败；RPC_E_CHANGED_MODE 时沿用现有套间继续跑。
+    const HRESULT hrCom = ::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+    const bool comOwned = SUCCEEDED(hrCom) && hrCom != S_FALSE;
+    if (FAILED(hrCom)) {
+        APX_LOGW("CoInitializeEx(STA) 返回 0x{:08X}（继续，沿用当前套间）", static_cast<unsigned>(hrCom));
+    }
+
     // ★ 启动时同步 autostart 状态：如果 config 里 autostart=true 但注册表没有，补写
     if (bundle.cfg && bundle.cfg->autostart) {
         if (!apxpc::autostart::isAutostartEnabled()) {
             APX_LOGI("启动同步: config autostart=true 但注册表无，补写");
             apxpc::autostart::setAutostart(true);
         }
+    }
+
+    // ★ 自动发现（对齐老面板 panel_win32.cpp「初始：自动发现并立刻进入等待」）：
+    //   新面板此前只有前端发 session.startAuto 动作才会启动发现，而前端从未发过 ——
+    //   WirelessSession 永远停在 Idle：不收 APX1PH 信标、不连手机。表现为手机端
+    //   「Wi-Fi 控制」开着、信标正常广播，面板却永远「尚未连接」、副屏/音箱/麦克风
+    //   全部不可用，且日志里一条「切到自动发现模式」都没有。
+    if (bundle.session) {
+        bundle.session->startAuto();
+        APX_LOGI("无线自动发现已启动（等待手机 APX1PH 信标）");
     }
 
     // 注册窗口类
@@ -703,13 +903,35 @@ int runWebPanel(const HostBundle& bundle, const std::string& /*webDir*/) {
     ::ShowWindow(hwnd, SW_SHOW);
     ::UpdateWindow(hwnd);
 
+    // 托盘接线（desktop_main 只建了图标，「打开面板 / 退出」的回调一直没注册 ——
+    // 窗口句柄只有这里才有）。回调跑在托盘线程：ShowWindow/PostMessage 跨线程安全，
+    // 与老面板 panel_win32 同款。
+    if (panel.bundle.tray) {
+        panel.bundle.tray->setOpenCallback([hwnd] {
+            // X/最小化/隐藏后从托盘唤回面板
+            ::ShowWindow(hwnd, SW_RESTORE);
+            ::SetForegroundWindow(hwnd);
+        });
+        panel.bundle.tray->setQuitCallback([hwnd] {
+            // 托盘「退出」= 真退出整个进程。此前 desktop_main 的回调是 PostQuitMessage(0)
+            // —— 投到托盘线程自己的消息循环，主面板与全部服务根本收不到（假退）。
+            // 先置 running=false 再发 WM_CLOSE：与 window.quit 走同一条真退出路径
+            // （见 WM_CLOSE 处理：running=false 才销毁窗口）。
+            if (Panel* pp = g_panel) pp->running.store(false);
+            ::PostMessageW(hwnd, WM_CLOSE, 0, 0);
+        });
+    }
+
     // 消息循环
     MSG msg;
     while (panel.running.load() && GetMessageW(&msg, nullptr, 0, 0) > 0) {
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
     }
+    // 媒体建链线程：面板退出前 join（Panel 是栈对象，析构时若线程仍 joinable 会 terminate）
+    if (panel.mediaThread.joinable()) panel.mediaThread.join();
     g_panel = nullptr;
+    if (comOwned) ::CoUninitialize();
     return 0;
 #endif
 }

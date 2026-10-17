@@ -42,8 +42,10 @@ int64_t nowMs() {
         .count();
 }
 
-/// 解析 "APX1TV|APX1PC|APX1PH <name> <port> <token>"，返回 (host-ip, port)。name/token 忽略。
-bool parseBeacon(const char* buf, size_t n, std::string& host, uint16_t& port) {
+/// 解析 "APX1TV|APX1PC|APX1PH <name> <port> <token>"，返回 (host-ip, port)。
+/// phone 出参：是否手机信标（APX1PH）—— 自动发现手机优先，见 onBeacon。name/token 忽略。
+bool parseBeacon(const char* buf, size_t n, std::string& host, uint16_t& port,
+                 bool* phone = nullptr) {
     // 简单按空格切分，取第 2、3 段（name、port）。host 由调用方从来源地址填入。
     std::string_view s(buf, n);
     // 必须以 "APX1TV"(TV) / "APX1PC"(PC) / "APX1PH"(手机被控) 开头 —— 三种前缀同为 6 字符。
@@ -51,6 +53,7 @@ bool parseBeacon(const char* buf, size_t n, std::string& host, uint16_t& port) {
     if (s.size() < 6) return false;
     const std::string_view head = s.substr(0, 6);
     if (head != "APX1TV" && head != "APX1PC" && head != "APX1PH") return false;
+    if (phone) *phone = (head == "APX1PH");
     // 找 name 与 port 两个 token
     size_t i = 6;
     while (i < s.size() && (s[i] == ' ' || s[i] == '\t')) ++i;
@@ -171,11 +174,16 @@ void WirelessSession::disconnect() {
     manualFailed_ = false;
 }
 
-void WirelessSession::onBeacon(const std::string& host, uint16_t port) {
+void WirelessSession::onBeacon(const std::string& host, uint16_t port, bool phone) {
     std::lock_guard<std::mutex> lk(mu_);
-    if (haveBeacon_) return;
+    // 手机信标优先（修复⑫）：TV 端 app 常驻自启、持续广播 APX1TV，此前「先到先连」
+    // 会在手机断链重发现时把会话绑到 TV 上 —— TV 连接稳定不掉线，自愈泵永不触发，
+    // 媒体通道（含音频流）从此全推给电视，手机端饿死无声，且两端 UI 都显示「已连接」。
+    // 规则：已有手机信标待连时不替换；已有非手机信标时允许手机信标插队顶替。
+    if (haveBeacon_ && (beaconPhone_ || !phone)) return;
     beaconHost_ = host;
     beaconPort_ = port;
+    beaconPhone_ = phone;
     haveBeacon_ = true;
 }
 
@@ -418,14 +426,15 @@ void WirelessSession::beaconLoop() {
 #endif
         uint16_t bport = 0;
         std::string dummy;
+        bool phone = false;
         // 过滤自身信标：本机广播会回环回来，不过滤就会「连自己」（面板假装已连接，
         // 而手机永远连不上）。见 isSelfAddress 注释。
-        if (!hostIp.empty() && parseBeacon(buf, static_cast<size_t>(n), dummy, bport)
+        if (!hostIp.empty() && parseBeacon(buf, static_cast<size_t>(n), dummy, bport, &phone)
 #if defined(_WIN32)
             && !isSelfAddress(from.sin_addr.s_addr)
 #endif
         ) {
-            onBeacon(hostIp, bport);
+            onBeacon(hostIp, bport, phone);
         }
     }
 #if defined(_WIN32)

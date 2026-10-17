@@ -47,8 +47,11 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdio>
 #include <filesystem>
 #include <memory>
+#include <mutex>
+#include <share.h>
 #include <string>
 #include <thread>
 
@@ -231,6 +234,46 @@ void crashForensicsSelfCheck() {
     APX_LOGI("崩溃取证就绪：模块快照 {} 个；地址翻译自检 = {}", g_modCount, probe);
 }
 
+// —————— GUI 日志落盘 ——————
+// apxdesktop 是 WIN32 子系统程序，没有 stderr/stdout 可看；注册文件 sink，
+// 把日志追加写到 %LOCALAPPDATA%\AllPeriph\apxdesktop.log（与 media_debug.log 同目录约定）。
+// 超过 2MB 时清空重来，避免无限增长。
+// 用 CreateFileW(FILE_SHARE_READ) 而非 CRT stdio：行为可控，外部工具可随时读取。
+void startFileLogging() {
+    wchar_t dir[MAX_PATH]{};
+    if (::GetEnvironmentVariableW(L"LOCALAPPDATA", dir, MAX_PATH) == 0) return;
+    static const std::wstring g_dir = std::wstring(dir) + L"\\AllPeriph";
+    static const std::wstring g_path = g_dir + L"\\apxdesktop.log";
+    static std::mutex g_mu;
+    static HANDLE g_hf = nullptr;
+
+    ::CreateDirectoryW(g_dir.c_str(), nullptr);  // 已存在则忽略
+
+    // 超过 2MB 就删除重建（诊断只需要最近一次运行的日志）
+    WIN32_FILE_ATTRIBUTE_DATA fa{};
+    if (::GetFileAttributesExW(g_path.c_str(), ::GetFileExInfoStandard, &fa) &&
+        fa.nFileSizeHigh > 0) {
+        ::DeleteFileW(g_path.c_str());
+    } else if (fa.nFileSizeLow > 2u * 1024u * 1024u) {
+        ::DeleteFileW(g_path.c_str());
+    }
+
+    apxpc::Logger::instance().setSink([](apxpc::LogLevel, const std::string& line) {
+        std::lock_guard<std::mutex> g(g_mu);
+        if (g_hf == nullptr || g_hf == INVALID_HANDLE_VALUE) {
+            g_hf = ::CreateFileW(g_path.c_str(), FILE_APPEND_DATA,
+                                 FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                                 OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        }
+        if (g_hf != INVALID_HANDLE_VALUE) {
+            DWORD written = 0;
+            ::WriteFile(g_hf, line.data(), static_cast<DWORD>(line.size()), &written, nullptr);
+            ::WriteFile(g_hf, "\r\n", 2, &written, nullptr);
+            ::FlushFileBuffers(g_hf);
+        }
+    });
+}
+
 }  // namespace
 
 int main(int /*argc*/, char** /*argv*/) {
@@ -249,6 +292,7 @@ int main(int /*argc*/, char** /*argv*/) {
     ::SetUnhandledExceptionFilter(apxCrashFilter);
     std::set_terminate(apxTerminateHandler);
     _set_invalid_parameter_handler(apxInvalidParamHandler);
+    startFileLogging();  // GUI 子系统没有 stderr，日志必须落盘（错误排查依赖它）
     ensurePanelFirewallRule();
     snapshotModules();
     crashForensicsSelfCheck();

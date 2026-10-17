@@ -12,7 +12,9 @@ import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import com.allperiph.R
+import com.allperiph.core.ScreenOpenRequestEvent
 import com.allperiph.shared.accessibility.ApxAccessibilityService
+import com.allperiph.shared.event.EventBus
 import com.allperiph.shared.net.ControlServer
 import com.allperiph.shared.net.ControlEndpoint
 import com.allperiph.shared.net.FileReceiver
@@ -80,6 +82,12 @@ class ControlledService : Service() {
         if (server == null) server = ControlServer(endpoint = controlEndpoint)
         Companion.server = server
         server?.onClipboardChange = { text -> server?.sendReverseClipboard(text) }
+        // 0x05 开副屏请求：PC 面板开启副屏推流时下发 → 广播 ScreenOpenRequestEvent，
+        // 由 AgentForegroundService.onPcOpenScreen 拉起副屏页（前台直接弹；
+        // 后台被 Android 拦截时走通知「副屏」按钮兜底）。此前手机端不设该回调，
+        // ControlServer 只打日志忽略 —— PC 推流后手机停在主界面毫无反应，
+        // 帧全部进了 Renderer.droppedNoSurface。
+        server?.onOpenScreenRequest = { EventBus.post(ScreenOpenRequestEvent()) }
         // 0x10 模块开关（v184）：PC 面板拨"无线"开关 → 挂起/恢复被控（监听保留，可随时恢复）
         server?.onModuleToggle = { id, on ->
             if (id == "wireless") {

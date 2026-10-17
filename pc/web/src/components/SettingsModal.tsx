@@ -12,6 +12,18 @@ export const SettingsModal: React.FC<Props> = ({ open, onClose, state }) => {
   const [logLevel, setLogLevel] = useState(state?.config.logLevel as string || 'info');
   const [mbps, setMbps] = useState(state?.config.bitrateMbps ?? 8);
 
+  // 传输状态（C++ buildState.transports）—— USB gadget 挂载三态诊断
+  const tp = (state?.transports ?? {}) as {
+    usbDevice?: boolean; usbNcm?: boolean; usbHid?: boolean;
+    usbName?: string; usbSpeed?: string; btSupported?: boolean;
+  };
+  const usbSpeedText = tp.usbSpeed && tp.usbSpeed !== 'unknown' ? ` · ${tp.usbSpeed}` : '';
+  const usbLine = !tp.usbDevice
+    ? '未检测到手机（检查 USB 线 / 手机端 USB 开关）'
+    : tp.usbNcm
+      ? `NCM 已挂载${usbSpeedText}`
+      : '设备在线，NCM 未挂载（手机端重开「有线（USB）」开关）';
+
   React.useEffect(() => {
     if (state) {
       setAdaptive(!!state.config.adaptiveBitrate);
@@ -36,6 +48,23 @@ export const SettingsModal: React.FC<Props> = ({ open, onClose, state }) => {
           <span className="section-title">设置</span>
           <button className="text-on-tertiary hover:text-on-surface text-[18px] leading-none" onClick={onClose}>✕</button>
         </div>
+
+        {/* 传输状态 —— 上游设计「BT/USB 状态走设置页」（App.tsx 第四格注释） */}
+        <div className="flex items-center justify-between py-3 border-b border-stroke gap-3">
+          <div className="body-text shrink-0">USB 传输</div>
+          <div className="data-text text-right">
+            <div>{usbLine}</div>
+            {tp.usbDevice && tp.usbName && (
+              <div className="text-on-tertiary">{tp.usbName}</div>
+            )}
+          </div>
+        </div>
+        {tp.btSupported && (
+          <div className="flex items-center justify-between py-3 border-b border-stroke">
+            <div className="body-text">蓝牙 HID</div>
+            <div className="data-text">本机支持</div>
+          </div>
+        )}
 
         <div className="flex items-center justify-between py-3 border-b border-stroke">
           <div className="body-text">副屏自适应码率</div>
