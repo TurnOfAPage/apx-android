@@ -63,6 +63,9 @@ object TvInjector {
     private var touchDownY = -1f
     private var touchDownAt = 0L
 
+    /** P1-5：当前是否处于「真实触摸流」拖拽中（pressDown 注入 DOWN 成功，后续 MOVE/UP 走同一通道实时跟随） */
+    private var streamTouch = false
+
     /** 手柄按钮上一帧状态（用于边沿检测） */
     private var lastGamepadButtons = 0
 
@@ -148,6 +151,9 @@ object TvInjector {
     private const val SCREEN_REFRESH_MS = 1_000L
     private var lastScreenRefreshMs = 0L
 
+    /** P0-2：滚轮合并窗口 —— 窗口内的多格 notches 合成一次滑动，约 100ms 最多发一条 */
+    private const val SCROLL_THROTTLE_MS = 100L
+
     private fun refreshScreen(force: Boolean = false) {
         val now = android.os.SystemClock.uptimeMillis()
         if (!force && screenW > 0 && screenH > 0 && now - lastScreenRefreshMs < SCREEN_REFRESH_MS) return
@@ -187,6 +193,9 @@ object TvInjector {
             cursorY = (cursorY + y).coerceIn(0f, screenH.toFloat())
         }
         overlay?.move(cursorX, cursorY)
+        // P1-5：拖拽中（真实触摸流已开）每个移动帧同步注入 MOVE —— 对端实时跟随，
+        // 不再等抬起时才整段回放 swipe。
+        if (streamTouch && touchDownX >= 0f) injectTouch(MotionEvent.ACTION_MOVE, cursorX, cursorY)
     }
 
     fun click() = tapAt(cursorX, cursorY)
@@ -243,11 +252,22 @@ object TvInjector {
         touchDownX = cursorX
         touchDownY = cursorY
         touchDownAt = SystemClock.uptimeMillis()
+        // P1-5：能拿到 INJECT_EVENTS 时直接开一条真实触摸流（按下沿注入 DOWN），
+        // 后续移动帧在 cursorMove 里注入 UP 实时跟随；拿不到权限则退回原 finishStroke 回放。
+        streamTouch = injectTouch(MotionEvent.ACTION_DOWN, cursorX, cursorY)
     }
 
     /** 在当前光标处"抬起"：不动=轻点或长按（≥500ms），移动=拖拽（时长取实际值） */
     fun pressUp() {
         if (touchDownX < 0f) return
+        if (streamTouch) {
+            // 真实触摸流：抬起沿直接注入 UP，一笔结束（拖拽期间 MOVE 已逐帧注入）
+            injectTouch(MotionEvent.ACTION_UP, cursorX, cursorY)
+            streamTouch = false
+            touchDownX = -1f
+            touchDownY = -1f
+            return
+        }
         val dur = SystemClock.uptimeMillis() - touchDownAt
         finishStroke(touchDownX, touchDownY, cursorX, cursorY, dur)
         touchDownX = -1f
@@ -282,10 +302,47 @@ object TvInjector {
         }
     }
 
-    /** 滚轮 → 被控端滚动（一格 ≈ 屏高 1/10；正 = 内容上滚 = 手指上滑）。以前滚轮帧被直接忽略。 */
+    // ---- P0-2：滚轮合并/节流状态（注入线程写、scroll 线程读写，统一在 scrollLock 内）----
+    private val scrollLock = Any()
+    private var pendingScrollNotches = 0
+    private var scrollFlushScheduled = false
+    private var lastScrollAt = 0L
+    private val scrollThread: android.os.HandlerThread by lazy {
+        android.os.HandlerThread("apx-scroll").apply { start() }
+    }
+    private val scrollHandler: android.os.Handler by lazy { android.os.Handler(scrollThread.looper) }
+
+    /**
+     * 滚轮 → 被控端滚动。P0-2 修复：
+     *  - 合并同一节流窗内的多格 notches（原来每格每帧各发一条 220ms swipe，快甩时
+     *    滑动指令互相叠加、页面疯狂连跳 —— 所谓「滚轮爆炸」）；
+     *  - ~100ms 节流：窗口内只发一次，尾帧靠 postDelayed 补发，持续滑动不丢格；
+     *  - 单次滑动距离由屏高 1/10/格 改为屏高 1/4/格（合并几格按几格线性放大）。
+     */
     fun scroll(notches: Int) {
         if (notches == 0) return
-        val step = screenH / 10f * notches
+        synchronized(scrollLock) {
+            pendingScrollNotches += notches
+            if (scrollFlushScheduled) return
+            scrollFlushScheduled = true
+            val wait = SCROLL_THROTTLE_MS - (SystemClock.uptimeMillis() - lastScrollAt)
+            if (wait <= 0) scrollHandler.post { flushScroll() }
+            else scrollHandler.postDelayed({ flushScroll() }, wait)
+        }
+    }
+
+    /** 取走合并的 notches 发一次滑动（在 scroll 线程串行执行，滑动期间到达的格子留到下一窗） */
+    private fun flushScroll() {
+        val n = synchronized(scrollLock) {
+            scrollFlushScheduled = false
+            val v = pendingScrollNotches
+            if (v == 0) return
+            pendingScrollNotches = 0
+            lastScrollAt = SystemClock.uptimeMillis()
+            v
+        }
+        refreshScreen()
+        val step = screenH / 4f * n
         val s = "input swipe ${cursorX.toInt()} ${cursorY.toInt()} ${cursorX.toInt()} ${(cursorY - step).toInt()} 220"
         if (platform?.accessibilityFirst == true) {
             if (systemReady() && ApxAccessibilityService.instance?.swipe(cursorX, cursorY, cursorX, cursorY - step, 220) == true) return
@@ -294,6 +351,38 @@ object TvInjector {
             if (RootInput.available && RootInput.run(s)) return
             if (systemReady()) ApxAccessibilityService.instance?.swipe(cursorX, cursorY, cursorX, cursorY - step, 220)
         }
+    }
+
+    /**
+     * P1-5：向 InputManager 注入真实触摸事件（SOURCE_TOUCHSCREEN），实现拖拽的
+     * DOWN / MOVE / UP 实时流式注入。需 INJECT_EVENTS 权限（与 gamepad 注入同一条
+     * 反射路径）；拿不到就返回 false，调用方退回 swipe 回放 —— 无障碍 dispatchGesture
+     * 不支持「中途续接」的流式手势，工程里也没有 touchMove 抽象，这是唯一能做到
+     * 按下/移动/抬起逐帧跟随的通道。
+     */
+    private fun injectTouch(action: Int, x: Float, y: Float): Boolean {
+        val im = touchInjector() ?: return false
+        val t = SystemClock.uptimeMillis()
+        val ev = MotionEvent.obtain(
+            t, t, action, 1,
+            arrayOf(MotionEvent.PointerProperties().apply { id = 0 }),
+            arrayOf(MotionEvent.PointerCoords().apply {
+                setAxisValue(MotionEvent.AXIS_X, x)
+                setAxisValue(MotionEvent.AXIS_Y, y)
+            }),
+            1f, 1f, 0f, 0f, 0, 0, InputDevice.SOURCE_TOUCHSCREEN, 0
+        )
+        val ok = try { injectInputEventMethod?.invoke(im, ev, 0) == true } catch (_: Throwable) { false }
+        ev.recycle()
+        return ok
+    }
+
+    /** 触摸流注入通道：没 INJECT_EVENTS 权限 / 反射不可用时返回 null（退回回放路径） */
+    private fun touchInjector(): InputManager? {
+        val c = ctx ?: return null
+        if (c.checkSelfPermission("android.permission.INJECT_EVENTS") != android.content.pm.PackageManager.PERMISSION_GRANTED) return null
+        if (injectInputEventMethod == null) return null
+        return c.getSystemService(Context.INPUT_SERVICE) as? InputManager
     }
 
     fun key(kc: Int, down: Boolean) {
