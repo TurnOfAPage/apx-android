@@ -369,8 +369,11 @@ object TvInjector {
             arrayOf(MotionEvent.PointerCoords().apply {
                 setAxisValue(MotionEvent.AXIS_X, x)
                 setAxisValue(MotionEvent.AXIS_Y, y)
+                // 压力/尺寸走坐标轴携带（SDK 的 obtain 实参在此位置只收 Int，见下一行）
+                setAxisValue(MotionEvent.AXIS_PRESSURE, 1f)
+                setAxisValue(MotionEvent.AXIS_SIZE, 1f)
             }),
-            1f, 1f, 0f, 0f, 0, 0, InputDevice.SOURCE_TOUCHSCREEN, 0
+            0, 0, 1f, 1f, 0, 0, InputDevice.SOURCE_TOUCHSCREEN, 0
         )
         val ok = try { injectInputEventMethod?.invoke(im, ev, 0) == true } catch (_: Throwable) { false }
         ev.recycle()
