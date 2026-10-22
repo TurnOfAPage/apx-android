@@ -12,7 +12,7 @@ data class TouchpadFrame(
     val buttons: Int,   // bit0 左, bit1 右, bit2 中
     val wheel: Int = 0, // 垂直滚动（+ = 向上）
     val pan: Int = 0,   // 水平滚动
-    val consumer: Int = 0, // v1.7c：≠0 时走 Consumer Report 4（u16 位图，如捻合缩放）
+    val consumer: Int = 0, // v1.7c：≠0 时走 Consumer Report 4（u16 位图，如捏合缩放）
     val tsNs: Long = 0L,
 )
 
@@ -25,7 +25,7 @@ interface TouchpadSink { fun send(f: TouchpadFrame) }
 enum class GestureFeedback {
     DRAG_LOCK,      // 长按锁定拖拽（现在可以拖了）
     SCROLL_ENTER,   // 双指滑动进入滚动
-    ZOOM,           // 捻合跨过缩放阈值
+    ZOOM,           // 捏合跨过缩放阈值
     RIGHT_TAP,      // 双指点按 → 右键
     RIGHT_DRAG,     // 双指长按 → 右键拖拽
     MIDDLE,         // 三指按下 → 中键
@@ -161,7 +161,7 @@ class GestureEngine(private val sink: TouchpadSink) {
                 downTime = ev.eventTime; activePointers = 1; pendingButtons = 0
                 dragArmed = false; dragSent = false
                 scrollEntered = false
-                twoFingerBaseDist = 0f      // 新的一次触摸：捻合基线重新量
+                twoFingerBaseDist = 0f      // 新的一次触摸：捏合基线重新量
                 fracX = 0f; fracY = 0f      // 新的一笔：清掉上一笔残留的亚像素余数
                 gestureConsumed = false     // (a) 新的一笔：清掉上一笔的消费锁存
                 threeDownTime = 0L
@@ -174,9 +174,9 @@ class GestureEngine(private val sink: TouchpadSink) {
                     twoFingerDownTime = ev.eventTime
                     val (cx, cy) = centroid(ev)
                     twoFingerCx = cx; twoFingerCy = cy
-                    // ★ 捻合基线：这个字段此前**从来没有赋过值**，恒为 0，于是下面
-                    //   `if (twoFingerBaseDist > 0f)` 永远进不去 —— 双指捻合缩放（Consumer
-                    //   Report 的缩放位）等于完全失效，用户怎么捻都没反应。
+                    // ★ 捏合基线：这个字段此前**从来没有赋过值**，恒为 0，于是下面
+                    //   `if (twoFingerBaseDist > 0f)` 永远进不去 —— 双指捏合缩放（Consumer
+                    //   Report 的缩放位）等于完全失效，用户怎么捏都没反应。
                     twoFingerBaseDist = fingerDist(ev)
                 }
                 scrollEntered = false
