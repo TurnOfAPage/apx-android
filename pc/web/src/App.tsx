@@ -43,6 +43,9 @@ export default function App() {
     setRemoteInputOpen(true);
   }), []);
 
+  // 托盘「文件传输…」→ C++ 唤回面板后推事件，在此打开文件传输弹窗
+  useEffect(() => bridge.onEvent('open-file-panel', () => setFileOpen(true)), []);
+
   const handleManualConnect = async (host: string, port: number) => {
     if (!host) return;
     await bridge.act('session.connectManual', { host, port });

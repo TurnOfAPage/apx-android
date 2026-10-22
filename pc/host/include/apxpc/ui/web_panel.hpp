@@ -6,7 +6,7 @@
 //     ① 创建 WebView2 窗口并加载 dist/index.html（或 exe 内嵌资源）
 //     ② 每 400ms 把宿主状态快照 PostWebMessageAsJson 推给前端
 //     ③ 接收前端 postMessage（动作请求 / 查询 / 文件选择对话框等），分发到
-//        既有的 WirelessSession / MediaSession / ActionRouter / TrayIcon
+//        既有 WirelessSession / MediaSession / ActionRouter / TrayIcon
 //
 //   · 托盘保留（WebView2 本身做不了托盘），右键菜单回调改为 ShowWindow 而
 //     不是开浏览器 —— 与原 Win32 面板的托盘行为一致。
@@ -59,7 +59,7 @@ namespace apxpc::hotkey { class HotkeyManager; }
 
 namespace apxpc::ui {
 
-// ———————————————— 宿主对象捆绑（给 web_panel 访问） ———————————————
+// ———————————————— 宿主对象捆绑（给 web_panel 访问） ————————————————
 // 把 desktop_main.cpp / 原 panel_win32.cpp 里散落在 Panel struct 里的所有宿主对象
 // 收进一个可共享的 bundle —— web_panel 只通过它访问，不直接 include 具体实现。
 // 这些对象的所有权属于调用方（desktop_main.cpp）；bundle 里放裸指针/引用。
@@ -83,10 +83,15 @@ struct HostBundle {
     std::string                  configPath;
 };
 
-// ———————————————— 运行（阻塞直到退出） ———————————————
+// ———————————————— 运行（阻塞直到退出） ————————————————
 // webDir：前端 dist/ 目录（或 exe 内嵌资源解压后的临时目录）。空则用 exe 目录下的 ./web。
 // bundle：宿主对象捆绑（上面这些裸指针都可以空 —— 空的时候前端只显示"功能未初始化"）。
 int runWebPanel(const HostBundle& bundle, const std::string& webDir = {});
+
+// ———————————————— 文件接收通知（desktop_main 在 FileReceiver 接收线程调用） ————————————————
+// 托盘气泡提示 + 推 on-file-received 事件给前端文件面板；面板未就绪时仅记日志。
+// PostWebMessageAsJson 线程安全，接收线程可直接调（同 web_panel.cpp postEvent 注释的约定）。
+void notifyFileReceived(const std::string& path);
 
 // ———————————————— 平台探测 ———————————————
 bool webPanelAvailable();
