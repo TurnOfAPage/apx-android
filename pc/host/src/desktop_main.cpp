@@ -159,7 +159,7 @@ LONG WINAPI apxCrashFilter(EXCEPTION_POINTERS* ep) {
 }
 
 LONG WINAPI apxVehHandler(EXCEPTION_POINTERS* ep) {
-    if (!ep || !ep->ExceptionRecord) return EXCEPTION_CONTINUE_SEARCH;
+    if (!ep) return EXCEPTION_CONTINUE_SEARCH;
     const DWORD code = ep->ExceptionRecord->ExceptionCode;
     if (code != 0xC0000409u && code != 0xC0000005u && code != 0xC000001Du && code != 0xC0000374u)
         return EXCEPTION_CONTINUE_SEARCH;
@@ -207,7 +207,7 @@ void apxInvalidParamHandler(const wchar_t* expr, const wchar_t* func, const wcha
             const int n = std::swprintf(buf, 1024, L"invalid parameter: expr=%s func=%s file=%s line=%u\r\n",
                                         expr ? expr : L"?", func ? func : L"?", file ? file : L"?", line);
             DWORD written = 0;
-            ::WriteFile(f, buf, static_cast<DWORD>(n * sizeof(wchar_t)), &written, nullptr);
+            if (n > 0) ::WriteFile(f, buf, static_cast<DWORD>(n), &written, nullptr);
             ::CloseHandle(f);
         }
     }
@@ -352,9 +352,13 @@ int main(int /*argc*/, char** /*argv*/) {
 
     if (cfg.autostart) apxpc::tray::setAutostart(true);
 
-    // FileReceiver 后台监听（9512 端口）—— 收到文件托盘气泡提示
+    // FileReceiver 后台监听（9512 端口）—— 收到文件：托盘气泡提示 + 推给前端文件面板。
+    // 回调跑在接收线程；notifyFileReceived 内部 PostWebMessageAsJson（线程安全）。
 #if defined(_WIN32)
-    fileRecv->start(9512, std::string{}, nullptr);  // 桌面端无接收回调，仅记录 + 写日志
+    fileRecv->start(9512, std::string{}, [](const std::string& path, uint64_t size) {
+        APX_LOGI("收到对端文件: {}（{} 字节）", path.c_str(), size);
+        apxpc::ui::notifyFileReceived(path);
+    });
 #endif
 
     // 打包进 HostBundle
