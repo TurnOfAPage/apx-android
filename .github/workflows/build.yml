@@ -240,10 +240,26 @@ jobs:
             -DAPXPC_BUILD_UI=ON -DAPXPC_BUILD_UI_WEBVIEW2=ON
           if (-not (Test-Path build_tidy/compile_commands.json)) { throw "compile_commands.json 未生成" }
 
+      # windows-latest 镜像里 clang-tidy 不一定在 PATH（VS 自带那份的路径随版本变），
+      # 所以：先用 vswhere 动态定位（排除 ARM64），再按已知 x64 路径找，最后 choco 兜底。
+      # 注意：GitHub 的 job 级 continue-on-error 不生效，必须落在 step 上。
       - name: Locate clang-tidy
         continue-on-error: true
         shell: pwsh
         run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          if ($vs) {
+            # 递归查找会先命中 ARM64 版（目录排序在前），在 x64 runner 上执行会报
+            # "not compatible with the version of Windows" —— 必须排除，只取 x64。
+            $t = Get-ChildItem "$vs\VC\Tools\Llvm" -Recurse -Filter clang-tidy.exe -ErrorAction SilentlyContinue |
+                 Where-Object { $_.FullName -notmatch '\\ARM64\\' } | Select-Object -First 1
+            if ($t) {
+              Write-Host "found bundled clang-tidy: $($t.FullName)"
+              $t.DirectoryName | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+              exit 0
+            }
+          }
+          # vswhere 落空 -> 按已知 VS 路径找（都是 x64\bin，非递归，不会命中 ARM64）
           # VS 18 (2026) / VS 17 (2022) 路径都试一下
           $vsLlvm = @(
             "C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\Llvm\x64\bin",
