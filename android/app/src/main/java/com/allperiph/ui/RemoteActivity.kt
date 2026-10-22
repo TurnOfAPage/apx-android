@@ -51,6 +51,8 @@ import com.allperiph.wireless.ControlTarget
  *    翻成 DPAD / ENTER / BACK / HOME / MENU —— 与「TV 遥控」快捷键条同一条路）；
  *  · 音量 / 静音 / 上一曲 / 播放 / 下一曲 → [HotkeyController]（多媒体位图）；
  *  · 关机 / 重启 → [com.allperiph.wireless.TvControllerClient.power]（0x22，需被控端 root）。
+ *  · 底部**触摸控制条**（v205，手机控手机 / TV）：单点 = 确认（当前光标处左键点击），
+ *    按住滑动 = 移动被控端光标（0x01 相对位移帧，被控端浮层光标跟随）。
  */
 class RemoteActivity : Activity() {
 
@@ -123,6 +125,11 @@ class RemoteActivity : Activity() {
             setTextColor(getColor(R.color.md_on_surface_variant))
             textSize = 11f
             setPadding(dp(2), dp(6), dp(2), 0)
+        })
+
+        // —— 底部触摸控制条：单点 = 确认，按住滑动 = 移动被控端光标（v205）——
+        col.addView(touchPad(), LinearLayout.LayoutParams(-1, if (landscape) dp(84) else dp(112)).apply {
+            topMargin = dp(6)
         })
 
         setContentView(root)
@@ -348,6 +355,72 @@ class RemoteActivity : Activity() {
             }
         }
 
+    // ————————————————————————————— 触摸控制条 —————————————————————————————
+
+    /** 条上手势状态：单点 = 确认；按住滑动 = 移动被控端光标 */
+    private var padDownX = 0f
+    private var padDownY = 0f
+    private var padDownAt = 0L
+    private var padLastX = 0f
+    private var padLastY = 0f
+
+    /**
+     * 触摸控制条 —— 手机控制手机 / TV 时用触摸控制被控端光标：
+     *  · 单点（位移 <18dp 且 <350ms）= 确认：在**当前光标处**发一次左键点击（0x01 按下→抬起）；
+     *  · 按住滑动 = 移动光标：相对位移帧（0x01，dx/dy），被控端浮层光标跟随；
+     *  · 未连接受控设备：按下即提示，不发任何帧（与按键行同口径）。
+     *
+     * 与触控板页（GestureEngine）的关系：本条是**遥控器页内**的轻量实现，
+     * 只做「移动 + 确认」两个动作，不带拖拽 / 滚动 / 右键 —— 遥控器场景用不上。
+     */
+    private fun touchPad(): TextView = TextView(this).apply {
+        text = "触摸控制\n单点 = 确认 · 按住滑动 = 移动光标"
+        textSize = 12f
+        gravity = Gravity.CENTER
+        setTextColor(getColor(R.color.md_on_surface_variant))
+        background = ApKit.shape(
+            getColor(R.color.md_surface),
+            radiusPx = dp(14).toFloat(),
+            strokeColor = getColor(R.color.card_stroke),
+            strokePx = dp(1),
+        )
+        isClickable = true
+        isFocusable = true
+        setOnTouchListener { v, e ->
+            when (e.actionMasked) {
+                android.view.MotionEvent.ACTION_DOWN -> {
+                    padDownX = e.x; padDownY = e.y
+                    padLastX = e.x; padLastY = e.y
+                    padDownAt = android.os.SystemClock.uptimeMillis()
+                    if (!ControlTarget.isControlling() || ControlTarget.controlClient == null) {
+                        Toast.makeText(this@RemoteActivity, getString(R.string.ui_remote_toast_device_connect_not), Toast.LENGTH_SHORT).show()
+                    }
+                }
+                android.view.MotionEvent.ACTION_MOVE -> {
+                    if (ControlTarget.isControlling()) {
+                        val dx = ((e.x - padLastX) * TOUCH_GAIN).toInt().coerceIn(-120, 120)
+                        val dy = ((e.y - padLastY) * TOUCH_GAIN).toInt().coerceIn(-120, 120)
+                        if (dx != 0 || dy != 0) {
+                            ControlTarget.controlClient?.mouse(0, dx, dy, 0)
+                            padLastX = e.x; padLastY = e.y
+                        }
+                    }
+                }
+                android.view.MotionEvent.ACTION_UP -> {
+                    val dur = android.os.SystemClock.uptimeMillis() - padDownAt
+                    val moved = Math.hypot((e.x - padDownX).toDouble(), (e.y - padDownY).toDouble())
+                    if (ControlTarget.isControlling() && moved < dp(TAP_SLOP_DP) && dur < TAP_MS) {
+                        val cli = ControlTarget.controlClient
+                        cli?.mouse(1, 0, 0, 0)
+                        handler.postDelayed({ cli?.mouse(0, 0, 0, 0) }, 40)
+                        Feedback.tap(v)
+                    }
+                }
+            }
+            true
+        }
+    }
+
     // ————————————————————————————— 内部 —————————————————————————————
 
     /** 目标设备状态：没有目标时按键会退化成本机键盘，必须说清楚 */
@@ -430,5 +503,10 @@ class RemoteActivity : Activity() {
         const val U_HOME = 0x4A     // 遥控器「主页」
         const val U_MENU = 0x65     // 遥控器「菜单」（Application）
         const val U_POWER = 0x66    // 键盘 Power（软电源：锁屏 / 亮屏）
+
+        // 触摸控制条（v205）
+        const val TOUCH_GAIN = 1.5f   // 手指位移 → 光标位移的增益
+        const val TAP_MS = 350L       // 单点判定：最长按压时长
+        const val TAP_SLOP_DP = 18    // 单点判定：最大位移（dp）
     }
 }
