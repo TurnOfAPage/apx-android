@@ -8,7 +8,11 @@ project(apx_tv_uinput LANGUAGES C)
 add_library(apxtv SHARED apx_uinput.c)
 
 # JNI 符号名里的类名：Java_<APX_JNI_CLASS>_<method>
-target_compile_definitions(apxtv PRIVATE APX_JNI_CLASS=com_allperiph_tv_core_UinputGamepad)
+# fix：v1.8 起 UinputGamepad 已提取到共享模块 com.allperiph.shared.input（手机端与
+# TV 端共用同一个 Kotlin 类），符号名必须与之一致；旧值 com_allperiph_tv_core_
+# UinputGamepad 是提取前的包名，导致 JVM 解析不到符号（No implementation ...），
+# TV 端虚拟手柄自 v1.8 起静默不可用。
+target_compile_definitions(apxtv PRIVATE APX_JNI_CLASS=com_allperiph_shared_input_UinputGamepad)
 
 find_library(APX_LOG_LIB log)
 if(APX_LOG_LIB)
