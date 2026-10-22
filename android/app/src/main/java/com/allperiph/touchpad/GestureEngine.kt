@@ -12,7 +12,7 @@ data class TouchpadFrame(
     val buttons: Int,   // bit0 左, bit1 右, bit2 中
     val wheel: Int = 0, // 垂直滚动（+ = 向上）
     val pan: Int = 0,   // 水平滚动
-    val consumer: Int = 0, // v1.7c：≠0 时走 Consumer Report 4（u16 位图，如捏合缩放）
+    val consumer: Int = 0, // v1.7c：≠0 时走 Consumer Report 4（u16 位图，如捻合缩放）
     val tsNs: Long = 0L,
 )
 
@@ -25,7 +25,7 @@ interface TouchpadSink { fun send(f: TouchpadFrame) }
 enum class GestureFeedback {
     DRAG_LOCK,      // 长按锁定拖拽（现在可以拖了）
     SCROLL_ENTER,   // 双指滑动进入滚动
-    ZOOM,           // 捏合跨过缩放阈值
+    ZOOM,           // 捻合跨过缩放阈值
     RIGHT_TAP,      // 双指点按 → 右键
     RIGHT_DRAG,     // 双指长按 → 右键拖拽
     MIDDLE,         // 三指按下 → 中键
@@ -65,8 +65,7 @@ class GestureEngine(private val sink: TouchpadSink) {
         lastWheelV = wheel; lastPanV = pan; lastScrollT = nowMs
     }
 
-    /**
-     * 停止惯性：递增版本号，旧线程在下次循环检查时自行退出。
+    /** 停止惯性：递增版本号，旧线程在下次循环检查时自行退出。
      * 比 interrupt() 更可靠——interrupt 依赖 sleep 被唤醒，
      * 而线程如果恰好在执行 sink.send() 则不会被中断。
      */
@@ -114,6 +113,17 @@ class GestureEngine(private val sink: TouchpadSink) {
     private var dragArmed = false
     private var dragSent = false
 
+    // ---- 修复面补全 ----
+    // (a) 手势消费锁存：双指/三指点按等复合手势已发出后置 true，
+    //     末指抬起时不再补发左键点按（否则右键后又跟一下左键）。
+    private var gestureConsumed = false
+    // (d) 三指起手基准：判「三指点按」用的位移/时长起点
+    private var threeDownTime = 0L
+    private var threeDownX = 0f
+    private var threeDownY = 0f
+    // (c) 最近一次真实移动的 eventTime：长按静止自动 arm 保守化的依据
+    private var lastMoveT = 0L
+
     fun armDrag(): Boolean {
         if (activePointers != 1 || dragSent) {
             com.allperiph.shared.util.Log.i("GestureEngine",
@@ -151,8 +161,11 @@ class GestureEngine(private val sink: TouchpadSink) {
                 downTime = ev.eventTime; activePointers = 1; pendingButtons = 0
                 dragArmed = false; dragSent = false
                 scrollEntered = false
-                twoFingerBaseDist = 0f      // 新的一次触摸：捏合基线重新量
+                twoFingerBaseDist = 0f      // 新的一次触摸：捻合基线重新量
                 fracX = 0f; fracY = 0f      // 新的一笔：清掉上一笔残留的亚像素余数
+                gestureConsumed = false     // (a) 新的一笔：清掉上一笔的消费锁存
+                threeDownTime = 0L
+                lastMoveT = ev.eventTime    // (c) 静止计时起点
                 stopInertia()
             }
             MotionEvent.ACTION_POINTER_DOWN -> {
@@ -161,14 +174,24 @@ class GestureEngine(private val sink: TouchpadSink) {
                     twoFingerDownTime = ev.eventTime
                     val (cx, cy) = centroid(ev)
                     twoFingerCx = cx; twoFingerCy = cy
-                    // ★ 捏合基线：这个字段此前**从来没有赋过值**，恒为 0，于是下面
-                    //   `if (twoFingerBaseDist > 0f)` 永远进不去 —— 双指捏合缩放（Consumer
-                    //   Report 的缩放位）等于完全失效，用户怎么捏都没反应。
+                    // ★ 捻合基线：这个字段此前**从来没有赋过值**，恒为 0，于是下面
+                    //   `if (twoFingerBaseDist > 0f)` 永远进不去 —— 双指捻合缩放（Consumer
+                    //   Report 的缩放位）等于完全失效，用户怎么捻都没反应。
                     twoFingerBaseDist = fingerDist(ev)
                 }
                 scrollEntered = false
                 dragArmed = false
                 if (dragSent) { sink.send(TouchpadFrame(0, 0, 0, tsNs = ev.eventTime * 1_000_000L)); dragSent = false }
+                // (b) 指数变化重建基准：新指落下时把 lastX/lastY 重置为当前质心 ——
+                //     否则下帧 dx = 新质心 - 旧单指坐标，起手瞬间甩出一帧大位移（突跳）。
+                val (cx, cy) = centroid(ev)
+                lastX = cx; lastY = cy
+                fracX = 0f; fracY = 0f
+                lastMoveT = ev.eventTime
+                if (ev.pointerCount == 3) {
+                    threeDownTime = ev.eventTime
+                    threeDownX = cx; threeDownY = cy
+                }
             }
             MotionEvent.ACTION_MOVE -> handleMove(ev)
             MotionEvent.ACTION_POINTER_UP -> {
@@ -176,18 +199,47 @@ class GestureEngine(private val sink: TouchpadSink) {
                     val dur = ev.eventTime - twoFingerDownTime
                     val (cx, cy) = centroid(ev)
                     val moved = hypot((cx - twoFingerCx).toDouble(), (cy - twoFingerCy).toDouble())
-                    if (dur < TAP_MS && moved < TAP_SLOP) {
+                    if (!gestureConsumed && dur < TAP_MS && moved < TAP_SLOP) {
                         val now = ev.eventTime
                         if (now - lastTwoTapSent > 300) {
                             lastTwoTapSent = now
                             sink.send(TouchpadFrame(0, 0, 0x02, tsNs = now * 1_000_000L))
                             sink.send(TouchpadFrame(0, 0, 0x00, tsNs = now * 1_000_000L))
                             onFeedback?.invoke(GestureFeedback.RIGHT_TAP)
+                            // (a) 双指点按已消费本笔手势：末指抬起不再补发左键
+                            gestureConsumed = true
                         }
                     }
                     twoFingerDownTime = 0L
                 }
+                // (d) 三指点按：3→2 抬起沿，位移与时长都没超阈 → 补发中键按下+抬起；
+                //     静止三指在 ACTION_MOVE 的 case 3 里不会发中键（那条只认有位移的）。
+                if (activePointers == 3 && threeDownTime > 0L && pendingButtons and 0x04 == 0) {
+                    val dur = ev.eventTime - threeDownTime
+                    val (cx, cy) = centroid(ev)
+                    val moved3 = hypot((cx - threeDownX).toDouble(), (cy - threeDownY).toDouble())
+                    if (dur < TAP_MS && moved3 < TAP_SLOP) {
+                        val now = ev.eventTime
+                        sink.send(TouchpadFrame(0, 0, 0x04, tsNs = now * 1_000_000L))
+                        sink.send(TouchpadFrame(0, 0, 0x00, tsNs = now * 1_000_000L))
+                        onFeedback?.invoke(GestureFeedback.MIDDLE)
+                        gestureConsumed = true
+                        com.allperiph.shared.util.Log.i("GestureEngine", "3-finger tap → middle click")
+                    }
+                    threeDownTime = 0L
+                }
                 if (activePointers > 0) activePointers--
+                // (b) 指数变化重建基准：抬掉一指后把 lastX/lastY 重置为**剩余手指**的
+                //     质心（2→1 即剩余那一根的坐标），消除回单指瞬间的位移突跳。
+                run {
+                    var sx = 0f; var sy = 0f; var n = 0
+                    for (i in 0 until ev.pointerCount) {
+                        if (i == ev.actionIndex) continue
+                        sx += ev.getX(i); sy += ev.getY(i); n++
+                    }
+                    if (n > 0) { lastX = sx / n; lastY = sy / n; fracX = 0f; fracY = 0f }
+                }
+                lastMoveT = ev.eventTime
             }
             MotionEvent.ACTION_UP -> {
                 val dur = ev.eventTime - downTime
@@ -196,7 +248,7 @@ class GestureEngine(private val sink: TouchpadSink) {
                     sink.send(TouchpadFrame(0, 0, 0, tsNs = ev.eventTime * 1_000_000L))
                 } else if (pendingButtons != 0) {
                     sink.send(TouchpadFrame(0, 0, 0, tsNs = ev.eventTime * 1_000_000L))
-                } else if (activePointers == 1 && dur < TAP_MS &&
+                } else if (!gestureConsumed && activePointers == 1 && dur < TAP_MS &&
                     hypot((ev.x - downX).toDouble(), (ev.y - downY).toDouble()) < TAP_SLOP) {
                     val ts = ev.eventTime * 1_000_000L
                     sink.send(TouchpadFrame(0, 0, 0x01, tsNs = ts))
@@ -210,11 +262,15 @@ class GestureEngine(private val sink: TouchpadSink) {
                 activePointers = 0
                 dragArmed = false; dragSent = false
                 twoFingerDownTime = 0L
+                gestureConsumed = false
+                threeDownTime = 0L
             }
             MotionEvent.ACTION_CANCEL -> {
                 if (dragSent) sink.send(TouchpadFrame(0, 0, 0, tsNs = ev.eventTime * 1_000_000L))
                 activePointers = 0
                 dragArmed = false; dragSent = false
+                gestureConsumed = false
+                threeDownTime = 0L
             }
         }
     }
@@ -223,16 +279,18 @@ class GestureEngine(private val sink: TouchpadSink) {
         when (activePointers) {
             1 -> {
                 val moved = hypot((ev.x - downX).toDouble(), (ev.y - downY).toDouble())
-                val dur = ev.eventTime - downTime
-                if (!dragArmed && !dragSent && moved < TAP_SLOP && dur > LONG_PRESS_MS) {
+                // (c) 跟踪最近一次真实移动：帧间位移 <0.5px 视为手抖噪声，不刷新计时
+                if (hypot((ev.x - lastX).toDouble(), (ev.y - lastY).toDouble()) >= 0.5) lastMoveT = ev.eventTime
+                // (c) 长按静止自动 arm 收紧：必须「位移已超过 TAP_SLOP（不可能再是点按）」
+                //     且「随后静止满 550ms」才 arm。旧条件是 moved < TAP_SLOP 静止 550ms 就
+                //     arm，落笔区域轻按不动也会误进拖拽；落笔点附近的长按仍走外部
+                //     armDrag()（550ms 定时器）入口，不受影响。
+                if (!dragArmed && !dragSent && moved >= TAP_SLOP && ev.eventTime - lastMoveT > LONG_PRESS_MS) {
                     dragArmed = true
-                    // ★ 这条路径**也必须震**，否则长按等于没反馈：
-                    //   手指只要有一丁点抖动，MOVE 就会在定时器之前把 dragArmed 置上，
-                    //   随后 550ms 定时器调用 armDrag() 时撞上 "already armed" 分支直接
-                    //   return true —— 一声都不震，而界面还照样显示"已锁定拖拽"。
-                    //   人手按住不可能绝对静止，所以实测多数长按走的正是这条静默路径。
-                    //   两处都震：外层的 onGestureFeedback 有 250ms 同类型节流，不会连震两下。
+                    // ★ arm 这一刻必须震：手指还在屏上，不震完全不知道已锁定拖拽；
+                    //   外层 onGestureFeedback 有 250ms 同类型节流，不会连震两下。
                     onFeedback?.invoke(GestureFeedback.DRAG_LOCK)
+                    com.allperiph.shared.util.Log.i("GestureEngine", "auto arm (moved=$moved, static > 550ms)")
                 }
                 if (dragArmed && !dragSent && moved >= TAP_SLOP) {
                     dragSent = true
@@ -279,7 +337,7 @@ class GestureEngine(private val sink: TouchpadSink) {
                 // P0-1：wheel/pan 同样是单字节有符号字段，快滑也要钳 ±127 防回绕
                 val w = (-(dy * scrollStep).toInt()).coerceIn(-127, 127)
                 val p = ((dx * scrollStep).toInt()).coerceIn(-127, 127)
-                // ★ 双指滑动**进入**滚动这一刻震一下：区分"移动光标"和"滚动页面"。
+                // ★ 双指滑动**进入**这一刻震一下：区分"移动光标"和"滚动页面"。
                 //   之后每帧都不震 —— 那会变成持续嗡嗡声。抬起再落下是新的一轮，会再震。
                 if (!scrollEntered && (w != 0 || p != 0)) {
                     scrollEntered = true
@@ -289,10 +347,17 @@ class GestureEngine(private val sink: TouchpadSink) {
                 sink.send(TouchpadFrame(0, 0, pendingButtons, wheel = w, pan = p, tsNs = ev.eventTime * 1_000_000L))
             }
             3 -> {
-                if (pendingButtons and 0x04 == 0) {
-                    pendingButtons = pendingButtons or 0x04
-                    sink.send(TouchpadFrame(0, 0, pendingButtons, tsNs = ev.eventTime * 1_000_000L))
-                    onFeedback?.invoke(GestureFeedback.MIDDLE)
+                // (d) 三指**有位移**才发中键按下；静止三指留给「三指点按」，
+                //     由 ACTION_POINTER_UP 的 3→2 抬起沿补发中键按下+抬起。
+                if (pendingButtons and 0x04 == 0 && threeDownTime > 0L) {
+                    val (cx, cy) = centroid(ev)
+                    val moved3 = hypot((cx - threeDownX).toDouble(), (cy - threeDownY).toDouble())
+                    if (moved3 >= TAP_SLOP) {
+                        pendingButtons = pendingButtons or 0x04
+                        sink.send(TouchpadFrame(0, 0, pendingButtons, tsNs = ev.eventTime * 1_000_000L))
+                        onFeedback?.invoke(GestureFeedback.MIDDLE)
+                        gestureConsumed = true
+                    }
                 }
             }
         }
