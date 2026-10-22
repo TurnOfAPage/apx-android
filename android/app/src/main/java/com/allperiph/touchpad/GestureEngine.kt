@@ -96,6 +96,10 @@ class GestureEngine(private val sink: TouchpadSink) {
 
     private var lastX = 0f
     private var lastY = 0f
+    // P0-1/P1-4：单指移动的每轴亚像素累加器 —— dx.toInt() 截断会把 <1px 的移动全丢掉；
+    // 余数（含整帧被钳 ±127 截下的超限部分）留在这里下一帧续发，位移既不丢也不回绕。
+    private var fracX = 0f
+    private var fracY = 0f
     private var downX = 0f
     private var downY = 0f
     private var downTime = 0L
@@ -148,6 +152,7 @@ class GestureEngine(private val sink: TouchpadSink) {
                 dragArmed = false; dragSent = false
                 scrollEntered = false
                 twoFingerBaseDist = 0f      // 新的一次触摸：捏合基线重新量
+                fracX = 0f; fracY = 0f      // 新的一笔：清掉上一笔残留的亚像素余数
                 stopInertia()
             }
             MotionEvent.ACTION_POINTER_DOWN -> {
@@ -243,8 +248,15 @@ class GestureEngine(private val sink: TouchpadSink) {
                     dx *= k; dy *= k
                 }
                 lastX = ev.x; lastY = ev.y
+                // P0-1/P1-4：亚像素累加 + 每帧钳位 —— 原来 dx.toInt() 直接截断，<1px 的
+                // 移动全部丢弃且 lastX 无条件前进；且快甩一帧 >127 塞进单个有符号字节
+                // 会回绕成反向位移。现在整数部分钳 ±127，余数（含超限部分）留到下一帧。
+                fracX += dx; fracY += dy
+                val idx = fracX.toInt().coerceIn(-127, 127)
+                val idy = fracY.toInt().coerceIn(-127, 127)
+                fracX -= idx; fracY -= idy
                 val btn = if (dragSent) (pendingButtons or 0x01) else pendingButtons
-                sink.send(TouchpadFrame(dx.toInt(), dy.toInt(), btn, tsNs = ev.eventTime * 1_000_000L))
+                sink.send(TouchpadFrame(idx, idy, btn, tsNs = ev.eventTime * 1_000_000L))
             }
             2 -> {
                 val d = fingerDist(ev)
@@ -264,8 +276,9 @@ class GestureEngine(private val sink: TouchpadSink) {
                 val dx = cx - lastX
                 val dy = cy - lastY
                 lastX = cx; lastY = cy
-                val w = -(dy * scrollStep).toInt()
-                val p = (dx * scrollStep).toInt()
+                // P0-1：wheel/pan 同样是单字节有符号字段，快滑也要钳 ±127 防回绕
+                val w = (-(dy * scrollStep).toInt()).coerceIn(-127, 127)
+                val p = ((dx * scrollStep).toInt()).coerceIn(-127, 127)
                 // ★ 双指滑动**进入**滚动这一刻震一下：区分"移动光标"和"滚动页面"。
                 //   之后每帧都不震 —— 那会变成持续嗡嗡声。抬起再落下是新的一轮，会再震。
                 if (!scrollEntered && (w != 0 || p != 0)) {
