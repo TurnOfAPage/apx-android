@@ -34,6 +34,9 @@ class TvControllerClient(
     private var rxBuf = ByteArray(4096)
     private var rxLen = 0
 
+    /** sendControl 断线丢帧日志节流（5s 一条）—— 前端与运行日志此前对丢帧完全无感 */
+    @Volatile private var lastDropLogAt = 0L
+
     fun connect(): Boolean {
         if (running.get()) return ready
         running.set(true)
@@ -45,7 +48,9 @@ class TvControllerClient(
     /** 建立 socket + 握手 + 启动 reader（connect 与自动重连共用） */
     private fun openSocket(): Boolean = try {
         val s = Socket()
-        s.tcpNoDelay = true; s.connect(InetSocketAddress(host, port), 5000)
+        s.tcpNoDelay = true
+        s.keepAlive = true   // 死链路探测：对端悄悄消失时让内核发探测，帮助 reader 尽早退出走重连
+        s.connect(InetSocketAddress(host, port), 5000)
         sock = s; out = s.getOutputStream()
         val tok = token.toByteArray(Charsets.UTF_8)
         val hdr = ByteArray(4); hdr[0] = (tok.size and 0xFF).toByte(); hdr[1] = ((tok.size ushr 8) and 0xFF).toByte(); hdr[2] = 0; hdr[3] = 0
@@ -129,7 +134,8 @@ class TvControllerClient(
                 val hintLen = body[1].toInt() and 0xFF
                 if (body.size < 2 + hintLen) return
                 val hint = String(body.copyOfRange(2, 2 + hintLen), Charsets.UTF_8)
-                onRemoteInputRequest?.invoke(host, hint)
+                val cb = onRemoteInputRequest
+                if (cb != null) cb(host, hint) else handleRequestInputFallback(hint)
             }
             0x26 -> {
                 // INPUT_TEXT: [0x26, flags, textLen, text...]
@@ -138,9 +144,45 @@ class TvControllerClient(
                 val textLen = (body[2].toInt() and 0xFF) or ((body[3].toInt() and 0xFF) shl 8)
                 if (body.size < 4 + textLen) return
                 val text = String(body.copyOfRange(4, 4 + textLen), Charsets.UTF_8)
-                onRemoteInputText?.invoke(text, flags)
+                val cb = onRemoteInputText
+                if (cb != null) cb(text, flags) else injectRemoteTextFallback(text, flags)
             }
             0x27 -> { onRemoteInputDone?.invoke() }
+        }
+    }
+
+    /**
+     * 0x25 兜底（新）：对端输入框获焦 → 请求本机代输。
+     * 此前 onRemoteInputRequest 全项目零赋值 —— 帧到了没人弹窗、静默丢弃：
+     * 手机控手机 / 手机控 TV 时「对端获焦自动请本机代输」整个是死的
+     * （PC 端 Ctrl9511Client 早有接线，手机端漏了这半边）。
+     * 回调在 reader 线程，弹窗必须切主线程；Android 10+ 后台启动 Activity 受限，
+     * 但收到此帧时用户正在操作控制端（前台），直接启动与被控侧 RemoteInputActivity.start 同口径。
+     */
+    private fun handleRequestInputFallback(hint: String) {
+        val ctx = com.allperiph.App.context
+        if (ctx == null) { Log.w("TvCtrl", "收到代输请求，但 App.context 未就绪"); return }
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            runCatching {
+                com.allperiph.controlled.RemoteInputActivity.start(ctx, host, hint, fromClient = true)
+            }.onFailure { Log.w("TvCtrl", "代输弹窗失败：${it.message}") }
+        }
+    }
+
+    /**
+     * 0x26 兜底（新）：对端替本机打的字落到本机获焦输入框。
+     * 与 ControlledService.injectRemoteText 同口径：退格删一格 / 正文走无障碍
+     * typeText→paste 兜底；CANCEL 留空（三端都未实现整段撤销，保留帧语义）。
+     */
+    private fun injectRemoteTextFallback(text: String, flags: Int) {
+        val svc = com.allperiph.shared.accessibility.ApxAccessibilityService.instance
+        if (svc == null) { Log.w("TvCtrl", "代输没落地：无障碍服务未就绪"); return }
+        when {
+            flags and ApxFrame.INPUT_FLAG_BACKSPACE != 0 -> svc.deleteChar()
+            flags and ApxFrame.INPUT_FLAG_CANCEL != 0 -> Unit
+            else -> if (text.isNotEmpty() && !svc.typeText(text) && !svc.paste(text)) {
+                Log.w("TvCtrl", "代输注入失败（输入框没聚焦？）")
+            }
         }
     }
 
@@ -156,13 +198,37 @@ class TvControllerClient(
         txThread = thread(name = "tvctrl-tx") {
             while (running.get()) {
                 val frame = try { txQueue.take() } catch (_: InterruptedException) { break }
-                try { out?.write(frame); out?.flush() } catch (t: Throwable) { Log.w("TvCtrl", "写出失败：${t.message}"); ready = false }
+                val target = out
+                if (target == null) continue
+                try { target.write(frame); target.flush() } catch (t: Throwable) {
+                    // fix：写失败必须区分「旧连接残留写」与「当前连接真死」。
+                    // 旧写法无条件 ready=false —— 自动重连刚把 ready 置回 true 后，
+                    // 残留在队列里的旧帧写旧流抛错会把它再次覆盖成 false，而 reader
+                    // 侧无异常、永不触发重连 → 链路钉死在「连着但 sendControl 全部
+                    // 静默丢帧」：蓝点定格、滑动/点按无反应，直到下次被动断线。
+                    if (out === target) {
+                        Log.w("TvCtrl", "写出失败：${t.message} → 关闭连接触发自动重连")
+                        ready = false
+                        runCatching { sock?.close() }   // 借 readerLoop 退出走既有重连路径
+                    } else {
+                        Log.w("TvCtrl", "忽略旧连接残留写失败：${t.message}")
+                    }
+                }
             }
         }
     }
 
     fun sendControl(body: ByteArray): Boolean {
-        if (!ready) return false
+        if (!ready) {
+            // 断线期输入帧全部静默丢弃是「功能像坏了但界面毫无提示」的元凶：
+            // 这里节流记一条（运行日志可见），链路恢复时另记一条。
+            val now = System.currentTimeMillis()
+            if (now - lastDropLogAt >= 5000) {
+                lastDropLogAt = now
+                Log.w("TvCtrl", "连接未就绪，丢弃输入帧（5s 内仅记一次）")
+            }
+            return false
+        }
         val frame = synchronized(writeLock) { seq = (seq + 1) and 0x7FFFFFFF; ApxFrame.build(ApxFrame.STREAM_CONTROL, body, seq) }
         while (txQueue.size > 512) txQueue.poll()
         return txQueue.offer(frame)

@@ -29,7 +29,7 @@
             android:layout_height="0dp"
             android:layout_weight="1">
 
-            <!-- ① 触控板页：上=手势面，下=常用快捷键条（底部留 88dp 给悬浮底栏） -->
+            <!-- ① 触控板页：上=顶部操作（文件/剪贴板），中=手势面，下=常用快捷键条（底部留 88dp 给悬浮底栏） -->
             <LinearLayout
                 android:id="@+id/pageTouchpad"
                 android:layout_width="match_parent"
@@ -38,6 +38,36 @@
                 android:paddingStart="16dp"
                 android:paddingEnd="16dp"
                 android:paddingBottom="90dp">
+
+                <!-- v1.8：文件发送 / 剪贴板 —— 从设置页提到触控板顶部，随手可达。
+                     按钮由 TouchpadFragment.ensureViews 按 id 绑定（寄生 Fragment 无自身视图树）。 -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:paddingStart="4dp"
+                    android:paddingTop="6dp"
+                    android:paddingEnd="4dp"
+                    android:paddingBottom="4dp">
+
+                    <TextView
+                        android:id="@+id/btnFileSend"
+                        style="@style/APTextButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/ui_touchpad_text_file"
+                        android:contentDescription="@string/ui_main_label_file_send" />
+
+                    <TextView
+                        android:id="@+id/btnClipSend"
+                        style="@style/APTextButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="16dp"
+                        android:text="@string/ui_touchpad_text_clipboard"
+                        android:contentDescription="@string/ui_touchpad_text_clipboard" />
+                </LinearLayout>
 
                 <FrameLayout
                     android:id="@+id/touchArea"

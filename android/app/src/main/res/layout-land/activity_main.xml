@@ -5,7 +5,7 @@
     · 顶栏（headerBar）整条隐藏 —— include 仍在，id 保留给代码
     · MIUIX 悬浮底栏（tabBar）整条隐藏 —— 改用四指左右滑切页
   · 通知栏 / 手势条由 MainActivity.applyImmersive() 一并盖掉
-    ① 触控板页：与竖屏同模板（上=手势面，下=快捷键条）
+    ① 触控板页：与竖屏同模板（上=顶部操作+手势面，下=快捷键条）
     ② 键盘页  ：全键盘铺满整屏
     ③ 状态页 / ④ 设置页：复用竖屏块（无底栏，内容可滚到底）
 -->
@@ -34,7 +34,7 @@
             android:layout_height="0dp"
             android:layout_weight="1">
 
-            <!-- ① 触控板页：与竖屏同模板（上=手势面，下=快捷键条），横屏不再左右分栏 -->
+            <!-- ① 触控板页：与竖屏同模板（上=顶部操作+手势面，下=快捷键条），横屏不再左右分栏 -->
             <LinearLayout
                 android:id="@+id/pageTouchpad"
                 android:layout_width="match_parent"
@@ -44,6 +44,35 @@
                 android:paddingTop="8dp"
                 android:paddingEnd="16dp"
                 android:paddingBottom="16dp">
+
+                <!-- v1.8：文件发送 / 剪贴板 —— 从设置页提到触控板顶部（TouchpadFragment.ensureViews 绑定） -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:paddingStart="4dp"
+                    android:paddingTop="2dp"
+                    android:paddingEnd="4dp"
+                    android:paddingBottom="4dp">
+
+                    <TextView
+                        android:id="@+id/btnFileSend"
+                        style="@style/APTextButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/ui_touchpad_text_file"
+                        android:contentDescription="@string/ui_main_label_file_send" />
+
+                    <TextView
+                        android:id="@+id/btnClipSend"
+                        style="@style/APTextButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="16dp"
+                        android:text="@string/ui_touchpad_text_clipboard"
+                        android:contentDescription="@string/ui_touchpad_text_clipboard" />
+                </LinearLayout>
 
                 <FrameLayout
                     android:id="@+id/touchArea"

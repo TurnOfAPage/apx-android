@@ -1,6 +1,9 @@
 package com.allperiph.ui
 
 import android.app.Fragment
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.Intent
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -11,10 +14,13 @@ import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.Toast
 import com.allperiph.R
 import com.allperiph.hid.HotkeyTemplates
 import com.allperiph.core.ModuleId
+import com.allperiph.shared.net.FileSender
 import com.allperiph.shared.util.Log
+import com.allperiph.wireless.ControlTarget
 
 /**
  * 触控板页 Fragment：手势面 + 液态光标 + 快捷键网格。
@@ -88,6 +94,9 @@ class TouchpadFragment : Fragment() {
 
     companion object {
         const val TAG = "TouchpadFragment"
+
+        /** 顶部「文件发送」选文件请求码（与 MainActivity 的 REQ_PICK_FILE=9002 区分） */
+        const val REQ_PICK_FILE = 9011
     }
 
     override fun onAttach(activity: android.app.Activity?) {
@@ -115,7 +124,7 @@ class TouchpadFragment : Fragment() {
     fun ensureViews() {
         if (::touchHint.isInitialized) return
         val h = host ?: return
-        // 视图由宿主交过来（见 Host 注释：自己 findViewById 会因时序拿不到， lateinit 闪退）
+        // 视图由宿主交过来（见 Host 注释：自己 findViewById 会因时序拿不到，lateinit 闪退）
         touchHint = h.hostTouchHint()
         chipRow = h.hostChipRow()
         touchArea = h.hostTouchArea()
@@ -124,6 +133,14 @@ class TouchpadFragment : Fragment() {
         (touchArea as? FrameLayout)?.let { area ->
             area.removeView(touchCursor)
             area.addView(touchCursor, FrameLayout.LayoutParams(-1, -1))
+        }
+        // 顶部「文件发送 / 剪贴板」入口（v1.8：从设置页提到触控板顶部）。
+        // 这两个按钮是 activity_main.xml 里的布局视图，随 setContentView 就绪，
+        // 晚于 add Fragment（Host 注释：Activity 字段在 add 前已 findViewById 完毕），
+        // 寄生 Fragment 无自身视图树，必须 activity.findViewById；拿不到就静默不绑。
+        activity?.let { a ->
+            a.findViewById<TextView>(R.id.btnFileSend)?.setOnClickListener { pickFileToSend() }
+            a.findViewById<TextView>(R.id.btnClipSend)?.setOnClickListener { sendClipToPeer() }
         }
     }
 
@@ -175,6 +192,61 @@ class TouchpadFragment : Fragment() {
             if (frameCount <= 3) touchHint.visibility = View.INVISIBLE // 手指落下后收起提示文字
         }
         return true
+    }
+
+    // ==================== Top actions：文件发送 / 剪贴板 ====================
+
+    /** 顶部「文件发送」：与设置页 pickFileToSend 同口径（入口从设置页提上来） */
+    private fun pickFileToSend() {
+        if (ControlTarget.host.isEmpty() || !ControlTarget.isControlling()) {
+            toast(R.string.ui_main_toast_device_not)
+            return
+        }
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            type = "*/*"
+            addCategory(Intent.CATEGORY_OPENABLE)
+        }
+        startActivityForResult(intent, REQ_PICK_FILE)
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        // MainActivity.onActivityResult 第一行就调 super，所以结果能派发到这里
+        if (requestCode == REQ_PICK_FILE && resultCode == android.app.Activity.RESULT_OK) {
+            val uri = data?.data ?: return
+            val hostIp = ControlTarget.host
+            val a = activity ?: return
+            Thread {
+                val ok = runCatching { FileSender.send(a, hostIp, uri) }.getOrDefault(false)
+                a.runOnUiThread {
+                    toast(if (ok) R.string.ui_main_text_file_send_done else R.string.ui_main_text_device_send_failed_confirm)
+                }
+            }.start()
+        }
+    }
+
+    /** 顶部「剪贴板」：读本机剪贴板发到对端（与 TouchpadActivity 的 clip chip 同口径） */
+    private fun sendClipToPeer() {
+        val c = ControlTarget.controlClient
+        if (c == null || !ControlTarget.isControlling()) {
+            toast(R.string.ui_main_toast_device_not)
+            return
+        }
+        val cm = activity?.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+        val text = cm?.primaryClip?.let {
+            if (it.itemCount > 0) it.getItemAt(0).coerceToText(activity)?.toString() else null
+        }
+        if (text.isNullOrEmpty()) {
+            toast(R.string.ui_touchpad_toast_clipboard_empty)
+            return
+        }
+        val ok = c.sendClipboard(text)
+        toast(if (ok) R.string.ui_touchpad_text_clipboard_send_done else R.string.ui_touchpad_text_send_failed)
+    }
+
+    private fun toast(res: Int) {
+        val a = activity ?: return
+        Toast.makeText(a, a.getString(res), Toast.LENGTH_SHORT).show()
     }
 
     // ==================== Hotkey grid ====================

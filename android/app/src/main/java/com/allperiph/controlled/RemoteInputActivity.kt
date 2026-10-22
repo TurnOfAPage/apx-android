@@ -28,6 +28,50 @@ class RemoteInputActivity : Activity() {
     private var sourceDevice: String = ""
     private var hintText: String = ""
 
+    // ———— 回程通道：请求经谁进来，回复就走谁（viaClient 见 companion） ————
+    // 此前所有发送硬绑 ControlledService.server：当本页是被 0x25 经**客户端链路**
+    //（本机正在控制的目标设备）唤起时，文字/编辑键会发给“正在控制本机的设备”，方向整个反了。
+
+    private fun sendText(text: String, flags: Int): Boolean {
+        if (viaClient) {
+            val c = com.allperiph.wireless.ControlTarget.controlClient ?: return false
+            c.sendInputText(text, flags); return true
+        }
+        return ControlledService.server?.let { it.sendInputText(text, flags); true } ?: false
+    }
+
+    private fun sendDone(): Boolean {
+        if (viaClient) {
+            val c = com.allperiph.wireless.ControlTarget.controlClient ?: return false
+            c.sendInputDone(); return true
+        }
+        return ControlledService.server?.let { it.sendInputDone(); true } ?: false
+    }
+
+    private fun sendMouseFrame(buttons: Int, dx: Int, dy: Int): Boolean {
+        if (viaClient) {
+            val c = com.allperiph.wireless.ControlTarget.controlClient ?: return false
+            return c.mouse(buttons, dx, dy)
+        }
+        return ControlledService.server?.sendControl(
+            byteArrayOf(0x01.toByte(), buttons.toByte(), dx.toByte(), dy.toByte(), 0)) ?: false
+    }
+
+    private fun sendSpecial(mod: Int, vk: Int): Boolean {
+        if (!viaClient) {
+            return ControlledService.server?.let { it.sendSpecialKey(mod, vk); true } ?: false
+        }
+        // 客户端通道：0x28 在手机/TV 被控端没有接收分支（release README 已知遗留），
+        // 改走 0x03 键盘帧（HID usage）—— 手机 / TV / PC 三端都有现成接收处理；
+        // mod 位图两侧语义一致（1=Ctrl 2=Shift 4=Alt）。
+        val usage = VK_TO_USAGE[vk]
+        if (usage == null) { Log.w("RemoteInput", "未知 VK：0x${vk.toString(16)}"); return false }
+        val c = com.allperiph.wireless.ControlTarget.controlClient ?: return false
+        c.keyboard(usage, true, mod)
+        c.keyboard(usage, false, 0)
+        return true
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // 本机正在替对端输入：此时本机的输入框获焦**不能**再反向请求对端，
@@ -66,17 +110,12 @@ class RemoteInputActivity : Activity() {
                     if (suppressInputWatcher) return
                     val text = s?.toString() ?: return
                     if (count > before && start + count <= text.length) {
-                        // 逐字增量上屏：这是文字到电脑的**唯一**通道 ——
+                        // 逐字增量上屏：这是文字到对端的**唯一**通道 ——
                         // 发送按钮不再整段重发（COMMIT=整段再粘一遍，两种帧都注入就是
                         // 用户报的“发送后文字重复两次”）。所以失败必须当场提示，不能悄悄丢字。
-                        // sendInputText 返回 Unit（不报发送结果），这里只能判断
-                        // “被控服务在不在”：不在 = 这一帧根本没发出去，必须提示用户。
-                        val ok = ControlledService.server?.let {
-                            it.sendInputText(
-                                text.substring(start, start + count), ApxFrame.INPUT_FLAG_INCREMENTAL
-                            )
-                            true
-                        } ?: false
+                        // sendText 通道助手现在能真实反映发没发出去（客户端通道 ready=false
+                        // 时同样返回 false，不再只判“被控服务在不在”）。
+                        val ok = sendText(text.substring(start, start + count), ApxFrame.INPUT_FLAG_INCREMENTAL)
                         if (!ok) {
                             val now = android.os.SystemClock.uptimeMillis()
                             if (now - lastFailHintAt > 2500) {
@@ -87,7 +126,7 @@ class RemoteInputActivity : Activity() {
                             }
                         }
                     } else if (count < before) {
-                        ControlledService.server?.sendInputText("", ApxFrame.INPUT_FLAG_BACKSPACE)
+                        sendText("", ApxFrame.INPUT_FLAG_BACKSPACE)
                     }
                 }
                 override fun afterTextChanged(s: Editable?) {}
@@ -96,22 +135,20 @@ class RemoteInputActivity : Activity() {
         editText = input
         root.addView(input, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(12f) })
 
-        // v184：内嵌触控板 —— 输入的同时直接移动 PC 光标，不用退出输入面板。
-        // 手势 → 0x01 鼠标帧经被控控制面上行（与触摸板模块同一链路）：
+        // v184：内嵌触控板 —— 输入的同时直接移动对端光标，不用退出输入面板。
+        // 手势 → 0x01 鼠标帧（与触摸板模块同一链路；经客户端时走 controlClient.mouse）：
         //   滑动 = 移动光标（相对位移，分帧限幅 ±127）
         //   轻点 = 左键点击（按下/抬起两帧）
         //   长按 400ms 后拖动 = 左键拖拽
         var lastTouchLogAt = 0L
         fun mouseFrame(buttons: Int, dx: Int, dy: Int) {
             val now = android.os.SystemClock.uptimeMillis()
-            val ok = ControlledService.server?.sendControl(
-                byteArrayOf(0x01.toByte(), buttons.toByte(), dx.toByte(), dy.toByte(), 0)
-            ) ?: false
-            // 节流 500ms：现场诊断"触控板到底发没发帧 / 被控链路通不通"
+            val ok = sendMouseFrame(buttons, dx, dy)
+            // 节流 500ms：现场诊断"触控板到底发没发帧 / 链路通不通"
             if (now - lastTouchLogAt > 500) {
                 lastTouchLogAt = now
                 if (ok) Log.i("RemoteInput", "触控板已发鼠标帧 buttons=$buttons dx=$dx dy=$dy")
-                else Log.w("RemoteInput", "触控板发送失败（被控链路未就绪？）")
+                else Log.w("RemoteInput", "触控板发送失败（链路未就绪？）")
             }
         }
         var tpDown = false; var tpDrag = false
@@ -167,14 +204,14 @@ class RemoteInputActivity : Activity() {
         }
         // 触控板不再插在输入框和编辑键排之间：挪到编辑键排之后、占满剩余高度（见下方 addView），
         // 这样它落在屏幕中部、拇指最好按的位置，键盘弹出时也处在可视区中央。
-        // v184：文字编辑快捷键排 —— 退格/方向/跳转/组合键经 0x28 特殊键帧直达 PC
-        // （手机输入框只负责新增文本；对 PC 上已有内容的修改全走这里）
+        // v184：文字编辑快捷键排 —— 退格/方向/跳转/组合键经特殊键链路直达对端
+        //（手机输入框只负责新增文本；对对端已有内容的修改全走这里）
         fun editKey(label: String, mod: Int, vk: Int) = TextView(this).apply {
             text = label; setTextColor(Color.WHITE); textSize = 13f; gravity = Gravity.CENTER
             setPadding(dp(14f), dp(10f), dp(14f), dp(10f))
             setBackgroundColor(Color.parseColor("#FF2A2A3E"))
             isFocusable = true; contentDescription = label
-            setOnClickListener { ControlledService.server?.sendSpecialKey(mod, vk) }
+            setOnClickListener { sendSpecial(mod, vk) }
         }
         val editKeys = listOf(
             "⌫" to (0 to 0x08), "Del" to (0 to 0x2E),
@@ -205,9 +242,9 @@ class RemoteInputActivity : Activity() {
                 //   里都写着 `-> Unit`），光发这一帧不会删掉对端已上屏的字 —— 点「取消」
                 //   等于白点。与 PC / TV 同口径：按剩余字数逐个发 0x02 退格（TV 端 undoOnPeer）。
                 val n = editText?.text?.length ?: 0
-                repeat(n) { ControlledService.server?.sendInputText("", ApxFrame.INPUT_FLAG_BACKSPACE) }
+                repeat(n) { sendText("", ApxFrame.INPUT_FLAG_BACKSPACE) }
                 // 0x08 仍照发：语义保留，将来三端若实现「整段撤销」，这一帧就是信号
-                ControlledService.server?.sendInputText("", ApxFrame.INPUT_FLAG_CANCEL)
+                sendText("", ApxFrame.INPUT_FLAG_CANCEL)
                 finish()
             }
         }.also { it.layoutParams = LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(12f) } })
@@ -219,19 +256,20 @@ class RemoteInputActivity : Activity() {
             // 以前发完就 finish()，想连着打就得重新唤起 —— 手机端反馈“一点发送就跳出界面”。
             //
             // 这里**绝不发 COMMIT 整段帧**：打字时 TextWatcher 已把每个字符以 INCREMENTAL
-            // 逐字送到电脑并即时上屏；COMMIT 的语义是“整段再粘一遍”，PC 端两种帧都注入，
+            // 逐字送到对端并即时上屏；COMMIT 的语义是“整段再粘一遍”，PC 端两种帧都注入，
             // 结果就是用户报的“发送后文字重复两次”。发送只负责收尾：DONE 帧 + 清空继续。
             setOnClickListener {
                 val t = editText?.text?.toString() ?: ""
                 if (t.isEmpty()) {
                     Toast.makeText(this@RemoteInputActivity, "先输入要发送的内容", Toast.LENGTH_SHORT).show()
                 } else {
-                    ControlledService.server?.sendInputDone()
-                    suppressInputWatcher = true          // 清空动作绝不能被当成退格发给电脑
+                    sendDone()
+                    suppressInputWatcher = true          // 清空动作绝不能被当成退格发给对端
                     editText?.setText("")
                     suppressInputWatcher = false
                     editText?.requestFocus()             // 焦点回到输入框，键盘保持弹出
-                    Toast.makeText(this@RemoteInputActivity, "已发送到电脑", Toast.LENGTH_SHORT).show()
+                    // 文案不再硬编“电脑”：经客户端链路时对端是手机/TV（fromClient 场景）
+                    Toast.makeText(this@RemoteInputActivity, "已发送", Toast.LENGTH_SHORT).show()
                 }
             }
         }.also { it.layoutParams = LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(12f) } })
@@ -250,7 +288,37 @@ class RemoteInputActivity : Activity() {
     companion object {
         const val EXTRA_SOURCE = "source_device"
         const val EXTRA_HINT = "hint"
-        fun start(context: Context, sourceDevice: String, hint: String) {
+
+        /**
+         * 回程通道：true = 请求经本机 9511 **客户端**链路进来（本机正在控制的目标设备，
+         * TvControllerClient 收到 0x25 兜底启动时置位）；false = 经本机**被控服务**
+         * （正在控制本机的设备）。文字/编辑键/鼠标/DONE 按此分流，否则回复会发错方向。
+         */
+        @Volatile
+        var viaClient = false
+            private set
+
+        /** Windows VK → HID usage（编辑键排用到的子集；经客户端通道时翻成 0x03 键盘帧，
+         *  三端都有现成接收；0x28 特殊键仅 PC 实现，手机/TV 被控端会静默丢弃） */
+        private val VK_TO_USAGE = mapOf(
+            0x08 to 0x2A, 0x2E to 0x4C,                       // Backspace / Delete
+            0x25 to 0x4F, 0x26 to 0x50, 0x27 to 0x51, 0x28 to 0x52,  // ← ↑ → ↓
+            0x24 to 0x4A, 0x23 to 0x4D,                       // Home / End
+            0x09 to 0x2B, 0x0D to 0x28,                       // Tab / Enter
+            0x41 to 0x04, 0x42 to 0x05, 0x43 to 0x06, 0x44 to 0x07, 0x45 to 0x08,
+            0x46 to 0x09, 0x47 to 0x0A, 0x48 to 0x0B, 0x49 to 0x0C, 0x4A to 0x0D,
+            0x4B to 0x0E, 0x4C to 0x0F, 0x4D to 0x10, 0x4E to 0x11, 0x4F to 0x12,
+            0x50 to 0x13, 0x51 to 0x14, 0x52 to 0x15, 0x53 to 0x16, 0x54 to 0x17,
+            0x55 to 0x18, 0x56 to 0x19, 0x57 to 0x1A, 0x58 to 0x1B, 0x59 to 0x1C,
+            0x5A to 0x1D,
+        )
+
+        fun start(context: Context, sourceDevice: String, hint: String) =
+            start(context, sourceDevice, hint, false)
+
+        @JvmStatic
+        fun start(context: Context, sourceDevice: String, hint: String, fromClient: Boolean) {
+            viaClient = fromClient
             context.startActivity(Intent(context, RemoteInputActivity::class.java).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 putExtra(EXTRA_SOURCE, sourceDevice); putExtra(EXTRA_HINT, hint)
