@@ -2,6 +2,7 @@ package com.allperiph.controlled
 
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import com.allperiph.shared.proto.ApxFrame
 import com.allperiph.shared.util.Log
 import com.allperiph.shared.accessibility.ApxAccessibilityService
@@ -18,6 +19,7 @@ import java.util.HashSet
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.math.abs
 
 /**
  * 被控模式控制面**服务端**：本机开 ServerSocket 监听，对方手机作为客户端连入并发控制帧。
@@ -79,6 +81,14 @@ class TvControlServer(
     private val pressedKeys = HashSet<Int>()
     // 与 pressedKeys 共用 keysLock：所有读写必须在 synchronized(keysLock) 内
     private var lastButtons = 0
+
+    // ---- 修复面补全：右键（bit1）按下沿状态 —— 此前 onMouse 只认 bit0，0x02/0x04 被
+    //      整个丢弃，右键菜单/双指点按完全不可用。与 shared/ControlServer 同修法：
+    //      按下沿注入 DOWN，抬起沿按时长/位移判「长按（右键）或拖拽」。
+    //      只在 injectHandler 单线程上读写，无需加锁。----
+    private var rightDownAt = 0L
+    private var rightMovedPx = 0
+    private var rightUpPending: Runnable? = null
 
     // v184：注入动作的执行线程 —— actions 里的注入路径会调用 RootInput.run
     // （往 su 管道写命令，管道满或 su 卡住时**阻塞**）以及无障碍手势 API，
@@ -298,9 +308,43 @@ class TvControlServer(
         val prev = synchronized(keysLock) { lastButtons }
         val needDown = (buttons and 1) != 0 && (prev and 1) == 0
         val needUp = (buttons and 1) == 0 && (prev and 1) == 1
+        // 修复面补全：右键 bit1 此前完全没被识别（onMouse 只认 bit0），0x02/0x04 整个
+        // 丢弃 —— 双指点按/右键菜单全部失效。现在 bit1 按下沿→光标处按下，抬起沿按时长/
+        // 位移判「长按（右键）或拖拽」；bit0 左键沿用原 pressDown/pressUp。
+        val needRightDown = (buttons and 2) != 0 && (prev and 2) == 0
+        val needRightUp = (buttons and 2) == 0 && (prev and 2) == 1
+        // 中键 bit2：暂无中键注入通道，维持忽略但不再静默 —— 记一条日志便于排查
+        if (buttons and 4 != 0 && prev and 4 == 0) Log.w("被控控制面", "收到中键按下（bit2），暂无中键注入通道，忽略")
         synchronized(keysLock) { lastButtons = buttons }
         if (needDown) TvInjector.pressDown()
         if (needUp) TvInjector.pressUp()
+        if (needRightDown) {
+            // 快速连点右键：先收掉上一次还没落地的推迟抬起，避免触摸流卡在 DOWN
+            rightUpPending?.let { p ->
+                injectHandler.removeCallbacks(p); rightUpPending = null; TvInjector.pressUp()
+            }
+            rightDownAt = SystemClock.uptimeMillis()
+            rightMovedPx = 0
+            // 光标处按下：抬起沿再判 长按（右键）/ 拖拽；有 INJECT_EVENTS 时是一条真实触摸流
+            TvInjector.pressDown()
+        }
+        if (buttons and 2 != 0) rightMovedPx += abs(dx) + abs(dy)
+        if (needRightUp) {
+            val held = SystemClock.uptimeMillis() - rightDownAt
+            if (held >= RIGHT_HOLD_MS || rightMovedPx >= TAP_DRIFT_PX) {
+                // 按住够久或拖出了位移：立即抬起 → finishStroke 判长按 / 拖拽
+                rightUpPending?.let { injectHandler.removeCallbacks(it); rightUpPending = null }
+                TvInjector.pressUp()
+            } else {
+                // 快速右键点按：把抬起推迟到按下后 550ms（≥ finishStroke 的 500ms 长按阈值，
+                // 也是真实触摸流里对端能识别为长按的按住时长），对端在光标处弹右键菜单
+                val r = Runnable { rightUpPending = null; TvInjector.pressUp() }
+                rightUpPending = r
+                injectHandler.postDelayed(r, (rightDownAt + RIGHT_HOLD_MS - SystemClock.uptimeMillis()).coerceAtLeast(0))
+            }
+        }
+        // 滚轮：TvInjector.scroll 已内置 P0-2 合并节流（~100ms 窗口合并 notches、
+        // 单次滑动屏高 1/4），这里直接透传，不需要服务端再节流一层。
         if (wheel != 0) TvInjector.scroll(wheel)
     }
 
@@ -363,7 +407,7 @@ class TvControlServer(
      *   1) 按住某键时链路断了 —— 被控端那个键的注入状态一直是"按下"，不会自己抬起；
      *   2) `pressedKeys` 与真实状态脱节 —— 重连后第一帧键盘按下会跟旧集合做差，
      *      被判成"本来就是按下"，于是**第一次按键不生效**（要按两次）。
-     * 鼠标同理：左键停在按下会让被控端光标"粘住"。
+     * 鼠标同理：左键/右键停在按下会让被控端光标"粘住"。
      *
      * 注意：本函数走注入通道（root / 无障碍可能阻塞），必须在**注入线程**上执行，
      * 所以调用方一律 `injectHandler.post { releaseAllInputs() }`。
@@ -371,9 +415,14 @@ class TvControlServer(
     private fun releaseAllInputs() {
         val held = synchronized(keysLock) { HashSet(pressedKeys) }
         val hadLeftBtn = synchronized(keysLock) { (lastButtons and 0x01) != 0 }
+        // 修复面补全：右键序列（含还没落地的推迟抬起）在断开/挂起时也必须收尾，
+        // 否则触摸流卡在 DOWN，光标处一直"按着"。
+        val hadRightBtn = synchronized(keysLock) { (lastButtons and 0x02) != 0 }
         synchronized(keysLock) { pressedKeys.clear(); lastButtons = 0 }
+        val pendingRight = rightUpPending
+        if (pendingRight != null) { injectHandler.removeCallbacks(pendingRight); rightUpPending = null }
         for (u in held) runCatching { hidUp(u) }
-        if (hadLeftBtn) runCatching { TvInjector.pressUp() }
+        if (hadLeftBtn || hadRightBtn || pendingRight != null) runCatching { TvInjector.pressUp() }
     }
 
     private fun hidDown(usage: Int) {
@@ -486,6 +535,10 @@ class TvControlServer(
         private const val QUEUE_CAP = 256
         private const val WRITER_IDLE_MS = 200L
         private const val READ_TIMEOUT_MS = 3_000
+        // 修复面补全：右键按住阈值 —— 抬起沿据此判「长按（右键菜单）」，需 ≥ TvInjector.finishStroke 的 500ms
+        private const val RIGHT_HOLD_MS = 550L
+        // 修复面补全：右键按住期间位移超过该像素数 → 判拖拽，立即抬起走 swipe
+        private const val TAP_DRIFT_PX = 12
         // 接收缓冲上限：APX 单帧最大 ~4MB，8MB 足够容纳粘包的多帧拼接，同时防止 OOM
         private const val MAX_RX_BUF = 8 * 1024 * 1024
         private val PONG = "pong".toByteArray(Charsets.UTF_8)
