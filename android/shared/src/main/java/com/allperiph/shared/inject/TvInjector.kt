@@ -253,7 +253,7 @@ object TvInjector {
         touchDownY = cursorY
         touchDownAt = SystemClock.uptimeMillis()
         // P1-5：能拿到 INJECT_EVENTS 时直接开一条真实触摸流（按下沿注入 DOWN），
-        // 后续移动帧在 cursorMove 里注入 UP 实时跟随；拿不到权限则退回原 finishStroke 回放。
+        // 后续移动帧在 cursorMove 里逐帧注入 ACTION_MOVE 实时跟随；拿不到权限则退回原 finishStroke 回放。
         streamTouch = injectTouch(MotionEvent.ACTION_DOWN, cursorX, cursorY)
     }
 
