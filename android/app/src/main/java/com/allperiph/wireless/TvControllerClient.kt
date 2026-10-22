@@ -34,6 +34,9 @@ class TvControllerClient(
     private var rxBuf = ByteArray(4096)
     private var rxLen = 0
 
+    /** sendControl 断线丢帧日志节流（5s 一条）—— 前端与运行日志此前对丢帧完全无感 */
+    @Volatile private var lastDropLogAt = 0L
+
     fun connect(): Boolean {
         if (running.get()) return ready
         running.set(true)
@@ -45,7 +48,9 @@ class TvControllerClient(
     /** 建立 socket + 握手 + 启动 reader（connect 与自动重连共用） */
     private fun openSocket(): Boolean = try {
         val s = Socket()
-        s.tcpNoDelay = true; s.connect(InetSocketAddress(host, port), 5000)
+        s.tcpNoDelay = true
+        s.keepAlive = true   // 死链路探测：对端悄悄消失时让内核发探测，帮助 reader 尽早退出走重连
+        s.connect(InetSocketAddress(host, port), 5000)
         sock = s; out = s.getOutputStream()
         val tok = token.toByteArray(Charsets.UTF_8)
         val hdr = ByteArray(4); hdr[0] = (tok.size and 0xFF).toByte(); hdr[1] = ((tok.size ushr 8) and 0xFF).toByte(); hdr[2] = 0; hdr[3] = 0
@@ -156,13 +161,37 @@ class TvControllerClient(
         txThread = thread(name = "tvctrl-tx") {
             while (running.get()) {
                 val frame = try { txQueue.take() } catch (_: InterruptedException) { break }
-                try { out?.write(frame); out?.flush() } catch (t: Throwable) { Log.w("TvCtrl", "写出失败：${t.message}"); ready = false }
+                val target = out
+                if (target == null) continue
+                try { target.write(frame); target.flush() } catch (t: Throwable) {
+                    // fix：写失败必须区分「旧连接残留写」与「当前连接真死」。
+                    // 旧写法无条件 ready=false —— 自动重连刚把 ready 置回 true 后，
+                    // 残留在队列里的旧帧写旧流抛错会把它再次覆盖成 false，而 reader
+                    // 侧无异常、永不触发重连 → 链路钉死在「连着但 sendControl 全部
+                    // 静默丢帧」：蓝点定格、滑动/点按无反应，直到下次被动断线。
+                    if (out === target) {
+                        Log.w("TvCtrl", "写出失败：${t.message} → 关闭连接触发自动重连")
+                        ready = false
+                        runCatching { sock?.close() }   // 借 readerLoop 退出走既有重连路径
+                    } else {
+                        Log.w("TvCtrl", "忽略旧连接残留写失败：${t.message}")
+                    }
+                }
             }
         }
     }
 
     fun sendControl(body: ByteArray): Boolean {
-        if (!ready) return false
+        if (!ready) {
+            // 断线期输入帧全部静默丢弃是「功能像坏了但界面毫无提示」的元凶：
+            // 这里节流记一条（运行日志可见），链路恢复时另记一条。
+            val now = System.currentTimeMillis()
+            if (now - lastDropLogAt >= 5000) {
+                lastDropLogAt = now
+                Log.w("TvCtrl", "连接未就绪，丢弃输入帧（5s 内仅记一次）")
+            }
+            return false
+        }
         val frame = synchronized(writeLock) { seq = (seq + 1) and 0x7FFFFFFF; ApxFrame.build(ApxFrame.STREAM_CONTROL, body, seq) }
         while (txQueue.size > 512) txQueue.poll()
         return txQueue.offer(frame)
