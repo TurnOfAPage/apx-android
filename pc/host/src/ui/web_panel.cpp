@@ -38,6 +38,7 @@
 #include "apxpc/net/json.hpp"
 #include "apxpc/wireless/wireless_session.hpp"
 #include "apxpc/wireless/file_receiver.hpp"
+#include "apxpc/wireless/file_sender.hpp"
 #include "apxpc/media/media_session.hpp"
 #include "apxpc/media/screen_push.hpp"
 #include "apxpc/media/audio_capture.hpp"
@@ -53,6 +54,7 @@
 #include <atomic>
 #include <algorithm>
 #include <cstdio>
+#include <filesystem>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -66,7 +68,7 @@ using apxpc::net::Json;
 using apxpc::wireless::LinkPhase;
 using apxpc::wireless::SessionSnapshot;
 
-// ———————————————— COM 回调适配器（WebView2 SDK 没有 Callback<T> 模板） ———————————————
+// ———————————————— COM 回调适配器（WebView2 SDK 没有 Callback<T> 模板） ————————————————
 // 每个 WebView2 回调接口的 Invoke 签名不同，需要各自实现。
 // 下面 3 个类共享 IUnknown 样板（宏展开），仅 Invoke 签名不同。
 #define COM_CALLBACK_BASE(IFACE, UUID) \
@@ -142,7 +144,7 @@ struct Panel {
 };
 Panel* g_panel = nullptr;
 
-// ———————————————— 工具：JSON 辅助 ———————————————
+// ———————————————— 工具：JSON 辅助 ————————————————
 Json okResp(const Json& data = {}) {
     Json r = Json::makeObject(); r["ok"] = true; r["data"] = data; return r;
 }
@@ -183,7 +185,7 @@ void refreshUsbStatus(Panel* p) {
     }
 }
 
-// ———————————————— 状态构建（每 400ms 一次） ———————————————
+// ———————————————— 状态构建（每 400ms 一次） ————————————————
 void buildState(const HostBundle& b, Json& out) {
     out = Json::makeObject();
 
@@ -291,7 +293,7 @@ void buildState(const HostBundle& b, Json& out) {
     out["config"] = cfg;
 }
 
-// ———————————————— UTF-8 ↔ UTF-16 转换（Win32 原生 API） ———————————————
+// ———————————————— UTF-8 ↔ UTF-16 转换（Win32 原生 API） ————————————————
 // PostWebMessageAsJson 要求 UTF-16。std::wstring(s.begin(), s.end()) 是逐字节
 // 拷贝，多字节 UTF-8（中文）会变成 mojibake；必须走 MultiByteToWideChar。
 static std::wstring utf8ToWide(const std::string& s) {
@@ -309,7 +311,7 @@ static std::string wideToUtf8(const std::wstring& w) {
     return s;
 }
 
-// ———————————————— 把状态推给前端（400ms tick） ———————————————
+// ———————————————— 把状态推给前端（400ms tick） ————————————————
 void tickState(Panel* p) {
     // USB 探测节流：首拍立即做，此后 ~10s 一次（状态变化会让指纹变化 → 自动推送）
     const uint64_t nowMs = ::GetTickCount64();
@@ -365,7 +367,7 @@ void tickState(Panel* p) {
     p->webview->PostWebMessageAsJson(utf8ToWide(s).c_str());
 }
 
-// ———————————————— 回传前端请求的响应 ———————————————
+// ———————————————— 回传前端请求的响应 ————————————————
 // ★ kind 字段必须带上：前端 bridge.ts 只认 msg.kind === 'act-response' /
 //   'query-response' / 'open-file-response' 的消息。此前 handleAct 全部响应
 //   （okResp/failResp）都没设 kind —— 前端永远匹配不上，act 请求只能等 10s
@@ -389,6 +391,71 @@ void postEvent(Panel* p, const std::string& name, Json data = Json::makeObject()
     push["data"] = data;
     std::string s = push.stringify();
     p->webview->PostWebMessageAsJson(utf8ToWide(s).c_str());
+}
+
+// ———————————————— 文件发送（PC → 手机，TCP 9512） ————————————————
+// 对端地址取会话快照（与媒体建链泵同口径：peer = "host:port"，只取 host）。
+std::string peerHost(Panel* p) {
+    if (!p || !p->bundle.session) return {};
+    const auto s = p->bundle.session->snapshot();
+    if (s.phase != LinkPhase::Connected) return {};
+    const size_t colon = s.peer.rfind(':');
+    return (colon == std::string::npos) ? s.peer : s.peer.substr(0, colon);
+}
+
+// 文件发送线程：退出前必须 join —— 线程持 Panel*（栈对象）指针，不 join 会悬空。
+std::mutex g_sendMu;
+std::vector<std::thread> g_sendThreads;
+
+// 异步发文件：绝不能在 UI 线程 / 托盘线程里同步 sendFile（大文件会卡死消息循环，
+// 老面板 file_panel_win32 也是开 std::thread 发）。respId 非空 → 完成后回
+// act-response（前端 file.send await 收尾）；为空 → 推 on-file-send-done 事件（托盘入口）。
+void startFileSend(Panel* p, const std::string& path, const std::string& respId) {
+    const std::string host = peerHost(p);
+    if (host.empty()) {
+        const std::string msg = "未连接手机（先建立控制连接再发送）";
+        if (respId.empty()) {
+            Json d = Json::makeObject(); d["ok"] = false; d["error"] = msg;
+            postEvent(p, std::string("on-file-send-done"), d);
+        } else {
+            postResponse(p, respId, failResp(msg));
+        }
+        return;
+    }
+    std::thread th([p, path, respId, host] {
+        int lastPct = -1;
+        const bool ok = apxpc::wireless::sendFile(host, 9512, path,
+            [p, path, &lastPct](int pct) {
+                // 进度节流：每 10% 推一拍（postEvent 线程安全）
+                if (pct >= 100 || pct - lastPct >= 10) {
+                    lastPct = pct;
+                    Json d = Json::makeObject();
+                    d["path"] = path;
+                    d["percent"] = pct;
+                    postEvent(p, std::string("on-file-send-progress"), d);
+                }
+            });
+        const std::string err = ok ? std::string() : apxpc::wireless::lastSendError();
+        if (ok) {
+            APX_LOGI("文件已发送到手机 {}: {}", host.c_str(), path.c_str());
+        } else {
+            APX_LOGW("发送文件失败: {}", err.c_str());
+        }
+        if (!respId.empty()) {
+            Json d = Json::makeObject();
+            d["ok"] = ok; d["path"] = path; d["peer"] = host;
+            if (!ok) d["error"] = err.empty() ? std::string("发送文件失败") : err;
+            postResponse(p, respId, ok ? okResp(d)
+                                      : failResp(err.empty() ? "发送文件失败" : err));
+        } else {
+            Json d = Json::makeObject();
+            d["ok"] = ok; d["path"] = path; d["peer"] = host;
+            if (!ok) d["error"] = err.empty() ? std::string("发送文件失败") : err;
+            postEvent(p, std::string("on-file-send-done"), d);
+        }
+    });
+    std::lock_guard<std::mutex> lk(g_sendMu);
+    g_sendThreads.push_back(std::move(th));
 }
 
 // ———————————————— 动作分发（前端 act 请求） ———————————————
@@ -510,6 +577,81 @@ void handleAct(Panel* p, const std::string& id, const std::string& name, const J
         return postResponse(p, id, okResp());
     }
 
+    // —— 文件传输（PC ↔ 手机，TCP 9512）——
+    if (name == "file.send") {
+        const std::string path = payload.find("path") ? payload.find("path")->asString() : "";
+        if (path.empty()) return postResponse(p, id, failResp("未选择文件"));
+        WIN32_FILE_ATTRIBUTE_DATA fa{};
+        const std::wstring wpath = utf8ToWide(path);
+        if (!::GetFileAttributesExW(wpath.c_str(), ::GetFileExInfoStandard, &fa))
+            return postResponse(p, id, failResp("文件不存在: " + path));
+        if (fa.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+            return postResponse(p, id, failResp("不支持发送整个文件夹"));
+        // 后台线程发送（startFileSend 内注释）；act-response 在发完后回
+        startFileSend(p, path, id);
+        return;
+    }
+    if (name == "file.list") {
+        // 列出收到的文件（落盘目录：下载\AllPeriph），按修改时间新→旧
+        namespace fs = std::filesystem;
+        struct Ent { std::string name; std::string path; long long size; long long ftick; };
+        std::vector<Ent> ents;
+        std::error_code ec;
+        const fs::path dir = fs::path(utf8ToWide(apxpc::wireless::FileReceiver::defaultDir()));
+        if (fs::exists(dir, ec)) {
+            fs::directory_iterator it(dir, ec), end;
+            for (; !ec && it != end; it.increment(ec)) {
+                std::error_code fec;
+                if (!it->is_regular_file(fec)) continue;
+                Ent e;
+                e.path  = wideToUtf8(it->path().wstring());
+                e.name  = wideToUtf8(it->path().filename().wstring());
+                e.size  = static_cast<long long>(it->file_size(fec));
+                e.ftick = static_cast<long long>(
+                    it->last_write_time(fec).time_since_epoch().count());
+                ents.push_back(std::move(e));
+            }
+        }
+        std::sort(ents.begin(), ents.end(),
+                  [](const Ent& a, const Ent& b) { return a.ftick > b.ftick; });
+        Json arr = Json::makeArray();
+        for (const auto& e : ents) {
+            Json o = Json::makeObject();
+            o["name"] = e.name;
+            o["path"] = e.path;
+            o["size"] = static_cast<double>(e.size);
+            arr.push(o);
+        }
+        return postResponse(p, id, okResp(arr));
+    }
+    if (name == "file.delete") {
+        // 白名单：只允许删「下载\AllPeriph」落盘目录内的文件 —— 不给前端任意删盘能力。
+        // weakly_canonical 解析 ../ 与符号链接后再比前缀，防目录穿越。
+        const std::string path = payload.find("path") ? payload.find("path")->asString() : "";
+        if (path.empty()) return postResponse(p, id, failResp("未指定文件"));
+        namespace fs = std::filesystem;
+        std::error_code ec1, ec2, ec3;
+        const fs::path root = fs::weakly_canonical(
+            fs::path(utf8ToWide(apxpc::wireless::FileReceiver::defaultDir())), ec1);
+        fs::path target = fs::weakly_canonical(fs::path(utf8ToWide(path)), ec2);
+        if (ec1 || ec2) return postResponse(p, id, failResp("路径无效"));
+        auto norm = [](std::string s) {
+            std::replace(s.begin(), s.end(), '\\', '/');
+            for (auto& c : s) if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+            return s;
+        };
+        const std::string r8 = norm(wideToUtf8(root.wstring()));
+        const std::string t8 = norm(wideToUtf8(target.wstring()));
+        if (t8.size() <= r8.size() + 1 || t8.compare(0, r8.size(), r8) != 0 ||
+            t8[r8.size()] != '/') {
+            return postResponse(p, id, failResp("只允许删除收到的文件（下载\\AllPeriph 内）"));
+        }
+        if (!fs::remove(target, ec3) || ec3)
+            return postResponse(p, id, failResp("删除失败: " + ec3.message()));
+        APX_LOGI("已删除收到的文件: {}", path.c_str());
+        return postResponse(p, id, okResp());
+    }
+
     return postResponse(p, id, failResp("未知动作: " + name));
 }
 
@@ -549,7 +691,7 @@ void handleOpenFile(Panel* p, const std::string& id, const std::string& filter) 
     postResponse(p, id, r);
 }
 
-// ———————————————— 处理 WebView2 的 WebMessageReceived ———————————————
+// ———————————————— 处理 WebView2 的 WebMessageReceived ————————————————
 void onWebMessageReceived(ICoreWebView2*, ICoreWebView2WebMessageReceivedEventArgs* args) {
     // ★ 必须用 get_WebMessageAsJson：页面 postMessage 发的是 **对象**（{kind:'act',...}），
     //   WebView2 的 TryGetWebMessageAsString 只对「字符串消息」成功，对对象消息直接返回
@@ -592,7 +734,7 @@ void onWebMessageReceived(ICoreWebView2*, ICoreWebView2WebMessageReceivedEventAr
     }
 }
 
-// ———————————————— WebView2 环境创建（Runtime 缺失时自动安装并重试） ———————————————
+// ———————————————— WebView2 环境创建（Runtime 缺失时自动安装并重试） ————————————————
 // 环境创建失败分两种：
 //   · Runtime 没装（老版 Win10）→ 提示后自动下载安装，装完 Post 消息回来重试
 //   · Runtime 已装仍失败        → 如实报错退出（问题在别处，如 WebView2Loader.dll 缺失）
@@ -747,7 +889,7 @@ void startWebView2Env(Panel* p) {
         if (FAILED(hr)) onWebView2EnvFailed(p, static_cast<unsigned>(hr));
     }
 
-// ———————————————— 窗口过程 ———————————————
+// ———————————————— 窗口过程 ————————————————
 LRESULT CALLBACK webWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     if (msg == WM_CREATE) {
         CREATESTRUCT* cs = reinterpret_cast<CREATESTRUCT*>(lp);
@@ -807,6 +949,25 @@ LRESULT CALLBACK webWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 }
 
 }  // namespace
+
+// ———————— FileReceiver 接收回调（desktop_main 在接收线程调用） ————————
+// ① 托盘气泡：老面板 file_panel 同款提示；新面板此前回调传 nullptr → 收了文件毫无反应
+// ② 推 on-file-received 事件：前端文件面板实时刷新列表
+void notifyFileReceived(const std::string& path) {
+    Panel* p = g_panel;
+    if (!p) {
+        APX_LOGW("收到文件但面板未就绪: {}", path.c_str());
+        return;
+    }
+    if (p->bundle.tray) {
+        const size_t slash = path.find_last_of("\\/");
+        const std::string name = (slash == std::string::npos) ? path : path.substr(slash + 1);
+        p->bundle.tray->notify("收到文件", name + " — 已保存到 下载\\AllPeriph");
+    }
+    Json d = Json::makeObject();
+    d["path"] = path;
+    postEvent(p, std::string("on-file-received"), d);
+}
 
 bool webPanelAvailable() {
 #if defined(_WIN32)
@@ -920,6 +1081,51 @@ int runWebPanel(const HostBundle& bundle, const std::string& /*webDir*/) {
             if (Panel* pp = g_panel) pp->running.store(false);
             ::PostMessageW(hwnd, WM_CLOSE, 0, 0);
         });
+
+        // —— 以下三项为桌面入口恢复的托盘能力（老面板 panel_win32 一直有，WebView2 面板
+        //    接线时漏掉）：托盘菜单项的规则是「回调未设置则不显示」，缺失即菜单里没这一项。——
+
+        // 「让手机帮我输入…」：发 0x25 请求对端弹输入法；回传文本（0x26）由
+        // WirelessSession 直接注入本机光标处（与老面板同口径，不绕 UI 线程）。
+        panel.bundle.tray->setInputCallback([] {
+            Panel* pp = g_panel;   // 退出后 g_panel 已置空，托盘线程晚触发不悬空
+            if (!pp || !pp->bundle.session || !pp->bundle.tray) return;
+            if (!pp->bundle.session->connected()) {
+                pp->bundle.tray->notify("还没连上手机", "「让手机帮我输入」需要先连上手机 / 电视");
+                return;
+            }
+            const bool ok = pp->bundle.session->requestInput("电脑请求输入文本");
+            pp->bundle.tray->notify(ok ? "已请手机输入" : "发送失败",
+                                    ok ? "请在手机上打字，文字会落到电脑光标处"
+                                       : "发送请求失败（连接已断开？）");
+        });
+
+        // 「发送文件到手机…」：选文件 → 与前端 file.send 同一条链路后台发送
+        panel.bundle.tray->setSendFileCallback([] {
+            Panel* pp = g_panel;
+            if (!pp) return;
+            OPENFILENAMEW of{};
+            wchar_t file[MAX_PATH] = {};
+            of.lStructSize = sizeof(of);
+            of.hwndOwner = pp->hwnd;
+            of.nMaxFile = MAX_PATH;
+            of.lpstrFile = file;
+            of.lpstrFilter = L"全部文件\0*.*\0";
+            of.Flags = OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
+            if (!::GetOpenFileNameW(&of)) return;
+            const std::string path = wideToUtf8(std::wstring(file));
+            const size_t slash = path.find_last_of("\\/");
+            const std::string name = (slash == std::string::npos) ? path : path.substr(slash + 1);
+            pp->bundle.tray->notify("正在发送文件", name);
+            startFileSend(pp, path, "");   // 后台线程：托盘线程不能被大文件卡住
+        });
+
+        // 「文件传输…」：唤回面板 + 推事件打开文件传输弹窗（前端 App.tsx 监听 open-file-panel）
+        panel.bundle.tray->setFilePanelCallback([hwnd] {
+            ::ShowWindow(hwnd, SW_RESTORE);
+            ::SetForegroundWindow(hwnd);
+            if (Panel* pp = g_panel) postEvent(pp, std::string("open-file-panel"));
+        });
     }
 
     // 消息循环
@@ -927,6 +1133,12 @@ int runWebPanel(const HostBundle& bundle, const std::string& /*webDir*/) {
     while (panel.running.load() && GetMessageW(&msg, nullptr, 0, 0) > 0) {
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
+    }
+    // 文件发送线程持 Panel*（栈对象）：必须先 join 再出栈，否则发送中退出会悬空崩溃
+    {
+        std::lock_guard<std::mutex> lk(g_sendMu);
+        for (auto& t : g_sendThreads) if (t.joinable()) t.join();
+        g_sendThreads.clear();
     }
     // 媒体建链线程：面板退出前 join（Panel 是栈对象，析构时若线程仍 joinable 会 terminate）
     if (panel.mediaThread.joinable()) panel.mediaThread.join();
