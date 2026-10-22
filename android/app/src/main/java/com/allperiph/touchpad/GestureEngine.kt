@@ -337,7 +337,7 @@ class GestureEngine(private val sink: TouchpadSink) {
                 // P0-1：wheel/pan 同样是单字节有符号字段，快滑也要钳 ±127 防回绕
                 val w = (-(dy * scrollStep).toInt()).coerceIn(-127, 127)
                 val p = ((dx * scrollStep).toInt()).coerceIn(-127, 127)
-                // ★ 双指滑动**进入**这一刻震一下：区分"移动光标"和"滚动页面"。
+                // ★ 双指滑动**进入**滚动这一刻震一下：区分"移动光标"和"滚动页面"。
                 //   之后每帧都不震 —— 那会变成持续嗡嗡声。抬起再落下是新的一轮，会再震。
                 if (!scrollEntered && (w != 0 || p != 0)) {
                     scrollEntered = true
