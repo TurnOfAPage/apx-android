@@ -1,6 +1,7 @@
 package com.allperiph.ui
 
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.Typeface
@@ -94,6 +95,14 @@ class FilePanelActivity : Activity() {
             setPadding(0, dp(6f), 0, dp(4f))
         })
 
+        // 说明（v205）：文件存哪 + 行内按钮怎么用（用户反馈"说明也没写，文件在哪"）
+        root.addView(TextView(this).apply {
+            text = "收到的文件保存在：${recvDir().absolutePath}\n点「转发」发到目标设备；点「删除」移除本机文件。"
+            textSize = 11f
+            setTextColor(resources.getColor(R.color.md_on_surface_variant))
+            setPadding(0, 0, 0, dp(4f))
+        })
+
         listBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         root.addView(ScrollView(this).apply { addView(listBox) },
             LinearLayout.LayoutParams(-1, 0, 1f))
@@ -165,7 +174,30 @@ class FilePanelActivity : Activity() {
             setTypeface(null, Typeface.BOLD)
             setTextColor(resources.getColor(R.color.md_primary))
         })
+        // 行内「删除」（v205）：子视图可点击会先消费触摸事件，不会误触发整行的转发
+        row.addView(TextView(this).apply {
+            text = "删除"
+            textSize = 14f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.parseColor("#B3261E"))
+            setPadding(dp(14f), 0, 0, 0)
+            setOnClickListener { confirmDelete(f) }
+        })
         return row
+    }
+
+    /** 行内「删除」：文件删除不可恢复，必须弹确认（用户反馈"文件管理里没有删除"） */
+    private fun confirmDelete(f: File) {
+        AlertDialog.Builder(this, R.style.Theme_AllPeriph_Miuix_Dialog)
+            .setTitle("删除文件")
+            .setMessage("确定删除「${f.name}」？删除后无法恢复。")
+            .setPositiveButton("删除") { _, _ ->
+                val ok = runCatching { f.delete() }.getOrDefault(false)
+                status(if (ok) "已删除 ${f.name}" else "删除失败：${f.name}", !ok)
+                if (ok) refreshList()
+            }
+            .setNegativeButton(getString(R.string.ui_common_cancel), null)
+            .show()
     }
 
     private fun refreshTargets() {
