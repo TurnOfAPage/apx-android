@@ -2,6 +2,7 @@ package com.allperiph.shared.net
 
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import com.allperiph.shared.proto.ApxFrame
 import com.allperiph.shared.util.Log
 import com.allperiph.shared.input.RootInput
@@ -16,6 +17,7 @@ import java.util.HashSet
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.math.abs
 
 /**
  * 控制面**服务端**：本机开 ServerSocket 监听，对端（手机 / PC / TV）作为客户端连入并发控制帧。
@@ -91,6 +93,12 @@ class ControlServer(
     private val keysLock = Any()
     private val pressedKeys = HashSet<Int>()
     private var lastButtons = 0
+
+    // ---- P0-3：右键（bit1）按下沿状态 —— 此前 onMouse 只认 bit0，0x02/0x04 被整个丢弃，
+    //      右键菜单/双指点按完全不可用。只在 injectHandler 单线程上读写，无需加锁。----
+    private var rightDownAt = 0L
+    private var rightMovedPx = 0
+    private var rightUpPending: Runnable? = null
 
     private val injectThread = android.os.HandlerThread("apx-inject").apply { start() }
     private val injectHandler = Handler(injectThread.looper)
@@ -276,9 +284,41 @@ class ControlServer(
         val prev = synchronized(keysLock) { lastButtons }
         val needDown = (buttons and 1) != 0 && (prev and 1) == 0
         val needUp = (buttons and 1) == 0 && (prev and 1) == 1
+        // P0-3：右键 bit1 此前完全没被识别（onMouse 只认 bit0），0x02/0x04 整个丢弃 ——
+        // 双指点按/右键菜单全部失效。现在 bit1 按下沿→光标处按下，抬起沿按时长/位移
+        // 判「长按（右键）或拖拽」；bit0 左键沿用原 pressDown/pressUp。
+        val needRightDown = (buttons and 2) != 0 && (prev and 2) == 0
+        val needRightUp = (buttons and 2) == 0 && (prev and 2) == 1
+        // 中键 bit2：被控端 ControlEndpoint 没有中键注入语义，维持忽略但不再静默 —— 记一条日志便于排查
+        if (buttons and 4 != 0 && prev and 4 == 0) Log.w("控制面", "收到中键按下（bit2），被控端暂无中键注入通道，忽略")
         synchronized(keysLock) { lastButtons = buttons }
         if (needDown) endpoint.pressDown()
         if (needUp) endpoint.pressUp()
+        if (needRightDown) {
+            // 快速连点右键：先收掉上一次还没落地的推迟抬起，避免触摸流卡在 DOWN
+            rightUpPending?.let { p ->
+                injectHandler.removeCallbacks(p); rightUpPending = null; endpoint.pressUp()
+            }
+            rightDownAt = SystemClock.uptimeMillis()
+            rightMovedPx = 0
+            // 光标处按下：抬起沿再判 长按（右键）/ 拖拽；有 INJECT_EVENTS 时是一条真实触摸流
+            endpoint.pressDown()
+        }
+        if (buttons and 2 != 0) rightMovedPx += abs(dx) + abs(dy)
+        if (needRightUp) {
+            val held = SystemClock.uptimeMillis() - rightDownAt
+            if (held >= RIGHT_HOLD_MS || rightMovedPx >= TAP_DRIFT_PX) {
+                // 按住够久或拖出了位移：立即抬起 → finishStroke 判长按 / 拖拽
+                rightUpPending?.let { injectHandler.removeCallbacks(it); rightUpPending = null }
+                endpoint.pressUp()
+            } else {
+                // 快速右键点按：把抬起推迟到按下后 550ms（≥ finishStroke 的 500ms 长按阈值，
+                // 也是真实触摸流里对端能识别为长按的按住时长），对端在光标处弹右键菜单
+                val r = Runnable { rightUpPending = null; endpoint.pressUp() }
+                rightUpPending = r
+                injectHandler.postDelayed(r, (rightDownAt + RIGHT_HOLD_MS - SystemClock.uptimeMillis()).coerceAtLeast(0))
+            }
+        }
         if (wheel != 0) endpoint.scroll(wheel)
     }
 
@@ -339,9 +379,13 @@ class ControlServer(
     private fun releaseAllInputs() {
         val held = synchronized(keysLock) { HashSet(pressedKeys) }
         val hadLeftBtn = synchronized(keysLock) { (lastButtons and 0x01) != 0 }
+        // P0-3：右键序列（含还没落地的推迟抬起）在断开/挂起时也必须收尾，否则触摸流卡在 DOWN
+        val hadRightBtn = synchronized(keysLock) { (lastButtons and 0x02) != 0 }
         synchronized(keysLock) { pressedKeys.clear(); lastButtons = 0 }
+        val pendingRight = rightUpPending
+        if (pendingRight != null) { injectHandler.removeCallbacks(pendingRight); rightUpPending = null }
         for (u in held) runCatching { hidUp(u) }
-        if (hadLeftBtn) runCatching { endpoint.pressUp() }
+        if (hadLeftBtn || hadRightBtn || pendingRight != null) runCatching { endpoint.pressUp() }
     }
 
     private fun hidDown(usage: Int) {
@@ -456,6 +500,10 @@ class ControlServer(
         private const val WRITER_IDLE_MS = 200L
         private const val READ_TIMEOUT_MS = 3_000
         private const val MAX_RX_BUF = 8 * 1024 * 1024
+        /** P0-3：右键按住阈值 —— 抬起沿据此判「长按（右键菜单）」，需 ≥ TvInjector.finishStroke 的 500ms */
+        private const val RIGHT_HOLD_MS = 550L
+        /** P0-3：右键按住期间位移超过该像素数 → 判拖拽，立即抬起走 swipe */
+        private const val TAP_DRIFT_PX = 12
         /** 剪贴板同步命令号（手机复制→PC粘贴），协议帧 body[0] */
         private const val CLIPBOARD = 0x20
         private val PONG = "pong".toByteArray(Charsets.UTF_8)
@@ -463,7 +511,7 @@ class ControlServer(
         fun localIpv4(): String? = try {
             Collections.list(NetworkInterface.getNetworkInterfaces()).filter { it.isUp && !it.isLoopback }
                 .flatMap { ni -> Collections.list(ni.inetAddresses) }
-                .firstOrNull { !it.isLoopbackAddress && it.hostAddress?.contains(':') == false }?.hostAddress
+                .firstOrNull { !it.loopbackAddress && it.hostAddress?.contains(':') == false }?.hostAddress
         } catch (_: Throwable) { null }
         private val HID_MAP: Map<Int, Pair<Int, Char>> = buildMap {
             put(0x29, 4 to '\u0000'); put(0x4A, 3 to '\u0000'); put(0x2B, 61 to '\u0000')
