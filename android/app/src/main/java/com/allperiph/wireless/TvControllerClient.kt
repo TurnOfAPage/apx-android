@@ -134,7 +134,8 @@ class TvControllerClient(
                 val hintLen = body[1].toInt() and 0xFF
                 if (body.size < 2 + hintLen) return
                 val hint = String(body.copyOfRange(2, 2 + hintLen), Charsets.UTF_8)
-                onRemoteInputRequest?.invoke(host, hint)
+                val cb = onRemoteInputRequest
+                if (cb != null) cb(host, hint) else handleRequestInputFallback(hint)
             }
             0x26 -> {
                 // INPUT_TEXT: [0x26, flags, textLen, text...]
@@ -143,9 +144,45 @@ class TvControllerClient(
                 val textLen = (body[2].toInt() and 0xFF) or ((body[3].toInt() and 0xFF) shl 8)
                 if (body.size < 4 + textLen) return
                 val text = String(body.copyOfRange(4, 4 + textLen), Charsets.UTF_8)
-                onRemoteInputText?.invoke(text, flags)
+                val cb = onRemoteInputText
+                if (cb != null) cb(text, flags) else injectRemoteTextFallback(text, flags)
             }
             0x27 -> { onRemoteInputDone?.invoke() }
+        }
+    }
+
+    /**
+     * 0x25 兜底（新）：对端输入框获焦 → 请求本机代输。
+     * 此前 onRemoteInputRequest 全项目零赋值 —— 帧到了没人弹窗、静默丢弃：
+     * 手机控手机 / 手机控 TV 时「对端获焦自动请本机代输」整个是死的
+     * （PC 端 Ctrl9511Client 早有接线，手机端漏了这半边）。
+     * 回调在 reader 线程，弹窗必须切主线程；Android 10+ 后台启动 Activity 受限，
+     * 但收到此帧时用户正在操作控制端（前台），直接启动与被控侧 RemoteInputActivity.start 同口径。
+     */
+    private fun handleRequestInputFallback(hint: String) {
+        val ctx = com.allperiph.App.context
+        if (ctx == null) { Log.w("TvCtrl", "收到代输请求，但 App.context 未就绪"); return }
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            runCatching {
+                com.allperiph.controlled.RemoteInputActivity.start(ctx, host, hint, fromClient = true)
+            }.onFailure { Log.w("TvCtrl", "代输弹窗失败：${it.message}") }
+        }
+    }
+
+    /**
+     * 0x26 兜底（新）：对端替本机打的字落到本机获焦输入框。
+     * 与 ControlledService.injectRemoteText 同口径：退格删一格 / 正文走无障碍
+     * typeText→paste 兜底；CANCEL 留空（三端都未实现整段撤销，保留帧语义）。
+     */
+    private fun injectRemoteTextFallback(text: String, flags: Int) {
+        val svc = com.allperiph.shared.accessibility.ApxAccessibilityService.instance
+        if (svc == null) { Log.w("TvCtrl", "代输没落地：无障碍服务未就绪"); return }
+        when {
+            flags and ApxFrame.INPUT_FLAG_BACKSPACE != 0 -> svc.deleteChar()
+            flags and ApxFrame.INPUT_FLAG_CANCEL != 0 -> Unit
+            else -> if (text.isNotEmpty() && !svc.typeText(text) && !svc.paste(text)) {
+                Log.w("TvCtrl", "代输注入失败（输入框没聚焦？）")
+            }
         }
     }
 
