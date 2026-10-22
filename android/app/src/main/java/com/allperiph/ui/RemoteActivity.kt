@@ -363,6 +363,10 @@ class RemoteActivity : Activity() {
     private var padDownAt = 0L
     private var padLastX = 0f
     private var padLastY = 0f
+    // P1-4：两轴独立的亚像素余数 —— 原来 dx/dy 同为 0 才推进 last，任一轴截断为 0
+    // 时另一轴的位移也被整帧丢掉；余数留在各自 frac 里下一帧续发。
+    private var padFracX = 0f
+    private var padFracY = 0f
 
     /**
      * 触摸控制条 —— 手机控制手机 / TV 时用触摸控制被控端光标：
@@ -391,6 +395,7 @@ class RemoteActivity : Activity() {
                 android.view.MotionEvent.ACTION_DOWN -> {
                     padDownX = e.x; padDownY = e.y
                     padLastX = e.x; padLastY = e.y
+                    padFracX = 0f; padFracY = 0f   // 新的一笔：清掉上一笔的亚像素余数
                     padDownAt = android.os.SystemClock.uptimeMillis()
                     if (!ControlTarget.isControlling() || ControlTarget.controlClient == null) {
                         Toast.makeText(this@RemoteActivity, getString(R.string.ui_remote_toast_device_connect_not), Toast.LENGTH_SHORT).show()
@@ -398,11 +403,18 @@ class RemoteActivity : Activity() {
                 }
                 android.view.MotionEvent.ACTION_MOVE -> {
                     if (ControlTarget.isControlling()) {
-                        val dx = ((e.x - padLastX) * TOUCH_GAIN).toInt().coerceIn(-120, 120)
-                        val dy = ((e.y - padLastY) * TOUCH_GAIN).toInt().coerceIn(-120, 120)
+                        // P1-4：每轴独立累计亚像素 + 钳位。原写法 `if (dx != 0 || dy != 0)`
+                        // 两轴耦合：任一轴整数部分为 0 就整帧不更新 last，另一轴也被拖住；
+                        // 且 dx.toInt() 截断丢掉 <1px 的移动。现在 last 每帧正常推进，
+                        // 余数（含被钳下的超限部分）留在 padFrac 里下一帧续发。
+                        padFracX += (e.x - padLastX) * TOUCH_GAIN
+                        padFracY += (e.y - padLastY) * TOUCH_GAIN
+                        padLastX = e.x; padLastY = e.y
+                        val dx = padFracX.toInt().coerceIn(-127, 127)
+                        val dy = padFracY.toInt().coerceIn(-127, 127)
                         if (dx != 0 || dy != 0) {
                             ControlTarget.controlClient?.mouse(0, dx, dy, 0)
-                            padLastX = e.x; padLastY = e.y
+                            padFracX -= dx; padFracY -= dy
                         }
                     }
                 }
