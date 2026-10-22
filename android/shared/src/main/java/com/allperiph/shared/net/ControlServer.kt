@@ -511,7 +511,7 @@ class ControlServer(
         fun localIpv4(): String? = try {
             Collections.list(NetworkInterface.getNetworkInterfaces()).filter { it.isUp && !it.isLoopback }
                 .flatMap { ni -> Collections.list(ni.inetAddresses) }
-                .firstOrNull { !it.loopbackAddress && it.hostAddress?.contains(':') == false }?.hostAddress
+                .firstOrNull { !it.isLoopbackAddress && it.hostAddress?.contains(':') == false }?.hostAddress
         } catch (_: Throwable) { null }
         private val HID_MAP: Map<Int, Pair<Int, Char>> = buildMap {
             put(0x29, 4 to '\u0000'); put(0x4A, 3 to '\u0000'); put(0x2B, 61 to '\u0000')
