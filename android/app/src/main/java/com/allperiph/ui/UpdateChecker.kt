@@ -17,7 +17,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 /**
  * GitHub Releases 更新检查（设置页 · 关于分段）。
  *
- * 数据源：仓库  API → （形如 v205），与本机
+ * 数据源：仓库 `releases/latest` API → `tag_name`（形如 v205），与本机
  * [BuildConfig.RELEASE_TAG]（发版构建）/ [BuildConfig.VERSION_NAME]（回退）比**数值段**大小。
  * 两套号同源的前提在 android/app/build.gradle.kts：CI 打 tag v* 构建时 versionName == tag_name。
  *
@@ -85,14 +85,14 @@ object UpdateChecker {
                     }
                 }
                 404 -> Result.Failed("no published release")
-                else -> Result.Failed("http ")
+                else -> Result.Failed("http ${conn.responseCode}")
             }
         } finally {
             conn.disconnect()
         }
     } catch (e: Exception) {
         // 含无网、DNS 失败、超时、JSON 解析异常 —— 一律降级为 Failed，不抛到主线程
-        com.allperiph.shared.util.Log.w("UpdateChecker", "check failed: ")
+        com.allperiph.shared.util.Log.w("UpdateChecker", "check failed: ${e}")
         Result.Failed(e.javaClass.simpleName)
     }
 

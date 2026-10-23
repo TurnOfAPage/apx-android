@@ -45,20 +45,20 @@ object IssueLauncher {
             appendLine("1. ")
             appendLine("2. ")
             appendLine()
-            appendLine("### 运行日志（最后 $LOG_LINES 条）")
+            appendLine("### 运行日志（最后 ${LOG_LINES} 条）")
             appendLine(FENCE)
             SharedLog.snapshot().takeLast(LOG_LINES).forEach { e ->
                 appendLine("${e.level} ${e.tag}: ${e.msg}")
             }
             appendLine(FENCE)
         }
-        val url = "$NEW_ISSUE?labels=$LABEL" +
+        val url = "${NEW_ISSUE}?labels=${LABEL}" +
                 "&title=${URLEncoder.encode(title, "UTF-8")}" +
                 "&body=${URLEncoder.encode(body, "UTF-8")}"
         try {
             context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
         } catch (e: ActivityNotFoundException) {
-            SharedLog.w("IssueLauncher", "no browser: $e")
+            SharedLog.w("IssueLauncher", "no browser: ${e}")
             Toast.makeText(context, R.string.about_feedback_no_browser, Toast.LENGTH_SHORT).show()
         }
     }
