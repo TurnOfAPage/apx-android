@@ -1,0 +1,49 @@
+{
+  "edits": [
+    {
+      "path": "android/app/src/main/java/com/allperiph/ui/SettingsFragment.kt",
+      "find": "        fxBox.addView(settingRow(getString(R.string.ui_main_label_keyrow_arrange), KeyPref.LAYOUT_LABELS[KeyPref.layoutIndex(activity)], accent) {",
+      "replace": "        // 分组（v206）：上面 4 行是外观与手感（背景/动效/震动/按键音），从这里是键盘外观 ——\n        // 卡标题只有一个，故在卡内加小标题分段（与 renderTv 的「连接/工具」同款）。\n        fxBox.addView(fieldLabel(getString(R.string.lay_settings_group_keyboard_look)))\n        fxBox.addView(settingRow(getString(R.string.ui_main_label_keyrow_arrange), KeyPref.LAYOUT_LABELS[KeyPref.layoutIndex(activity)], accent) {"
+    },
+    {
+      "path": "android/app/src/main/java/com/allperiph/ui/SettingsFragment.kt",
+      "find": "        tvBox.addView(settingRow(getString(R.string.ui_main_label_device_connect), getString(R.string.ui_main_btn_pick), accent) { h.showDevicePicker() })",
+      "replace": "        // 分组（v206）：「连接」小节 = 选设备/断开/最近设备/状态；「工具」小节 = 遥控面板/全屏/自检/日志\n        tvBox.addView(fieldLabel(getString(R.string.lay_settings_group_connect)))\n        tvBox.addView(settingRow(getString(R.string.ui_main_label_device_connect), getString(R.string.ui_main_btn_pick), accent) { h.showDevicePicker() })"
+    },
+    {
+      "path": "android/app/src/main/java/com/allperiph/ui/SettingsFragment.kt",
+      "find": "        tvBox.addView(settingRow(getString(R.string.ui_main_label_remote_power_volume), getString(R.string.ui_common_open), accent) {",
+      "replace": "        tvBox.addView(fieldLabel(getString(R.string.lay_settings_group_tools)))\n        tvBox.addView(settingRow(getString(R.string.ui_main_label_remote_power_volume), getString(R.string.ui_common_open), accent) {"
+    },
+    {
+      "path": "android/app/src/main/java/com/allperiph/ui/SettingsFragment.kt",
+      "find": "        val lines = listOf(\n            getString(R.string.ui_main_item_hotkey_touchpad_home),\n            getString(R.string.ui_main_item_remote_device_only_cursor),\n            getString(R.string.ui_main_item_perm_no_home),\n            getString(R.string.ui_main_item_remote_keyboard_reboot_poweroff),\n            \"切到 TV 目标时，触摸板下方的快捷键条自动切换为「TV 遥控」预设，可长按编辑、改动单独保存\",\n        )",
+      "replace": "        // 5 条并 3 条（v206）：\n        //   ① 方向/OK/返回/主页 与键义、\"点不动=没开权限\"是一件事，合成一条；\n        //   ② 音量/电源 与 \"切到 TV 目标自动换遥控预设\" 都是遥控那点事，合成一条；\n        //   原第 5 条硬编码中文已并入 ui_main_item_remote_keyboard_reboot_poweroff。\n        val lines = listOf(\n            getString(R.string.ui_main_item_hotkey_touchpad_home),\n            getString(R.string.ui_main_item_remote_device_only_cursor),\n            getString(R.string.ui_main_item_remote_keyboard_reboot_poweroff),\n        )"
+    },
+    {
+      "path": "android/app/src/main/java/com/allperiph/ui/SettingsFragment.kt",
+      "find": "        tvStatusView = TextView(activity).apply {\n            text = if (h.isControlling()) {\n                \"当前控制：${h.getControlTargetLabel()} · ${h.displayUplinkHint()}\"\n            } else {\n                \"未连接（触摸板控本机）· ${h.displayUplinkHint()}\"\n            }",
+      "replace": "        tvStatusView = TextView(activity).apply {\n            // 文案迁资源（v206）：原先两串硬编码中文，与本页其他界面的 getString 约定不一致\n            text = if (h.isControlling()) {\n                getString(R.string.lay_settings_status_target, h.getControlTargetLabel(), h.displayUplinkHint())\n            } else {\n                getString(R.string.lay_settings_status_local, h.displayUplinkHint())\n            }"
+    },
+    {
+      "path": "android/app/src/main/res/values/strings.xml",
+      "find": "<string name=\"ui_main_item_hotkey_touchpad_home\">方向 / OK / 返回 / 主页：连上 TV 或电脑后自动生效，主页的触控板与快捷键条会一起发过去</string>",
+      "replace": "<string name=\"ui_main_item_hotkey_touchpad_home\">方向 / OK / 返回 / 主页：连上 TV 或电脑后自动生效（主页的触控板与快捷键条会一起发过去）；OK = 回车，返回 = Esc，主页 = Home。对方显示「点不动」是还没开权限，不是没连上</string>"
+    },
+    {
+      "path": "android/app/src/main/res/values/strings.xml",
+      "find": "<string name=\"ui_main_item_remote_keyboard_reboot_poweroff\">音量 / 电源：键盘页「遥控」布局第三行有「电源 / 关机 / 重启」（关机与重启需要对方有 root，点了会先弹确认框；没有 root 只会退回待机）</string>",
+      "replace": "<string name=\"ui_main_item_remote_keyboard_reboot_poweroff\">音量 / 电源：键盘页「遥控」布局第三行有「电源 / 关机 / 重启」（关机与重启需要对方有 root，点了会先弹确认框；没有 root 只会退回待机）；切到 TV 目标时，触摸板下方的快捷键条会自动换成「TV 遥控」预设，可长按编辑、改动单独保存</string>"
+    },
+    {
+      "path": "android/app/src/main/res/values/strings.xml",
+      "find": "<string name=\"lay_settings_text_background_2\">背景可换纯色或相册里的图片；动效快慢、震动强弱、按键音色整体调</string>",
+      "replace": "<string name=\"lay_settings_text_background_2\">背景可换纯色或相册里的图片，动效快慢、震动强弱、按键音整体调；下方「键盘外观」另管键位排列、键帽密度与自定义键盘</string>"
+    },
+    {
+      "path": "android/app/src/main/res/values/strings.xml",
+      "find": "</resources>",
+      "replace": "    <string name=\"lay_settings_group_keyboard_look\">键盘外观</string>\n    <string name=\"lay_settings_group_connect\">连接</string>\n    <string name=\"lay_settings_group_tools\">工具</string>\n    <string name=\"lay_settings_status_target\">当前控制：%1$s · %2$s</string>\n    <string name=\"lay_settings_status_local\">未连接（触摸板控本机）· %1$s</string>\n</resources>"
+    }
+  ]
+}
