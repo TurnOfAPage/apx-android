@@ -811,7 +811,7 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
                 val cy = from.centerY() + (target.centerY() - from.centerY()) * ease
                 val bulge = 1f + 0.20f * kotlin.math.sin(Math.PI.toFloat() * t)
                 val w = (from.width() + (target.width() - from.width()) * t) * bulge
-                val h = from.height() + (target.height() - from.height()) * t
+                val h = (from.height() + (target.height() - from.height()) * t)
                 navGlass.setIndicator(RectF(cx - w / 2f, cy - h / 2f, cx + w / 2f, cy + h / 2f))
             }
             start()
@@ -979,7 +979,7 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
     }
 
     override fun isExitEnabled(moduleId: String, group: String): Boolean =
-        AgentController.isExitEnabled(moduleId, group)
+        AgentController.isExitEnabled(this, moduleId, group)
 
     override fun setExitEnabled(moduleId: String, group: String, enabled: Boolean) {
         AgentController.setExitEnabled(this, moduleId, group, enabled)
@@ -1268,6 +1268,13 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
         AlertDialog.Builder(this, R.style.Theme_AllPeriph_Miuix_Dialog)
             .setTitle(getString(R.string.ui_main_dialog_log, minOf(snap.size, 120)))
             .setMessage(text)
+            .setNeutralButton(getString(R.string.ui_common_copy)) { _, _ ->
+                // v208：一键复制整段日志（此前只能对着屏幕抄）。写系统剪贴板；
+                // 「手机复制 → 电脑粘贴」的剪贴板同步会顺带把它带去电脑（用户主动复制，非回传）。
+                val cm = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                cm?.setPrimaryClip(ClipData.newPlainText("APX-log", text))
+                Toast.makeText(this, getString(R.string.ui_common_copied), Toast.LENGTH_SHORT).show()
+            }
             .setPositiveButton(getString(R.string.ui_common_close), null)
             .show()
     }
@@ -1462,7 +1469,7 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
     private fun buildModuleRows() { statusFragment?.buildModuleRows() }
 
     private fun bindActions() {
-        // 三个传输开关取代单总开关：打开即整组启用该类下的功能并拉起服务；
+        // 三个传输开关取代单总开关：打开即整组启用该类下的所有功能并拉起服务；
         // 关闭则整组停用，仅当三类全关才停服务。
         // v196 第 4 步：三个传输开关的 isChecked 与 setOnCheckedChangeListener **移交 StatusFragment**。
         // 两侧都绑定会导致「点一次开关触发两个动作」（Activity 切一次、Fragment 又切一次），
@@ -1728,7 +1735,7 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
                 continue
             }
             if (!on) {
-                // 关开关时，共享模块（触控板同时挂在无线与 USB 两组）若还被其它**已开启**
+                // 关开关时，共享模块（触控板同时挂在无线和 USB 两组）若还被其它**已开启**
                 // 的传输用到，就不能停 —— 否则关 USB 会把无线正在用的触控板一起停掉。
                 val stillNeeded = AgentController.TRANSPORTS.any { other ->
                     other != t &&
@@ -1784,7 +1791,7 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
                 if (rootMissing) R.string.hint_root_missing else R.string.hint_idle
             )
         }
-        // 设置页按传输类分组：某类开关打开才显示其模块行（"打开才出现对应功能"）
+        // 设置页按传输类分组：某类开关打开才显示它的模块行（"打开才出现对应功能"）
         groupWifi.visibility = if (AgentController.isTransportEnabled(this, "wifi")) View.VISIBLE else View.GONE
         groupBt.visibility = if (AgentController.isTransportEnabled(this, "bt")) View.VISIBLE else View.GONE
         groupUsb.visibility = if (AgentController.isTransportEnabled(this, "usb")) View.VISIBLE else View.GONE
@@ -1860,7 +1867,7 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
     private fun renderEnv(env: EnvChecks.Env) {
         tvDiag.text = buildString {
             append(if (env.rooted) "Root ✓" else "Root ✗")
-            append(" · ").append(if (env.superSpeed) "USB 3.0 ✓" else "USB 2.0")
+            append(" · ").append(if (env.superSpeed) "USB 3.0" else "USB 2.0")
             append(" · ").append(if (env.batteryOptimized) getString(R.string.ui_main_text_not) else getString(R.string.ui_main_text_done_2))
             if (!env.notificationGranted) append(" · 通知未授权 ✗")
             append("\n详细的连接状态见「状态」页")
