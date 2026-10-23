@@ -1012,7 +1012,8 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
         renderUplink()
     }
 
-    override fun isBtConnected(): Boolean = false
+    override fun isBtConnected(): Boolean =
+        (AgentController.module(com.allperiph.core.ModuleId.BTHID) as? com.allperiph.bt.BtHidDevice)?.isConnected == true
 
     override fun renderChips() = hotkeyBoard.render()
 

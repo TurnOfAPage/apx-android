@@ -45,14 +45,13 @@ App「状态」页打开总开关后，手机作为 USB 复合设备被 Windows 
 `bt/BtHidDevice` 目前已有 **鼠标**（`reportMouse`，rid 1）与 **多媒体键**（`reportConsumer`，rid 3）。
 待补：
 
-| 待补 | 报告 | 说明 |
+| 能力 | 报告 | 状态（2026-10-23 源码核对） |
 |---|---|---|
-| `reportKeyboard(mod, keys)` | rid 2 | 8B：`[0x02, mod, k1..k6]`（无 reserved，见 `buildBtTlcKeyboard`） |
-| `reportGamepad(btn, x,y,rx,ry)` | rid 4 | 需扩展蓝牙描述符加 gamepad TLC |
+| `reportKeyboard(mod, keys)` | rid 2 | ✅ 已实现（v184）：8B `[mod, reserved, k1..k6]`，`sendReport(0x02, …)`（Report ID 不进 data，v186 修复）；**接入键盘出口 = 本 PR** |
+| `reportGamepad(btn, x,y,rx,ry)` | rid 4 | ✅ 已实现（v184）：6B `[btn_lo, btn_hi, x, y, rx, ry]`，`GamepadController` 已走蓝牙优先 |
 
-> 蓝牙描述符**应改用 `shared` 的 `buildBtReportDescriptor()`**（已含 Mouse/Keyboard/Consumer，
-> rid 1/2/3），替换 `BtHidDevice.kt` 里硬编码的 `BtHidDescriptor.bytes`（那份缺 Report ID、键盘结构也不符）。
-> 需要补一个 JNI：`ApxNative.hidBtReportDescriptor()` → `apx::buildBtReportDescriptor()`。
+> ✅ 已完成（2026-10-23 核对）：`registerApp` 优先取 `ApxNative.btReportDescriptor()`（native，与 `shared` 同源），
+> `BtHidDescriptor.bytes` 降为 libapx.so 未加载时的 fallback，且 v186 已给全部 TLC 补上 Report ID 声明。
 
 ### 2.2 Wi‑Fi 控制（局域网 TCP）—— **已实现，真机验证通过**
 
@@ -63,8 +62,8 @@ App「状态」页打开总开关后，手机作为 USB 复合设备被 Windows 
 
 | 环节 | 落点 |
 |---|---|
-| Android 承载 | `core/ApxFrame.kt`（APX1 组帧）+ `wireless/TcpControlChannel.kt`（服务端 + writer 线程） |
-| Android 出口 | `core/TcpCtrlBridge.kt`；触控板/键盘/多媒体三处以「蓝牙 → USB HID → TCP → 日志」择优 |
+| Android 承载 | ⚠️ `wireless/TcpControlChannel.kt` 与 `core/TcpCtrlBridge.kt` **已在 v1.11 移入 `.attic/wireless_removed_v1.11/`，源码树中不存在**（2026-10-23 核对：全库搜不到源码）；当前 9511 上行走 `wireless/ControlTarget` + `TvControllerClient`（受控目标 TV/PC） |
+| Android 出口 | 择路唯一判据 = `core/Uplink.kt` 的 `resolve(hid, btConnected, wireless)`：无线目标 → USB → 蓝牙 → NONE，触控板/键盘/多媒体/手柄四点共用 |
 | Android 发现 | `wireless/WirelessBeacon.kt`：UDP 9501 广播 `APX1PHONE <name> <port> <token>` |
 | PC 客户端 | `pc/host/src/wireless/wireless_link.cpp`（握手 + 解帧 + SendInput 注入） |
 | PC 发现 | `pc/host/src/wireless/beacon_listener.cpp`（收信标自动连入） |
@@ -300,7 +299,15 @@ runtime.attachSerial(tcpChan) // Wi‑Fi 挂载后
 注意：**不要在调用线程直接写 socket** —— 手势帧来自 UI 线程，会触发
 `NetworkOnMainThreadException`（§2.2 真机教训）。
 
-### 3.2 输入出口：统一到 `InputSink`（**建议新增，当前是分散判断**）
+### 3.2 输入出口：✅ 判据已由 `core/Uplink.kt` 统一（原计划的 `InputSink` 不再需要）
+
+> **2026-10-23 源码核对**：判据唯一化早已落地为 `Uplink.resolve(hid, btConnected, wireless)`，
+> 触控板 / 多媒体 / 键盘 / 手柄四个发送点与通知栏、状态页都读它（`Uplink.current`）。
+> 下文的 `InputSink` 接口草图是**历史方案**，不必实现 —— 现存的重复只是
+> “各发送点自己取模块实例”，不构成第二套判据。本轮补齐的两处缺口：
+> 键盘蓝牙分支（`HidKeys` 写死 `btConnected=false`）与主页 `isBtConnected()` 写死 `false`。
+
+<details><summary>历史方案草图（保留备查）</summary>
 
 现状：鼠标 / 多媒体 / 键盘**三处各自在模块内择路**，判据与优先级重复了三遍
 （`TouchpadModule.dispatch`、`HotkeyController.send`、`HidKeys.send`）：
@@ -361,14 +368,16 @@ Wi‑Fi 侧：**复用同一套命令 TLV**，改为在 TCP 帧的 `streamId=ctr
 
 ## 四、建议的实施顺序
 
-1. **输入统一**：新增 `InputHub`/`InputSink`，把鼠标/键盘/手柄/多媒体的择路收敛（纯重构，行为不变）。
+1. ~~**输入统一**：新增 `InputHub`/`InputSink`~~ ✅ 已由 `core/Uplink.resolve` 满足（判据唯一，四点共用）；
+   2026-10-23 补齐的是键盘蓝牙分支与 `MainActivity.isBtConnected()` 真值，见 §3.2 顶部核对注。
 2. **蓝牙键盘**：JNI 暴露 `buildBtReportDescriptor`，`BtHidDevice` 换 native 描述符 +
    补 `reportKeyboard`，接进 `BtInputSink`。真机配对验证键盘可打字。
 3. **蓝牙手柄**：扩展 `buildBtReportDescriptor` 加 gamepad TLC（rid 4），补 `reportGamepad`。
 4. ~~**Wi‑Fi 控制**~~：✅ 已完成（§2.2）：Android 服务端 + `TcpCtrlBridge` 出口 +
    UDP 信标发现；PC 端 `WirelessLink` 注入（鼠标 / 键盘 / 多媒体）。真机端到端验证通过。
 
-> 仍未做：**输入出口统一到 `InputHub`**（§3.2）。当前鼠标/多媒体/键盘各自择路，
+> 2026-10-23 更新：**输入出口已统一在 `Uplink.resolve`**（§3.2）；`reportKeyboard`/`reportGamepad` 与
+> native 蓝牙描述符均已存在，本轮把键盘接进蓝牙分支。手柄仍无 TCP 出口（发送面受控目标）：
 > 手柄（`ui/GamepadController`）尚无 TCP 出口 —— 因 `SendInput` 无法模拟手柄，
 > 需第三方虚拟手柄驱动，见 §2.2「尚未接入」。
 

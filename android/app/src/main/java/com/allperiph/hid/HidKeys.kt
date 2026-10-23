@@ -210,18 +210,24 @@ object HidKeys {
     /**
      * 出口择优：**判据统一在 [Uplink.resolve]**（自写一套顺序 → 各界面口径不一致的教训见那里）。
      *
-     * 键盘只有两条真实链路：无线受控目标（9511，手机把同一套 (mod, keys) 语义经 APX1 控制帧上行，
-     * 对端翻成 SendInput / evdev）与 USB HID（rid 21）。**蓝牙 HID 只实现了鼠标与多媒体**，
-     * 所以这里蓝牙一律按"不可用"传入 —— 否则界面会显示"出口：蓝牙 HID"而按键其实发不出去。
+     * 键盘三条真实链路：无线受控目标（9511，手机把同一套 (mod, keys) 语义经 APX1 控制帧上行，
+     * 对端翻成 SendInput / evdev）、USB HID（rid 21）与蓝牙 HID（rid 2）。
+     *
+     * 历史坑（2026-10-23 核对源码修复）：这里长期写死 `btConnected = false`，理由注释停留在
+     * "蓝牙只实现了鼠标与多媒体"的旧状态 —— 但 [com.allperiph.bt.BtHidDevice.reportKeyboard]
+     * 自 v184 就绪（8 字节 mod+reserved+6 键）。结果是电脑配了蓝牙、触控板/多媒体/手柄都通，
+     * 偏偏按键与复制粘贴等组合键发不出去。现改取真实连接状态并补上 BLUETOOTH 分支，
+     * 判据仍只有 [Uplink.resolve] 一处。
      *
      * rid 21：[id, mod, 0, k1..k6]；keys 为空 = 全释放
      */
     private fun send(mod: Int, keys: IntArray) {
         val rt = AgentController.runtime
         val target = com.allperiph.wireless.ControlTarget
+        val bt = AgentController.module(com.allperiph.core.ModuleId.BTHID) as? com.allperiph.bt.BtHidDevice
         val path = Uplink.resolve(
             rt?.hid,
-            btConnected = false,
+            btConnected = bt?.isConnected == true,
             wireless = target.isControlling() && target.controlClient != null,
         )
         when (path) {
@@ -254,15 +260,25 @@ object HidKeys {
                     Log.w(TAG, "键盘 HID 写入失败：USB 出口不可用")
                 }
             }
+            Uplink.BLUETOOTH -> {
+                // rid 2：reportKeyboard(data) = [mod, reserved=0, k1..k6]（8 字节，
+                // Report ID 0x02 由 sendReport 的第二参负责，不进 data）。
+                // keys 为空 = 全释放（含修饰键）；与 USB 路径同语义，释放时序仍由
+                // releaseTask(60ms) / releaseHold() 驱动，这里只发当前状态、不自行补 up。
+                Uplink.set(path)
+                val b = ByteArray(keys.size.coerceIn(0, 6))
+                for (i in b.indices) b[i] = keys[i].toByte()
+                bt?.reportKeyboard(mod, b)
+            }
             else -> {
                 // 无出口：原先只 Log.w，界面完全看不出"为什么按键没反应"
                 val first = Uplink.current != Uplink.NONE
                 Uplink.set(
                     Uplink.NONE,
                     if (target.isControlling()) "受控目标已断开"
-                    else "USB HID 未就绪（/dev/hidg0 未挂载或 USB 口被调试占用）",
+                    else "USB HID 未就绪、蓝牙未连接（/dev/hidg0 未挂载或 USB 口被调试占用）",
                 )
-                if (first) Log.w(TAG, "键盘无可用出口：USB 未挂载且未选受控设备")
+                if (first) Log.w(TAG, "键盘无可用出口：USB 未挂载、蓝牙未连接、未选受控设备")
             }
         }
     }
