@@ -377,8 +377,9 @@ class TouchpadActivity : Activity() {
 
     // —————————————————————————— 第 0 页：触控板 + 常用快捷键 ——————————————————————————
     /**
-     * v207：方向键叠层——十字四键（↑ ← → ↓）叠在手势面右缘，键帽与键盘页同一套手感；
-     * usage 与 [com.allperiph.ui.KeyLayouts] 方向布局一致（USB HID Keyboard Page 0x07）。
+     * v208：方向键叠层——十字方向键 + 中心 OK，居中覆盖手势面；
+     * 箭头 usage 与 [com.allperiph.ui.KeyLayouts] 方向布局一致（USB HID Keyboard Page 0x07），
+     * 中心 OK = ⏎/Enter（KeyLayouts.ENTER = 0x28），与方向布局的确认键同 usage。
      * 仅键帽区域消费触摸，键间空隙和手势面其余区域仍走 Activity.onTouchEvent → 触控引擎。
      */
     private fun dpadOverlay(): View {
@@ -397,7 +398,7 @@ class TouchpadActivity : Activity() {
         up.addView(gap(), cell())
         val mid = row()
         mid.addView(key("←", 0x50), cell())
-        mid.addView(gap(), cell())
+        mid.addView(key("OK", 0x28), cell())
         mid.addView(key("→", 0x4F), cell())
         val down = row()
         down.addView(gap(), cell())
@@ -426,13 +427,13 @@ class TouchpadActivity : Activity() {
             textSize = 13f
             gravity = Gravity.CENTER
             isClickable = false
-        }, FrameLayout.LayoutParams(-1, -2, Gravity.CENTER))
-        col.addView(area, LinearLayout.LayoutParams(-1, 0, 1f))
-        // v207：方向键叠在手势面上（右缘居中，避开右侧 28dp 边缘起滑区）——
-        // 滑动与方向键同屏，不用翻到键盘页；键帽只消费自身区域，键外照常走触控引擎。
-        area.addView(dpadOverlay(), FrameLayout.LayoutParams(-2, -2, Gravity.CENTER_VERTICAL or Gravity.END).apply {
-            rightMargin = dp(30)
+        }, FrameLayout.LayoutParams(-1, -2, Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply {
+            topMargin = dp(14)
         })
+        col.addView(area, LinearLayout.LayoutParams(-1, 0, 1f))
+        // v208：方向键居中覆盖手势面（带中心 OK），四周与键间空隙仍可滑动 ——
+        // 键帽只消费自身区域，键外照常走触控引擎，滑动与方向同屏。
+        area.addView(dpadOverlay(), FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
 
         // 常用快捷键：网格 + 拖拽排序（与主页同一套手势），抬手即用，不占整页
         val head = LinearLayout(this).apply {
