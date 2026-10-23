@@ -113,6 +113,8 @@
     <string name="ui_main_text_no_recent">还没有记录 —— 连上一次就会出现在这里</string>
     <string name="ui_main_btn_a11y_settings">无障碍设置</string>
     <string name="ui_common_close">关闭</string>
+    <string name="ui_common_copy">复制</string>
+    <string name="ui_common_copied">已复制</string>
     <string name="ui_main_label_file_send">发送文件到手机</string>
     <string name="ui_main_btn_file">选文件</string>
     <string name="ui_main_label_file_panel">收到的文件 / 文件面板</string>
@@ -208,7 +210,7 @@
     <string name="ui_touchpad_media_next">下一曲</string>
     <string name="ui_touchpad_label_volume">音量 −</string>
     <string name="ui_touchpad_media_mute">静音</string>
-    <string name="ui_touchpad_label_volume_2">音量 +</string>
+    <string name="ui_touchpad_label_volume_2">音量 ＋</string>
     <string name="ui_touchpad_label_power">电源</string>
     <string name="ui_touchpad_label_poweroff">关机</string>
     <string name="ui_touchpad_label_reboot">重启</string>
