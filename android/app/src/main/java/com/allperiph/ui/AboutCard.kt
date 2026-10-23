@@ -14,7 +14,7 @@ import com.allperiph.R
  *
  * 为什么做成自包含控件而不是去 SettingsFragment 里挂监听：设置页其余三段的
  * 渲染都在那个 31K 文件里，这里只加一张卡 —— 让卡片自己管状态/点击/静默检查，
- * 改动面收敛成「新增两个文件 + 布局里一个标签」，不动既有渲染链路。
+ * 改动面收敛成「新增两个文件 + 布里一个标签」，不动既有渲染链路。
  *
  * 行为：
  *  - 构造：版本行显示当前构建标识（发版构建 = release tag，否则 versionName）；
@@ -43,7 +43,8 @@ class AboutCard @JvmOverloads constructor(
         ready = true
     }
 
-    override fun onVisibilityChanged(changedView: View?, visibility: Int) {
+    // 参数必须是 View（非空）：SDK 对 changedView 标了非空，写 View? 会 "overrides nothing"
+    override fun onVisibilityChanged(changedView: View, visibility: Int) {
         super.onVisibilityChanged(changedView, visibility)
         if (!ready || autoChecked || visibility != View.VISIBLE) return
         autoChecked = true
