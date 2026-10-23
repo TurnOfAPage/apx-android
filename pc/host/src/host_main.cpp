@@ -21,6 +21,7 @@
 #include <apxpc/app/update_check.hpp>
 #include <apxpc/wireless/ctrl9511.hpp>
 #include <apxpc/wireless/input_capture.hpp>
+#include <apxpc/wireless/wireless_session.hpp>
 #include <apxpc/wireless/file_receiver.hpp>
 #include <apxpc/media/media_session.hpp>
 #include <apxpc/media/audio_capture.hpp>
