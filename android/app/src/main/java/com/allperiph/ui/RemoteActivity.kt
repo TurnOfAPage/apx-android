@@ -134,6 +134,25 @@ class RemoteActivity : Activity() {
 
         setContentView(root)
         Backdrop.apply(root, getColor(R.color.md_background))
+        // Android 15+（targetSdk 35）强制 edge-to-edge，主题 windowFullscreen 不再兜底 ——
+        // 顶栏「遥控器 / 选择设备」被状态栏压住。与全屏操控面同一套处理：
+        // R+ 显式关 decor 贴合、隐藏状态栏、按实际 insets（状态栏/挖孔/导航栏/输入法）给内容垫边，
+        // 系统认为栏还在（insets>0）就垫开，已隐藏时 inset=0 不垫。
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+            window.setDecorFitsSystemWindows(false)
+            window.insetsController?.hide(android.view.WindowInsets.Type.statusBars())
+            root.setOnApplyWindowInsetsListener { v, insets ->
+                val t = insets.getInsets(
+                    android.view.WindowInsets.Type.statusBars() or
+                        android.view.WindowInsets.Type.navigationBars() or
+                        android.view.WindowInsets.Type.displayCutout() or
+                        android.view.WindowInsets.Type.ime()
+                )
+                v.setPadding(t.left, t.top, t.right, t.bottom)
+                insets
+            }
+            root.requestApplyInsets()
+        }
         refreshTarget()
     }
 
