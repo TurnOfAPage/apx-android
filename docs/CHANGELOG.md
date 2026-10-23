@@ -6,6 +6,13 @@
 
 ---
 
+## v210（2026-10-23）
+
+### 修复
+- **国内网络检查更新 / 下载（PR #25）**：Android `UpdateChecker.kt` 与 PC `apxhost check-update` 直连 GitHub 失败（超时/被拦）自动回退 `gh-proxy.com` 镜像（404 视为真实无 Release，不回退）；更新弹窗新增「国内高速下载」主按钮（gh-proxy 直链 `AllPeriph-<tag>-app.apk`，打不开自动退回原 Release 页），原「查看更新」页保留为次出口
+
+---
+
 ## v209（2026-10-23）
 
 ### 新增
