@@ -166,6 +166,149 @@ static const WORD kGamepadVk[16] = {
     0,           // 15 未使用
 };
 
+// ---- ViGEmBus 真手柄（可选，运行时探测）—— ROADMAP §2.2「阶段二 借力第三方」-----
+// SendInput 没有手柄概念；装了 ViGEmBus 驱动 + ViGEmClient.dll 的机器上，
+// 这里虚拟出 X360 手柄，游戏/Steam 原生识别。没装则探测一次即静默走键盘降级，
+// 链接期零依赖（GetProcAddress 动态加载）。
+// ABI 依据：nefarius/ViGEmClient include/ViGEm/Client.h（VIGEM_API 默认调用约定，
+// x64 下 Windows 仅一种 ABI）；VIGEM_ERROR_NONE = 0x20000000。
+struct XusbReport {           // 与 XUSB_REPORT 布局逐字节一致（xinput.h 公开 ABI）
+    uint16_t wButtons;
+    uint8_t  bLeftTrigger;
+    uint8_t  bRightTrigger;
+    int16_t  sThumbLX;
+    int16_t  sThumbLY;
+    int16_t  sThumbRX;
+    int16_t  sThumbRY;
+};
+
+struct VigemApi {
+    HMODULE mod = nullptr;
+    void* (*vigemAlloc)() = nullptr;
+    unsigned long long (*vigemConnect)(void*) = nullptr;
+    void* (*vigemTargetX360Alloc)() = nullptr;
+    unsigned long long (*vigemTargetAdd)(void*, void*) = nullptr;
+    unsigned long long (*vigemTargetX360Update)(void*, void*, XusbReport) = nullptr;
+    unsigned long long (*vigemTargetRemove)(void*, void*) = nullptr;
+    void (*vigemTargetFree)(void*) = nullptr;
+    void (*vigemFree)(void*) = nullptr;
+    void* client = nullptr;
+    void* target = nullptr;
+    bool active = false;      // ViGEm 可用且目标已接入
+    bool tried = false;       // 首帧手柄时才探测一次
+};
+
+inline VigemApi& vigem() { static VigemApi v; return v; }
+
+constexpr unsigned long long kVigemOk = 0x20000000ULL;  // VIGEM_ERROR_NONE
+
+// 探测并初始化：ViGEmClient.dll + ViGEmBus 驱动齐全才 active。
+// 任一步失败都精确清理已获取的句柄，tried 置位后不再重试。
+bool vigemInitOnce() {
+    VigemApi& v = vigem();
+    if (v.tried) return v.active;
+    v.tried = true;
+    v.mod = ::LoadLibraryW(L"ViGEmClient.dll");
+    if (!v.mod) return false;  // 未装（常见），静默
+    auto sym = [&](const char* n) { return reinterpret_cast<void*>(::GetProcAddress(v.mod, n)); };
+    v.vigemAlloc = reinterpret_cast<void* (*)()>(sym("vigem_alloc"));
+    v.vigemConnect = reinterpret_cast<unsigned long long (*)(void*)>(sym("vigem_connect"));
+    v.vigemTargetX360Alloc = reinterpret_cast<void* (*)()>(sym("vigem_target_x360_alloc"));
+    v.vigemTargetAdd = reinterpret_cast<unsigned long long (*)(void*, void*)>(sym("vigem_target_add"));
+    v.vigemTargetX360Update = reinterpret_cast<unsigned long long (*)(void*, void*, XusbReport)>(
+        sym("vigem_target_x360_update"));
+    v.vigemTargetRemove = reinterpret_cast<unsigned long long (*)(void*, void*)>(sym("vigem_target_remove"));
+    v.vigemTargetFree = reinterpret_cast<void (*)(void*)>(sym("vigem_target_free"));
+    v.vigemFree = reinterpret_cast<void (*)(void*)>(sym("vigem_free"));
+    if (!v.vigemAlloc || !v.vigemConnect || !v.vigemTargetX360Alloc || !v.vigemTargetAdd ||
+        !v.vigemTargetX360Update || !v.vigemTargetRemove || !v.vigemTargetFree || !v.vigemFree) {
+        std::fprintf(stderr, "[AllPeriph] ViGEmClient.dll 导出不完整，手柄走键盘降级\n");
+        ::FreeLibrary(v.mod);
+        v.mod = nullptr;
+        return false;
+    }
+    v.client = v.vigemAlloc();
+    if (!v.client) return false;
+    const unsigned long long cerr = v.vigemConnect(v.client);
+    if (cerr != kVigemOk) {
+        std::fprintf(stderr, "[AllPeriph] ViGEm 连接总线失败（0x%llx），手柄走键盘降级——"
+                             "安装 ViGEmBus 驱动后自动启用真手柄\n", cerr);
+        v.vigemFree(v.client);
+        v.client = nullptr;
+        return false;
+    }
+    v.target = v.vigemTargetX360Alloc();
+    if (!v.target) {
+        v.vigemFree(v.client);
+        v.client = nullptr;
+        return false;
+    }
+    const unsigned long long aerr = v.vigemTargetAdd(v.client, v.target);
+    if (aerr != kVigemOk) {
+        std::fprintf(stderr, "[AllPeriph] ViGEm 接入目标失败（0x%llx），手柄走键盘降级\n", aerr);
+        v.vigemTargetFree(v.target);
+        v.vigemFree(v.client);
+        v.target = nullptr;
+        v.client = nullptr;
+        return false;
+    }
+    v.active = true;
+    std::fprintf(stderr, "[AllPeriph] ViGEmBus 就绪：手柄将以虚拟 X360 设备注入游戏\n");
+    return true;
+}
+
+// 送一帧完整 X360 报告。true = 已由 ViGEm 处理（不再走键盘降级，
+// 避免两套注入互相打架）；false = 不可用/本次失败（失败自动切回降级）。
+bool vigemSend(uint16_t buttons, int8_t x, int8_t y, int8_t rx, int8_t ry) {
+    if (!vigemInitOnce()) return false;
+    VigemApi& v = vigem();
+    if (!v.active) return false;
+    // 手机位序 → XUSB 位图；L2/R2 协议里是按钮位，XInput 无"扳机按钮"，映射为满按模拟扳机。
+    static const WORD kXusbBit[16] = {
+        0x1000,  // 0  A
+        0x2000,  // 1  B
+        0x4000,  // 2  X
+        0x8000,  // 3  Y
+        0x0100,  // 4  L1 → LEFT_SHOULDER
+        0x0200,  // 5  R1 → RIGHT_SHOULDER
+        0x0000,  // 6  L2 → 下方模拟扳机
+        0x0000,  // 7  R2 → 下方模拟扳机
+        0x0020,  // 8  SELECT → BACK
+        0x0010,  // 9  START
+        0x0000,  // 10 C（协议位，XInput 无对应）
+        0x0000,  // 11 Z（同上）
+        0x0400,  // 12 MODE → GUIDE
+        0x0040,  // 13 THUMBL → LEFT_THUMB
+        0x0080,  // 14 THUMBR → RIGHT_THUMB
+        0x0000,  // 15 未使用
+    };
+    XusbReport rep{};
+    WORD w = 0;
+    for (int i = 0; i < 16; ++i) {
+        if (buttons & static_cast<uint16_t>(1u << i)) w |= kXusbBit[i];
+    }
+    rep.wButtons = w;
+    if (buttons & (1u << 6)) rep.bLeftTrigger = 255;
+    if (buttons & (1u << 7)) rep.bRightTrigger = 255;
+    // 轴：i8 → i16（×256 铺满量程）；Android 摇杆 Y 下为正、XInput 上为正 → Y 取反。
+    // 先按 int 算再夹紧，防 -128×256 溢出 i16。
+    auto scale = [](int v, bool invert) -> int16_t {
+        int s = (invert ? -v : v) * 256;
+        if (s > 32767) s = 32767;
+        if (s < -32768) s = -32768;
+        return static_cast<int16_t>(s);
+    };
+    rep.sThumbLX = scale(x, false);
+    rep.sThumbLY = scale(y, true);
+    rep.sThumbRX = scale(rx, false);
+    rep.sThumbRY = scale(ry, true);
+    const unsigned long long err = v.vigemTargetX360Update(v.client, v.target, rep);
+    if (err == kVigemOk) return true;
+    std::fprintf(stderr, "[AllPeriph] ViGEm 更新失败（0x%llx），本帧起切回键盘降级\n", err);
+    v.active = false;
+    return false;
+}
+
 class WinInjector : public InputInjector {
 public:
     void injectMouse(uint8_t buttons, int8_t dx, int8_t dy, int8_t wheel) override {
@@ -258,6 +401,12 @@ public:
      * 翻网页/列表/菜单时推一下就能滚，比原来直接丢弃有用得多。
      */
     void injectGamepad(uint16_t buttons, int8_t x, int8_t y, int8_t rx, int8_t ry) override {
+        // 真手柄路径（ViGEmBus 可用时）：整帧 X360 报告后直接返回 ——
+        // 不同时跑键盘/鼠标/滚轮降级，两套注入互相打架。
+        if (vigemSend(buttons, x, y, rx, ry)) {
+            gpButtons_ = buttons;
+            return;
+        }
         const uint16_t pressed = static_cast<uint16_t>(buttons & ~gpButtons_);
         const uint16_t released = static_cast<uint16_t>(gpButtons_ & ~buttons);
         for (uint8_t bit = 0; bit < 16; ++bit) {
