@@ -34,7 +34,7 @@ class AboutCard @JvmOverloads constructor(
     private var autoChecked = false
 
     init {
-        orientation = VERTICAL
+        orientation = LinearLayout.VERTICAL
         LayoutInflater.from(context).inflate(R.layout.about_card, this, true)
         tvVersion = findViewById(R.id.tvVersion)
         tvVersion.text = context.getString(R.string.about_version, UpdateChecker.currentTag())
@@ -45,16 +45,19 @@ class AboutCard @JvmOverloads constructor(
 
     override fun onVisibilityChanged(changedView: View?, visibility: Int) {
         super.onVisibilityChanged(changedView, visibility)
-        if (!ready || autoChecked || visibility != VISIBLE) return
+        if (!ready || autoChecked || visibility != View.VISIBLE) return
         autoChecked = true
         check(manual = false)
     }
 
     private fun check(manual: Boolean) {
-        if (manual) tvVersion.text = context.getString(R.string.about_checking)
-        // 在途保护在 UpdateChecker 里：连点也只会发出一次请求
-        if (manual) UpdateChecker.check(context) { r -> render(r, true) }
-        else UpdateChecker.autoCheck(context) { r -> render(r, false) }
+        if (manual) {
+            tvVersion.text = context.getString(R.string.about_checking)
+            // 在途保护在 UpdateChecker 里：连点也只会发出一次请求
+            UpdateChecker.check(context) { r -> render(r, true) }
+        } else {
+            UpdateChecker.autoCheck(context) { r -> render(r, false) }
+        }
     }
 
     private fun render(r: UpdateChecker.Result, manual: Boolean) {

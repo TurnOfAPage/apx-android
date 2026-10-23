@@ -20,22 +20,23 @@ import java.util.Locale
  * 与 [Feedback]（按键震动/音效的即时反馈）是两回事 —— 那边先占了 Feedback 这个名字，
  * 这里叫 IssueLauncher，别再撞车。
  *
- * 预填内容：版本 / 机型 / 系统 / 时间 + 最后 50 条运行日志，用户只需补一句"哪里不对"。
+ * 预填内容：版本 / 机型 / 系统 / 时间 + 最后 50 条运行日志，用户只需补一句哪里不对。
  * 日志在本机拼进 URL、只投向本仓库自己的 issue 页，不经任何第三方。
  */
 object IssueLauncher {
     private const val NEW_ISSUE = "https://github.com/guocheng1378/apx-android/issues/new"
     private const val LABEL = "bug"
     private const val LOG_LINES = 50
+    private const val FENCE = "```"
 
     fun open(context: Context) {
-        val title = "问题反馈 ·  · "
+        val title = "问题反馈 · ${BuildConfig.VERSION_NAME} · ${Build.MODEL}"
         val body = buildString {
             appendLine("### 环境")
-            appendLine("- App 版本：（versionName ）")
-            appendLine("- 设备： ")
-            appendLine("- 系统：Android （SDK ）")
-            appendLine("- 时间：")
+            appendLine("- App 版本：${UpdateChecker.currentTag()}（versionName ${BuildConfig.VERSION_NAME}）")
+            appendLine("- 设备：${Build.MANUFACTURER} ${Build.MODEL}")
+            appendLine("- 系统：Android ${Build.VERSION.RELEASE}（SDK ${Build.VERSION.SDK_INT}）")
+            appendLine("- 时间：${SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())}")
             appendLine()
             appendLine("### 问题描述")
             appendLine("<!-- 哪里不对、期望是什么 -->")
@@ -44,16 +45,20 @@ object IssueLauncher {
             appendLine("1. ")
             appendLine("2. ")
             appendLine()
-            appendLine("### 运行日志（最后  条）")
-            appendLine("\\\")
+            appendLine("### 运行日志（最后 $LOG_LINES 条）")
+            appendLine(FENCE)
+            SharedLog.snapshot().takeLast(LOG_LINES).forEach { e ->
+                appendLine("${e.level} ${e.tag}: ${e.msg}")
+            }
+            appendLine(FENCE)
         }
-        val url = "?labels=" +
-                "&title=" +
-                "&body="
+        val url = "$NEW_ISSUE?labels=$LABEL" +
+                "&title=${URLEncoder.encode(title, "UTF-8")}" +
+                "&body=${URLEncoder.encode(body, "UTF-8")}"
         try {
             context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
         } catch (e: ActivityNotFoundException) {
-            SharedLog.w("IssueLauncher", "no browser: ")
+            SharedLog.w("IssueLauncher", "no browser: $e")
             Toast.makeText(context, R.string.about_feedback_no_browser, Toast.LENGTH_SHORT).show()
         }
     }
