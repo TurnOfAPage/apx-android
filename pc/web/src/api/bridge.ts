@@ -1,5 +1,15 @@
 // IPC 桥接：前端 ↔ C++ 宿主。
-// WebView2 提供 window.chrome.webview.postMessage / addEventListener 双向通信。
+//
+// 三种传输，按优先级判定：
+//   ① WebView2：window.chrome.webview.postMessage / addEventListener（Windows 桌面壳，原路径不变）
+//   ② HTTP：URL 带 ?host=1 时启用（macOS / 浏览器面板：宿主 `apxhost panel` 起本地服务后
+//      open "http://127.0.0.1:<port>/?host=1"）——
+//        · act/query → POST /api/act、/api/query，一问一答（响应体即 act-response 协议）
+//        · 状态流   → 400ms GET /api/state（与 WebView2 的 400ms PostWebMessage 等价）
+//        · 事件     → 400ms GET /api/events?since=N（增量轮询；**不做 SSE** ——
+//                     宿主 panel_http 是单线程 accept 模型，长连接会占死 accept 循环）
+//   ③ mock：开发期无宿主时的假状态（原有 fallback，保留）
+//
 // 协议（与 web_panel.cpp 顶部注释一致）：
 //   前端 → 后端：{kind:'act', id, name, payload} | {kind:'query', id, name} | {kind:'open-file', id, filter}
 //   后端 → 前端：{kind:'act-response', id, ok, data} | {kind:'query-response', id, ok, data}
@@ -9,9 +19,11 @@
 
 type Kind = 'act' | 'query' | 'open-file';
 
+type Transport = 'webview' | 'http' | 'mock';
+
 export interface HostState {
   link: {
-    phase: number;             // 0=idle 1=discovering 2=connecting 3=connected 4=failed
+    phase: number;             // 0=idle 1=disconnecting 2=connecting 3=connected 4=failed
     phaseName: string;
     peer: string;
     rttMs: number;
@@ -58,17 +70,57 @@ class Bridge {
   private stateListeners = new Set<Listener>();
   private eventListeners = new Map<string, Set<(data: any) => void>>();
   private seq = 0;
-  private ready = false;
+  private transport: Transport = 'mock';
 
   constructor() {
     if (typeof window !== 'undefined' && (window as any).chrome?.webview) {
       (window as any).chrome.webview.addEventListener('message', this.onMessage.bind(this));
-      this.ready = true;
+      this.transport = 'webview';
+    } else if (typeof window !== 'undefined' &&
+               new URLSearchParams(window.location.search).has('host')) {
+      // ?host=1 由宿主 open 时附加 —— 只有宿主起的服务才走 HTTP 通道，
+      // 避免静态部署的页面误连任何本地端口。
+      this.transport = 'http';
+      console.info('[bridge] HTTP transport (host=1)');
+      this.startHttp();
     } else {
-      // 开发期 fallback：模拟宿主（无 WebView2 时给个假状态方便调 UI）
-      console.warn('[bridge] WebView2 not available, running in mock mode');
+      // 开发期 fallback：模拟宿主（无宿主时给个假状态方便调 UI）
+      console.warn('[bridge] host not available, running in mock mode');
+      this.transport = 'mock';
       this.simulateMockState();
     }
+  }
+
+  /** 当前传输方式（组件可据此隐藏不支持的入口，如浏览器面板的系统文件对话框） */
+  get mode(): Transport {
+    return this.transport;
+  }
+
+  // —— HTTP 传输（macOS / 浏览器面板）——
+
+  private startHttp() {
+    let eventSeq = 0;
+    window.setInterval(async () => {
+      try {
+        const er = await fetch(`/api/events?since=${eventSeq}`);
+        if (er.ok) {
+          const box = await er.json();
+          if (box && Array.isArray(box.events)) {
+            for (const ev of box.events) {
+              if (ev && typeof ev.seq === 'number') eventSeq = ev.seq;
+              this.handleEnvelope(ev);
+            }
+          }
+        }
+      } catch {}
+      if (this.stateListeners.size === 0) return;
+      try {
+        const r = await fetch('/api/state');
+        if (!r.ok) return;
+        const msg = await r.json();
+        this.handleEnvelope(msg);
+      } catch {}
+    }, 400);
   }
 
   private simulateMockState() {
@@ -95,26 +147,24 @@ class Bridge {
       };
       this.stateListeners.forEach(l => l(state));
     }, 400);
-    // 不保存 mockInterval —— 让页面存活期内持续推
     (window as any).__mockInterval = mockInterval;
   }
 
   private onMessage(event: MessageEvent) {
-    const msg = event.data;
-    if (!msg || typeof msg !== 'object') return;
+    this.handleEnvelope(event.data);
+  }
 
-    // 状态推流（400ms tick）
+  private handleEnvelope(msg: any) {
+    if (!msg || typeof msg !== 'object') return;
     if (msg.kind === 'state') {
       this.stateListeners.forEach(l => l(msg.data));
       return;
     }
-    // 事件
     if (msg.kind === 'event') {
       const set = this.eventListeners.get(msg.name);
       set?.forEach(cb => cb(msg));
       return;
     }
-    // 响应
     if (msg.id && (msg.kind === 'act-response' || msg.kind === 'query-response' || msg.kind === 'open-file-response')) {
       const req = this.pending.get(msg.id);
       if (req) {
@@ -126,7 +176,6 @@ class Bridge {
     }
   }
 
-  /** 发起请求，返回 Promise */
   private request(kind: Kind, name: string, payload?: Record<string, unknown>): Promise<any> {
     const id = `req-${Date.now()}-${++this.seq}`;
     return new Promise((resolve, reject) => {
@@ -140,19 +189,45 @@ class Bridge {
         ? { kind, id, filter: (payload as any)?.filter ?? '' }
         : { kind, id, name, payload: payload ?? {} };
 
-      if (this.ready) {
+      if (this.transport === 'webview') {
         (window as any).chrome.webview.postMessage(msg);
-      } else {
-        // mock 模式：直接回一个空响应
-        window.setTimeout(() => {
-          this.pending.delete(id);
-          resolve({ id, ok: true, data: {} });
-        }, 50);
+        return;
       }
+
+      if (this.transport === 'http') {
+        if (kind === 'open-file') {
+          clearTimeout(timeout);
+          this.pending.delete(id);
+          reject(new Error('浏览器面板不支持系统文件对话框，请在桌面客户端中发送文件'));
+          return;
+        }
+        fetch(`/api/${kind}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(msg),
+        })
+          .then(r => {
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            return r.json();
+          })
+          .then(resp => this.handleEnvelope(resp))
+          .catch(err => {
+            const req = this.pending.get(id);
+            if (req) {
+              clearTimeout(req.timer);
+              this.pending.delete(id);
+              req.reject(err instanceof Error ? err : new Error(String(err)));
+            }
+          });
+        return;
+      }
+
+      window.setTimeout(() => {
+        this.pending.delete(id);
+        resolve({ id, ok: true, data: {} });
+      }, 50);
     });
   }
-
-  // —— 公共 API ——
 
   act(name: string, payload: Record<string, unknown> = {}): Promise<any> {
     return this.request('act', name, payload);
@@ -163,7 +238,6 @@ class Bridge {
   openFile(filter: string): Promise<any> {
     return this.request('open-file', 'dummy', { filter });
   }
-
   subscribeState(listener: Listener): () => void {
     this.stateListeners.add(listener);
     return () => this.stateListeners.delete(listener);
