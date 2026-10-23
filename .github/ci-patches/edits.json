@@ -1,0 +1,30 @@
+{
+  "edits": [
+    {
+      "path": "android/app/src/main/res/values/strings.xml",
+      "find": "<string name=\"lay_settings_text_hotkey\">快捷键自动排序</string>",
+      "replace": "<string name=\"lay_settings_text_hotkey\">快捷键自动排序（最常用排前面；手动拖过自动关掉）</string>"
+    },
+    {
+      "path": "android/app/src/main/res/values/strings.xml",
+      "find": "</resources>",
+      "replace": "    <string name=\"lay_settings_group_diag\">诊断</string>\n    <string name=\"lay_settings_diag_hint\">环境摘要；通道自检与日志在上方 TV 控制卡的「工具」小节</string>\n</resources>"
+    },
+    {
+      "path": "android/app/src/main/res/layout/page_settings.xml",
+      "find": "                    <TextView\n                        android:layout_width=\"match_parent\"\n                        android:layout_height=\"wrap_content\"\n                        android:text=\"@string/lay_settings_text_manual\"\n                        android:textAppearance=\"@style/APTextCaption\" />",
+      "replace": ""
+    },
+    {
+      "path": "android/app/src/main/res/layout/page_settings.xml",
+      "find": "        <!-- 环境摘要：详细链路与延迟预算在「状态」页，这里只留一行结论 -->\n        <TextView\n            style=\"@style/APSectionTitle\"\n            android:layout_width=\"wrap_content\"\n            android:layout_height=\"wrap_content\"\n            android:paddingTop=\"10dp\"\n            android:text=\"@string/lay_settings_env\" />\n\n        <LinearLayout\n            style=\"@style/APCard\"\n            android:layout_width=\"match_parent\"\n            android:layout_height=\"wrap_content\"\n            android:orientation=\"vertical\">\n\n            <TextView\n                android:id=\"@+id/tvDiag\"\n                android:layout_width=\"match_parent\"\n                android:layout_height=\"wrap_content\"\n                android:text=\"@string/common_unknown\"\n                android:textAppearance=\"@style/APTextCaption\" />\n        </LinearLayout>\n",
+      "replace": ""
+    },
+    {
+      "path": "android/app/src/main/res/layout/page_settings.xml",
+      "find": "        <TextView\n            style=\"@style/APSectionTitle\"\n            android:layout_width=\"wrap_content\"\n            android:layout_height=\"wrap_content\"\n            android:paddingTop=\"10dp\"\n            android:text=\"@string/ui_filepanel_text_file\" />",
+      "replace": "        <!-- 诊断：环境摘要（原在「通用」tab，挪到遥控 tab 与通道自检/日志同屏） -->\n        <TextView\n            style=\"@style/APSectionTitle\"\n            android:layout_width=\"wrap_content\"\n            android:layout_height=\"wrap_content\"\n            android:paddingTop=\"10dp\"\n            android:text=\"@string/lay_settings_group_diag\" />\n\n        <LinearLayout\n            style=\"@style/APCard\"\n            android:layout_width=\"match_parent\"\n            android:layout_height=\"wrap_content\"\n            android:orientation=\"vertical\">\n\n            <TextView\n                android:layout_width=\"match_parent\"\n                android:layout_height=\"wrap_content\"\n                android:text=\"@string/lay_settings_diag_hint\"\n                android:textAppearance=\"@style/APTextCaption\" />\n\n            <TextView\n                android:id=\"@+id/tvDiag\"\n                android:layout_width=\"match_parent\"\n                android:layout_height=\"wrap_content\"\n                android:layout_marginTop=\"8dp\"\n                android:text=\"@string/common_unknown\"\n                android:textAppearance=\"@style/APTextCaption" />
+        </LinearLayout>\n\n        <TextView\n            style=\"@style/APSectionTitle\"\n            android:layout_width=\"wrap_content\"\n            android:layout_height=\"wrap_content\"\n            android:paddingTop=\"10dp\"\n            android:text=\"@string/ui_filepanel_text_file\" />"
+    }
+  ]
+}
