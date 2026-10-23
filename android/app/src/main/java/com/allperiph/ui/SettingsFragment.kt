@@ -480,6 +480,9 @@ class SettingsFragment : Fragment() {
                 renderFx()
             }
         })
+        // 分组（v206）：上面 4 行是外观与手感（背景/动效/震动/按键音），从这里是键盘外观 ——
+        // 卡标题只有一个，故在卡内加小标题分段（与 renderTv 的「连接/工具」同款）。
+        fxBox.addView(fieldLabel(getString(R.string.lay_settings_group_keyboard_look)))
         fxBox.addView(settingRow(getString(R.string.ui_main_label_keyrow_arrange), KeyPref.LAYOUT_LABELS[KeyPref.layoutIndex(activity)], accent) {
             h.pickChoice(getString(R.string.ui_main_label_keyrow_arrange), KeyPref.LAYOUT_LABELS, KeyPref.layoutIndex(activity)) { i ->
                 KeyPref.setLayout(activity, i)
@@ -537,10 +540,13 @@ class SettingsFragment : Fragment() {
         val h = host ?: return
         tvBox.removeAllViews()
         val accent = resources.getColor(R.color.md_primary)
+        // 分组（v206）：「连接」小节 = 选设备/断开/最近设备/状态；「工具」小节 = 遥控面板/全屏/自检/日志
+        tvBox.addView(fieldLabel(getString(R.string.lay_settings_group_connect)))
         tvBox.addView(settingRow(getString(R.string.ui_main_label_device_connect), getString(R.string.ui_main_btn_pick), accent) { h.showDevicePicker() })
         if (h.isControlling()) {
             tvBox.addView(settingRow(getString(R.string.ui_main_label_connect_disconnect), getString(R.string.ui_main_btn_to_local_local), accent) { ControlTarget.clear(); h.onTargetChanged() })
         }
+        tvBox.addView(fieldLabel(getString(R.string.lay_settings_group_tools)))
         tvBox.addView(settingRow(getString(R.string.ui_main_label_remote_power_volume), getString(R.string.ui_common_open), accent) {
             startActivity(Intent(activity, RemoteActivity::class.java))
         })
@@ -572,10 +578,11 @@ class SettingsFragment : Fragment() {
             }
         }
         tvStatusView = TextView(activity).apply {
+            // 文案迁资源（v206）：原先两串硬编码中文，与本页其他界面的 getString 约定不一致
             text = if (h.isControlling()) {
-                "当前控制：${h.getControlTargetLabel()} · ${h.displayUplinkHint()}"
+                getString(R.string.lay_settings_status_target, h.getControlTargetLabel(), h.displayUplinkHint())
             } else {
-                "未连接（触摸板控本机）· ${h.displayUplinkHint()}"
+                getString(R.string.lay_settings_status_local, h.displayUplinkHint())
             }
             textSize = 13f
             setTextColor(resources.getColor(R.color.md_on_surface_variant))
@@ -654,12 +661,14 @@ class SettingsFragment : Fragment() {
         if (!ensureViews()) return
         val h = host ?: return
         keymapBox.removeAllViews()
+        // 5 条并 3 条（v206）：
+        //   ① 方向/OK/返回/主页 与键义、"点不动=没开权限"是一件事，合成一条；
+        //   ② 音量/电源 与 "切到 TV 目标自动换遥控预设" 都是遥控那点事，合成一条；
+        //   原第 5 条硬编码中文已并入 ui_main_item_remote_keyboard_reboot_poweroff。
         val lines = listOf(
             getString(R.string.ui_main_item_hotkey_touchpad_home),
             getString(R.string.ui_main_item_remote_device_only_cursor),
-            getString(R.string.ui_main_item_perm_no_home),
             getString(R.string.ui_main_item_remote_keyboard_reboot_poweroff),
-            "切到 TV 目标时，触摸板下方的快捷键条自动切换为「TV 遥控」预设，可长按编辑、改动单独保存",
         )
         lines.forEach { t ->
             keymapBox.addView(TextView(activity).apply {

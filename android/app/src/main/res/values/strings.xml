@@ -221,10 +221,10 @@
     <string name="ui_main_text_controlling">正在控制：%1$s</string>
     <string name="ui_main_text_local">手势操控本机</string>
     <string name="ui_main_dialog_log">运行日志（最近 %1$s 条）</string>
-    <string name="ui_main_item_hotkey_touchpad_home">方向 / OK / 返回 / 主页：连上 TV 或电脑后自动生效，主页的触控板与快捷键条会一起发过去</string>
+    <string name="ui_main_item_hotkey_touchpad_home">方向 / OK / 返回 / 主页：连上 TV 或电脑后自动生效（主页的触控板与快捷键条会一起发过去）；OK = 回车，返回 = Esc，主页 = Home。对方显示「点不动」是还没开权限，不是没连上</string>
     <string name="ui_main_item_remote_device_only_cursor">方向键是真的方向键：正常情况下它会像实体遥控一样移动对方屏幕上的焦点；如果那台设备只允许「点按控制」，方向键就只会移动光标 —— 它的界面上会写清是哪种</string>
     <string name="ui_main_item_perm_no_home">OK = 回车，返回 = Esc，主页 = Home。对方显示「点不动」时说明它还没开权限，不是没连上</string>
-    <string name="ui_main_item_remote_keyboard_reboot_poweroff">音量 / 电源：键盘页「遥控」布局第三行有「电源 / 关机 / 重启」（关机与重启需要对方有 root，点了会先弹确认框；没有 root 只会退回待机）</string>
+    <string name="ui_main_item_remote_keyboard_reboot_poweroff">音量 / 电源：键盘页「遥控」布局第三行有「电源 / 关机 / 重启」（关机与重启需要对方有 root，点了会先弹确认框；没有 root 只会退回待机）；切到 TV 目标时，触摸板下方的快捷键条会自动换成「TV 遥控」预设，可长按编辑、改动单独保存</string>
     <string name="ui_main_template_custom_count">自定义 · %1$s 项</string>
     <string name="ui_main_template_name_custom">%1$s · 自建</string>
     <string name="ui_main_template_combo_count">%1$s 项</string>
@@ -311,8 +311,13 @@
     <string name="lay_settings_text_import">导入</string>
     <string name="lay_settings_text_share">分享</string>
     <string name="lay_settings_text_background">背景与手感</string>
-    <string name="lay_settings_text_background_2">背景可换纯色或相册里的图片；动效快慢、震动强弱、按键音色整体调</string>
+    <string name="lay_settings_text_background_2">背景可换纯色或相册里的图片，动效快慢、震动强弱、按键音整体调；下方「键盘外观」另管键位排列、键帽密度与自定义键盘</string>
     <string name="lay_settings_remote">TV / PC 控制</string>
     <string name="lay_settings_text_remote">遥控键映射</string>
     <!-- ↑↑↑ 迁入结束 ↑↑↑ -->
+    <string name="lay_settings_group_keyboard_look">键盘外观</string>
+    <string name="lay_settings_group_connect">连接</string>
+    <string name="lay_settings_group_tools">工具</string>
+    <string name="lay_settings_status_target">当前控制：%1$s · %2$s</string>
+    <string name="lay_settings_status_local">未连接（触摸板控本机）· %1$s</string>
 </resources>
