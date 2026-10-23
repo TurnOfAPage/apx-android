@@ -58,7 +58,7 @@ long long steadyMsNow() {
 }
 std::atomic<long long> g_clipSuppressMs{0};
 
-}  // namespace
+}  // namespace（匿名）
 
 class MacInjector : public InputInjector {
 public:
@@ -187,8 +187,6 @@ private:
     std::thread thread_;
 };
 
-}  // namespace（匿名）已在 MacClipboardWatcher 前闭合之外的公共区
-
 std::unique_ptr<InputInjector> createPlatformInjector() { return std::make_unique<MacInjector>(); }
 std::unique_ptr<ClipboardWatcher> createPlatformClipboardWatcher(
     std::function<void(const std::string&)> cb) {
@@ -287,11 +285,12 @@ bool injectSystemText(const std::string& text) {
                 if (c == '\r') continue;
                 if (c == '\t') { postVk(0x30, true); postVk(0x30, false); continue; }
                 const UniChar u = c;
+                // 注意签名：(event, UniCharCount 长度, const UniChar* 字符串) —— 长度在第 2 参
                 CGEventRef e = CGEventCreateKeyboardEvent(nullptr, 0, true);
-                CGEventKeyboardSetUnicodeString(e, &u, 1);
+                CGEventKeyboardSetUnicodeString(e, 1, &u);
                 CGEventPost(kCGHIDEventTap, e); CFRelease(e);
                 e = CGEventCreateKeyboardEvent(nullptr, 0, false);
-                CGEventKeyboardSetUnicodeString(e, &u, 1);
+                CGEventKeyboardSetUnicodeString(e, 1, &u);
                 CGEventPost(kCGHIDEventTap, e); CFRelease(e);
             }
             return true;
