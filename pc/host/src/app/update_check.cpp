@@ -1,5 +1,6 @@
 // update_check.cpp —— PC 端更新检测（与 Android UpdateChecker.kt 同一套比对规则）
 // 零依赖：WinHTTP 是 Windows 系统组件（webview2_runtime.cpp / apxsetup 已有先例）。
+// 国内可用性：直连 api.github.com 失败（超时/被拦）自动回退 gh-proxy.com 镜像（实测可通）。
 #include "apxpc/app/update_check.hpp"
 #include "apxpc/version.hpp"
 
@@ -127,11 +128,23 @@ int compareVersion(const std::string& a, const std::string& b) {
 UpdateCheckResult checkForUpdate() {
     UpdateCheckResult r;
 #ifdef _WIN32
+    const char* kApiPath = "/repos/guocheng1378/apx-android/releases/latest";
     std::string body, err;
-    const DWORD status = httpsGet("api.github.com",
-                                  "/repos/guocheng1378/apx-android/releases/latest",
-                                  body, err);
-    if (status == 0) { r.error = err; return r; }
+    DWORD status = httpsGet("api.github.com", kApiPath, body, err);
+    // 直连不通（GFW 常见超时/重置，或 403/429 等非预期状态）→ gh-proxy 国内镜像复查一次。
+    // 404 视为真实「无已发布 Release」，不再走镜像（避免把正常 404 当网络问题重试）。
+    if (status != 200 && status != 404) {
+        std::string body2, err2;
+        const std::string path2 = std::string("/https://api.github.com") + kApiPath;
+        const DWORD status2 = httpsGet("gh-proxy.com", path2, body2, err2);
+        if (status2 == 200 || status2 == 404) {
+            status = status2;
+            body = std::move(body2);
+        } else {
+            r.error = "直连 GitHub 失败（" + err + "），镜像也失败（" + err2 + "）";
+            return r;
+        }
+    }
     if (status == 404) {
         r.error = "GitHub 无已发布 Release（draft/prerelease 不参与检查更新）";
         return r;
