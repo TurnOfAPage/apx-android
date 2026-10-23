@@ -1,9 +1,11 @@
 name: macOS Build
 
 # macOS 端（mac-port 分支）编译验证：
-#   push mac-port / master —— 构建 apxhost + apxdisp（P0：CLI 宿主，不含 GUI）
+#   push mac-port / master —— 构建 apxhost（P0：CLI 宿主，不含 GUI、不含副屏采集）
 #   pull_request→master   —— 合入前拦下编译错误
 #   workflow_dispatch      —— 手动触发
+# 注意：host 工程里 APXDISP_BUILD_APP 被强制 OFF（display 只提供 pipeline 静态库），
+#       所以这里只编 apxhost，不写 apxdisp 目标（写了会报 no rule）。
 
 on:
   push:
@@ -26,11 +28,10 @@ jobs:
           cmake -S pc/host -B build_host \
             -DCMAKE_BUILD_TYPE=Release \
             -DAPXPC_BUILD_UI=OFF \
-            -DAPXPC_BUILD_TESTS=OFF \
-            -DAPXDISP_BUILD_TESTS=OFF
+            -DAPXPC_BUILD_TESTS=OFF
 
-      - name: Build (apxhost + apxdisp)
-        run: cmake --build build_host -j4 --target apxhost apxdisp
+      - name: Build (apxhost)
+        run: cmake --build build_host -j4 --target apxhost
 
       - name: Show errors on failure
         if: failure()
@@ -39,8 +40,8 @@ jobs:
         #    因为 job logs 端点需要写权限，外部拉不到
         run: |
           set +e
-          cmake --build build_host -j1 --target apxhost apxdisp -- -k > /tmp/full.log 2>&1
-          grep -E "(error:|Undefined symbols|symbol not found|fatal error)" /tmp/full.log \
+          cmake --build build_host -j1 --target apxhost -- -k > /tmp/full.log 2>&1
+          grep -E "(error:|Undefined symbols|symbol not found|fatal error|no rule to make target)" /tmp/full.log \
             | head -50 | sed 's/^/::error /'
           echo "=========== BUILD FAILED (tail 120) ==========="
           tail -120 /tmp/full.log
