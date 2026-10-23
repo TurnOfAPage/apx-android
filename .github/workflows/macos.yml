@@ -34,6 +34,7 @@ jobs:
 
       - name: Show errors on failure
         if: failure()
+        # -k：尽量把所有编译单元的错误一次性暴露完，减少 CI 迭代轮次
         run: |
-          echo "=========== BUILD FAILED ==========="
-          cmake --build build_host -j1 --target apxhost apxdisp 2>&1 | tail -120 || true
+          echo "=========== BUILD FAILED (keep going) ==========="
+          cmake --build build_host -j1 --target apxhost apxdisp -- -k 2>&1 | tail -250 || true
