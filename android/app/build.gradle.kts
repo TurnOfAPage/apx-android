@@ -3,6 +3,20 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+// 发版版本号同源：GitHub Actions 打 tag v* 构建时 GITHUB_REF 为 refs/tags/*，
+// 直接取 GITHUB_REF_NAME（如 v205）作为本 App 的 versionName —— 与 GitHub Release
+// 的 tag_name 完全一致，设置页的「检查更新」才能直接比字符串大小。
+// master / PR / 本地构建 GITHUB_REF 不是 tags/*（或环境变量不存在）→ 回退 "1.8"。
+// 也允许 -PversionName=vXXX 手工覆盖（本地模拟发版）。
+val releaseTag: String = run {
+    val fromProp = (project.findProperty("versionName") as? String)?.trim().orEmpty()
+    val fromEnv = if (System.getenv("GITHUB_REF")?.startsWith("refs/tags/") == true)
+        System.getenv("GITHUB_REF_NAME")?.trim().orEmpty() else ""
+    val picked = fromProp.ifEmpty { fromEnv }
+    // 只接受形如 v205 的 tag；分支名（含 / 或非 v 开头）一律不采用
+    picked.takeIf { it.matches(Regex("v[0-9][0-9A-Za-z.\\-]*")) } ?: ""
+}
+
 android {
     namespace = "com.allperiph"
     compileSdk = 35
@@ -12,7 +26,9 @@ android {
         minSdk = 34
         targetSdk = 35
         versionCode = 3
-        versionName = "1.8"
+        versionName = releaseTag.ifEmpty { "1.8" }
+        // 更新检测用：发版构建为 release tag（如 v205），非发版构建为空串
+        buildConfigField("String", "RELEASE_TAG", "\"\"")
     }
 
     // v1.7：Release 签名（自签 30 年证书，keystore 在版本库外仅本机；密码内联仅开发期）
@@ -90,13 +106,13 @@ dependencies {
 
 // v1.7：把 Kotlin 编译出的**单元测试类**目录补进 test 任务的运行期 classpath。
 // 本工程的 AGP + Kotlin 插件组合下该目录没有被自动挂上 —— 表现是
-// `ClassNotFoundException: com.allperiph.core.ApxFrameTest`，而类文件其实已经生成在
+// ，而类文件其实已经生成在
 // build/tmp/kotlin-classes/releaseUnitTest 下（javap 能看到全部测试方法）。
 // 与其为这一处去动 AGP/Kotlin 版本组合（风险大），不如显式补目录。
 // 注意（v1.7 实测）：**本机（Windows + 项目路径含中文）跑不了单元测试** ——
-// `:app:testReleaseUnitTest` 会报 `ClassNotFoundException: com.allperiph.core.ApxFrameTest`，
+//  会报 ，
 // 但类文件确实生成在 build/tmp/kotlin-classes/releaseUnitTest 下、测试任务的 classpath
 // 也完整正确（junit / kotlin-stdlib / android.jar / app 类都在），
 // 属非 ASCII 项目路径下 Gradle test worker 加载不到产物的问题（本仓库已设
 // android.overridePathCheck=true）。**以 CI 为准**：Linux runner 的路径是纯 ASCII。
-// 所以这些测试的看门人是 CI 的 `:app:testReleaseUnitTest` 步骤，本地不必强跑。
+// 所以这些测试的看门人是 CI 的  步骤，本地不必强跑。
