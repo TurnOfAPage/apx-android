@@ -882,9 +882,9 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
     }
 
     // ————————————————————————— TouchpadFragment.Host —————————————————————————
-    //触控板页拆成 Fragment 后由它驱动，宿主只提供数据与转发（v196 接线第 1 步：
+    // 触控板页拆成 Fragment 后由它驱动，宿主只提供数据与转发（v196 接线第 1 步：
     // 先把接口实现齐、编译通过，下一步再 add Fragment 并删除下方重复实现）。
-    // 本项目用的是平台android.app.Fragment（非 androidx），所以宿主**不需要** FragmentActivity。
+    // 本项目用的是平台 android.app.Fragment（非 androidx），所以宿主**不需要** FragmentActivity。
 
     override fun getTouchpadHandler(): Handler = handler
 
@@ -906,7 +906,7 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
     override fun hostChipRow(): LinearLayout = chipRow
     override fun hostTouchArea(): FrameLayout = touchArea as FrameLayout
 
-    // ———— SettingsFragment.Host（v196 第3 步）————
+    // ———— SettingsFragment.Host（v196 第 3 步）————
     // 设置页拆成 Fragment 后由它渲染；宿主提供环境与副作用（主题/背景/文件选择器/重建）。
 
     override fun getSettingsHandler(): Handler = handler
@@ -979,7 +979,7 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
     }
 
     override fun isExitEnabled(moduleId: String, group: String): Boolean =
-        AgentController.isExitEnabled(this, moduleId, group)
+        AgentController.isExitEnabled(moduleId, group)
 
     override fun setExitEnabled(moduleId: String, group: String, enabled: Boolean) {
         AgentController.setExitEnabled(this, moduleId, group, enabled)
