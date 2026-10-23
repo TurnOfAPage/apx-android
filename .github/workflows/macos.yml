@@ -1,7 +1,7 @@
 name: macOS Build
 
 # macOS 端（mac-port 分支）编译验证：
-#   push mac-port / master —— 构建 apxhost（P0：CLI 宿主，不含 GUI、不含副屏采集）
+#   push mac-port / master —— 构建 apxhost（CLI 宿主 + 浏览器面板 panel_http）
 #   pull_request→master   —— 合入前拦下编译错误
 #   workflow_dispatch      —— 手动触发
 # 失败时：
@@ -10,7 +10,8 @@ name: macOS Build
 #   3) ::error:: 注解（必须显式 :: 分隔符：消息里若含 std::nullptr_t 这类双冒号，
 #      GitHub 会拿第一个 :: 当分隔符把消息截断；前缀写成 ::error:: 后第一个 :: 就是自己的）
 # 成功时：
-#   strip 后打包 apxhost-macos-arm64.zip 上传 artifact，可直接下载到 mac 上跑
+#   strip 后打包 apxhost-macos-arm64.zip 上传 artifact —— 含 web/ 前端 dist，
+#   解压即用（./apxhost panel 自动打开浏览器面板）
 
 on:
   push:
@@ -31,6 +32,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Build web frontend (Vite + React)
+        # 浏览器面板的前端 dist：`apxhost panel` 从 exe 旁 web/ 读取。
+        # 用 npm install 而非 npm ci（不强依赖 package-lock.json，与 Windows 侧构建口径一致）
+        run: |
+          cd pc/web
+          npm install
+          npm run build
+
       - name: Configure (CMake)
         run: |
           cmake -S pc/host -B build_host \
@@ -41,12 +50,31 @@ jobs:
       - name: Build (apxhost)
         run: cmake --build build_host -j4 --target apxhost
 
-      - name: Package (strip + zip)
+      - name: Package (strip + web dist + zip)
         if: success()
         run: |
           cd build_host
           strip apxhost || true
-          zip -9 apxhost-macos-arm64.zip apxhost
+          STAGE=apxhost-macos-arm64
+          mkdir -p "$STAGE/web"
+          cp apxhost "$STAGE/"
+          cp -r ../pc/web/dist/. "$STAGE/web/"
+          printf '%s\n' \
+            "全能外设 macOS 命令行宿主（arm64，未签名）" \
+            "" \
+            "快速上手：" \
+            "  ./apxhost panel       浏览器控制面板（自动打开 http://127.0.0.1:…/?host=1）" \
+            "  ./apxhost serve       无界面常驻服务（9511 受控 + 热键）" \
+            "  ./apxhost list        枚举设备与传感器" \
+            "  ./apxhost --help      全部命令" \
+            "" \
+            "首次打开（未签名应用）：" \
+            "  系统设置 → 隐私与安全性 → 底部「仍要打开」" \
+            "  或执行：xattr -dr com.apple.quarantine ./apxhost" \
+            "" \
+            "浏览器面板要求 web/ 目录与 apxhost 同级（本包已附带）。" \
+            > "$STAGE/README.txt"
+          zip -9 -r apxhost-macos-arm64.zip "$STAGE"
           shasum -a 256 apxhost-macos-arm64.zip | tee apxhost-macos-arm64.zip.sha256
 
       - name: Upload artifact

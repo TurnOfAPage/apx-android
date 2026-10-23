@@ -313,7 +313,10 @@ if(WIN32)
 endif()
 
 # ---------------------------------------------------------------- 目标：apxhost 可执行文件
-add_executable(apxhost "${APXPC_ROOT}/src/host_main.cpp")
+# panel_http.cpp：浏览器面板后端（方案 B）。直接进 exe 源列表（非静态库），
+# 让 panel 的全部符号依赖都在 apxhost 既有的 link 列表里（objs 先于 libs，无序问题）。
+add_executable(apxhost "${APXPC_ROOT}/src/host_main.cpp"
+                       "${APXPC_ROOT}/src/ui/panel_http.cpp")
 target_link_libraries(apxhost PRIVATE apxpc_core apxpc_discovery apxpc_sensors apxpc_service apxpc_wireless apxpc_media)
 if(WIN32)
   target_link_libraries(apxhost PRIVATE ws2_32 shell32 user32 hid setupapi cfgmgr32)

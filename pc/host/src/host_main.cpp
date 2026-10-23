@@ -21,8 +21,14 @@
 #include <apxpc/app/update_check.hpp>
 #include <apxpc/wireless/ctrl9511.hpp>
 #include <apxpc/wireless/input_capture.hpp>
+#include <apxpc/wireless/file_receiver.hpp>
 #include <apxpc/media/media_session.hpp>
 #include <apxpc/media/audio_capture.hpp>
+#include <apxpc/media/mic_bridge.hpp>
+#include <apxpc/config/app_config.hpp>
+#include <apxpc/autostart.hpp>
+#include <apxpc/tray/tray_win32.hpp>
+#include <apxpc/ui/panel_http.hpp>
 
 #include <atomic>
 #include <chrono>
@@ -49,6 +55,7 @@ void printUsage() {
         "  apxhost            进入交互式命令循环\n"
         "  apxhost list       枚举设备与系统传感器后退出\n"
         "  apxhost serve      启动常驻服务（9511 受控端 + 全局热键 + 托盘；无 Web 界面）\n"
+        "  apxhost panel      浏览器控制面板（本地 HTTP 服务 + 自动打开浏览器；macOS 首选）\n"
         "  apxhost ctrl9511-serve [端口] [名称] [秒数]\n"
         "                     启动 9511 受控服务端（默认端口 9511），手机/TV 用「TV 控制」\n"
         "                     即可控 PC；同时广播 APX1PC 信标供手机自动发现（标为 (PC)）\n"
@@ -420,6 +427,38 @@ int main(int argc, char** argv) {
             return 0;
         }
 
+        // ---- 浏览器控制面板（方案 B：本地 HTTP + React dist；macOS 首选入口）----
+        if (cmd == "panel") {
+            // 配置（与 desktop 同一份 config.json；路径无效则用内存默认值——
+            // handleAct 侧 configPath 为空时自动跳过持久化，行为降级但不报错）
+            apxpc::config::AppConfig cfg;
+            const std::string cfgPath = apxpc::config::defaultConfigPath();
+            if (!cfgPath.empty()) cfg = apxpc::config::loadConfig(cfgPath);
+
+            // 宿主对象（所有权在本栈；runWebPanelHttp 阻塞至退出后逐个析构）
+            apxpc::wireless::WirelessSession session;
+            apxpc::wireless::FileReceiver fileReceiver;
+            apxpc::media::MediaSession media;
+            apxpc::media::AudioCapture audio;
+            apxpc::media::MicBridge mic;
+            apxpc::tray::TrayIcon tray;
+            tray.create("全能外设 · 浏览器面板");   // macOS 托盘为空实现，无害
+
+            apxpc::ui::HostBundle bundle;
+            bundle.session      = &session;
+            bundle.fileReceiver = &fileReceiver;
+            bundle.media        = &media;
+            bundle.screenPush   = nullptr;   // 虚拟显示器仅 Windows；HTTP 入口不挂（见 panel_http 头注释）
+            bundle.audio        = &audio;    // macOS 底层为诚实 stub：start 返回「仅实现 Windows」
+            bundle.micBridge    = &mic;      // 同上
+            bundle.tray         = &tray;
+            bundle.hotkey       = nullptr;
+            bundle.cfg          = &cfg;
+            bundle.configPath   = cfgPath;
+            // webDir 空 = panel 内部按可执行文件旁 web/ 定位（与 apxdesktop 约定一致）
+            return apxpc::ui::runWebPanelHttp(bundle, {});
+        }
+
         // ---- 媒体通道（副屏 / 音箱 / 麦克风）----
         if (cmd == "media") {
             if (argc < 3) {
@@ -475,7 +514,7 @@ int main(int argc, char** argv) {
             // 兼容旧习惯：动作已随 Web 下线，明确提示而不是静默变成另一个东西
             std::fprintf(stderr,
                          "「%s」已随 Web 控制台下线（v117）。PC 端图形界面请用桌面端「全能外设」(apxdesktop)；\n"
-                         "命令行常驻服务请用：apxhost serve\n", cmd.c_str());
+                         "浏览器面板用：apxhost panel；命令行常驻服务用：apxhost serve\n", cmd.c_str());
             return 1;
         }
 
