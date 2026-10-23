@@ -1,7 +1,7 @@
 // panel_http.cpp —— 浏览器面板后端（方案 B：本地 HTTP + React 前端）。
 //
 // 与 web_panel.cpp（WebView2 壳）同构 —— 协议、状态结构、动作分发完全一致：
-//   GET  /api/state           → {"kind":"state","data":{…}}（前端 400ms 轮询；每次请求前触发媒体建链泵/USB 节流检查）
+//   GET  /api/state           → {"kind":"state","data":{…}}（前端 400ms 轮询；每次请求前触发媒体建链泵/USB 节流）
 //   GET  /api/events?since=N  → {"events":[{…event…,"seq":N}]}（事件增量轮询，环形缓冲最近 256 条）
 //   POST /api/act|query       → web_panel 同款 handleAct/handleQuery（响应体即 act-response/query-response 协议）
 //   POST /api/open-file       → {"kind":"open-file-response","ok":false}（浏览器沙箱拿不到系统路径；前端 http 模式已自行拒绝，此处兕底）
@@ -12,6 +12,13 @@
 //   · 不做 SSE/长连接：事件与状态同用轮询，避免长连接占死 accept 循环（与 bridge.ts http 模式对应）
 //   · 仅绑定 127.0.0.1（零外网暴露）；响应 Connection: close + Cache-Control: no-store
 //   · Windows 上本文件编译为返回 -1 的 stub —— Web 面板走 web_panel.cpp，保持零交叉
+//
+// ScreenPush 边界（重要）：本入口的宿主链路（apxhost panel）**不创建、不链接**
+// ScreenPush（apxpc_screen 库未链给 apxhost；虚拟显示器仅 Windows 可用）—— 因此本文件
+// 刻意**不 include screen_push.hpp、不访问其成员**（否则编译/链接必缺符号）：
+// buildState 填「未初始化形态」的 screen Json（避免前端未做 undefined 防护时崩溃，
+// error 语义如实），handleAct 的 screen.toggle 无条件拒绝。若未来把 ScreenPush 挂进
+// 本入口，需同步链接 apxpc_screen 并恢复真实读取。
 //
 // 同步响应槽说明：web_panel 的异步动作（file.send 后台线程回响应）在本实现**未启用** ——
 // 浏览器无法 open-file，FilePanelModal 在 openFile 被拒后根本走不到 file.send；
@@ -207,19 +214,20 @@ void buildState(const HostBundle& b, Json& out, HttpPanel* p) {
         media["dropped"] = static_cast<double>(cc.dropped);
     }
 
-    // macOS P0：screenPush = nullptr（虚拟显示器仅 Windows）→ 前端显示「功能未初始化」，诚实降级
-    if (b.screenPush) {
-        auto s = b.screenPush->status();
+    // screen：本入口不挂 ScreenPush（见文件头边界说明）——**刻意不读 b.screenPush**，
+    // 否则要 include screen_push.hpp 且链接 apxpc_screen（apxhost 没链，符号必缺）。
+    // 填「未初始化形态」而非缺字段：前端若未做 undefined 防护也不会崩，error 如实。
+    {
         Json v = Json::makeObject();
-        v["running"] = s.running;
-        v["fps"] = s.fps;
-        v["deviceName"] = s.deviceName;
-        v["width"] = static_cast<double>(s.width);
-        v["height"] = static_cast<double>(s.height);
-        v["framesSent"] = static_cast<double>(s.framesSent);
-        v["encodeMs"] = s.encodeMs;
-        v["dropped"] = static_cast<double>(s.framesDropped);
-        v["error"] = s.error;
+        v["running"] = false;
+        v["fps"] = 0;
+        v["deviceName"] = std::string("");
+        v["width"] = 0;
+        v["height"] = 0;
+        v["framesSent"] = 0;
+        v["encodeMs"] = 0;
+        v["dropped"] = 0;
+        v["error"] = std::string("此平台不支持副屏（虚拟显示器仅 Windows）");
         media["screen"] = v;
     }
 
@@ -327,19 +335,10 @@ void handleAct(HttpPanel* p, const std::string& id, const std::string& name, con
         return postResponse(p, id, ok ? okResp() : failResp("发送完成通知失败"));
     }
 
-    // —— 副屏（macOS P0：无虚拟显示器，如实拒绝而非落「未知动作」）——
+    // —— 副屏（本入口不挂 ScreenPush，见文件头边界说明：无条件如实拒绝，
+    //     刻意不访问 ScreenPush 成员 —— apxhost 未链接 apxpc_screen，成员访问会缺符号）——
     if (name == "screen.toggle") {
-        if (!b.screenPush)
-            return postResponse(p, id, failResp("此平台不支持副屏（虚拟显示器仅 Windows）"));
-        if (b.screenPush->running()) { b.screenPush->stop(); return postResponse(p, id, okResp()); }
-        if (!b.media || !b.media->status().connected)
-            return postResponse(p, id, failResp("媒体通道未连接（需与手机同一 Wi‑Fi）"));
-        apxpc::media::ScreenPushOptions opt;
-        opt.mirrorMode = false; opt.bitrateKbps = 8000;
-        std::string err;
-        const bool ok = b.screenPush->start(b.media, opt, &err);
-        if (ok && b.session) b.session->requestOpenScreen();   // 唤起手机副屏页（同 web_panel）
-        return postResponse(p, id, ok ? okResp() : failResp(err));
+        return postResponse(p, id, failResp("此平台不支持副屏（虚拟显示器仅 Windows）"));
     }
 
     // —— 音箱 ——
@@ -679,7 +678,7 @@ void dispatchEnvelope(HttpPanel* p, const std::string& body, bool isAct) {
     } else {
         handleQuery(p, idStr, name ? name->asString() : "");
     }
-    if (!p->hasResp) {   // 兜底：路径没设 resp（不应发生，保险让 bridge 正常 reject）
+    if (!p->hasResp) {   // 兑底：路径没设 resp（不应发生，保险让 bridge 正常 reject）
         Json r = failResp("请求处理失败（空响应）");
         r["kind"] = std::string(isAct ? "act-response" : "query-response");
         r["id"] = idStr;
@@ -695,7 +694,7 @@ void handleConnection(HttpPanel* p, int fd) {
     if (!req.ok) { ::close(fd); return; }
 
     if (req.method == "GET" && req.path == "/api/state") {
-        // 轮询触发节流任务（与 web_panel 的 400ms tick 等价；select tick 另有一份兜底）
+        // 轮询触发节流任务（与 web_panel 的 400ms tick 等价；select tick 另有一份兑底）
         const uint64_t now = steadyMs();
         if (now >= p->usbNextMs) {
             refreshUsbStatus(p);
@@ -734,7 +733,7 @@ void handleConnection(HttpPanel* p, int fd) {
         dispatchEnvelope(p, req.body, false);
         respond(fd, 200, "OK", "application/json; charset=utf-8", p->resp.stringify());
     } else if (req.method == "POST" && req.path == "/api/open-file") {
-        // 兜底（前端 http 模式已自行拒绝；协议内回应让漏网请求不悬挂）
+        // 兑底（前端 http 模式已自行拒绝；协议内回应让漏网请求不悬挂）
         std::string err;
         auto j = Json::parse(req.body, &err);
         std::string idStr;

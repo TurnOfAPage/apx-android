@@ -6,7 +6,8 @@
 //      open "http://127.0.0.1:<port>/?host=1"）——
 //        · act/query → POST /api/act、/api/query，一问一答（响应体即 act-response 协议）
 //        · 状态流   → 400ms GET /api/state（与 WebView2 的 400ms PostWebMessage 等价）
-//        · 事件     → SSE GET /api/events
+//        · 事件     → 400ms GET /api/events?since=N（增量轮询；**不做 SSE** ——
+//                     宿主 panel_http 是单线程 accept 模型，长连接会占死 accept 循环）
 //   ③ mock：开发期无宿主时的假状态（原有 fallback，保留）
 //
 // 协议（与 web_panel.cpp 顶部注释一致）：
@@ -98,9 +99,28 @@ class Bridge {
   // —— HTTP 传输（macOS / 浏览器面板）——
 
   private startHttp() {
-    // 状态流：400ms 轮询，与 WebView2 侧 400ms 定时 PostWebMessageAsJson 语义等价。
-    // 只在有订阅者时才 fetch，避免空转（与 mock 行为一致）。
+    // 事件增量游标：服务端环形缓冲保留最近 256 条，seq 单调递增；
+    // 断开重连后从上次游标继续，错过的超 256 条才丢（本地页面刷新代价可忽略）。
+    let eventSeq = 0;
+
+    // 状态 + 事件：400ms 同拍轮询（与 WebView2 侧 400ms 定时 PostWebMessage 语义等价）。
     window.setInterval(async () => {
+      // 事件无条件拉（游标需持续推进，防服务端积压后一次性倾泻大响应）
+      try {
+        const er = await fetch(`/api/events?since=${eventSeq}`);
+        if (er.ok) {
+          const box = await er.json();
+          if (box && Array.isArray(box.events)) {
+            for (const ev of box.events) {
+              if (ev && typeof ev.seq === 'number') eventSeq = ev.seq;
+              this.handleEnvelope(ev);
+            }
+          }
+        }
+      } catch {
+        // 服务未就绪 / 瞬断：跳过本拍，下一拍重试
+      }
+      // 状态仅在有订阅者时拉（与 mock 行为一致，避免空转）
       if (this.stateListeners.size === 0) return;
       try {
         const r = await fetch('/api/state');
@@ -108,19 +128,9 @@ class Bridge {
         const msg = await r.json();
         this.handleEnvelope(msg);
       } catch {
-        // 服务未就绪 / 瞬断：跳过本 tick，下一轮重试（与状态轮询的容错语义一致）
+        // 同上
       }
     }, 400);
-
-    // 事件流：SSE。建连失败则事件静默降级（状态/动作不受影响）。
-    try {
-      const es = new EventSource('/api/events');
-      es.onmessage = (e) => {
-        try { this.handleEnvelope(JSON.parse(e.data)); } catch { /* 坏帧忽略 */ }
-      };
-    } catch {
-      console.warn('[bridge] SSE unavailable, events degraded');
-    }
   }
 
   private simulateMockState() {
@@ -155,7 +165,7 @@ class Bridge {
     this.handleEnvelope(event.data);
   }
 
-  /** 统一消息分发：webview 事件、HTTP 响应、SSE 事件都走这里 */
+  /** 统一消息分发：webview 事件、HTTP 响应、轮询事件/状态都走这里 */
   private handleEnvelope(msg: any) {
     if (!msg || typeof msg !== 'object') return;
 
