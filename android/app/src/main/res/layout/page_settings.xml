@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  设置页（复用块）：快捷键模板（**可折叠**）· 功能开关（含自动排序）· 环境摘要 · 主题方案 · 维护。
+  设置页（复用块）：快捷键模板（**可折叠**）· 功能开关（含自动排序）· 环境摘要 · 主题方案 · 关于（版本/更新/反馈）· 维护。
   竖屏底部留 96dp 给悬浮底栏；横屏（layout-land）由外层覆盖为 16dp。
 
   折叠的原因：模板列表有 10 套预置 + 1 行自建入口，展开 ≈ 800dp，正好把一屏占满，
@@ -242,11 +242,7 @@
                         android:text="@string/lay_settings_text_hotkey"
                         android:textAppearance="@style/APTextSubtitle" />
 
-                    <TextView
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:text="@string/lay_settings_text_manual"
-                        android:textAppearance="@style/APTextCaption" />
+
                 </LinearLayout>
 
                 <Switch
@@ -257,27 +253,6 @@
             </LinearLayout>
         </LinearLayout>
 
-        <!-- 环境摘要：详细链路与延迟预算在「状态」页，这里只留一行结论 -->
-        <TextView
-            style="@style/APSectionTitle"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:paddingTop="10dp"
-            android:text="@string/lay_settings_env" />
-
-        <LinearLayout
-            style="@style/APCard"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical">
-
-            <TextView
-                android:id="@+id/tvDiag"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/common_unknown"
-                android:textAppearance="@style/APTextCaption" />
-        </LinearLayout>
 
         </LinearLayout><!-- /groupGeneral -->
 
@@ -432,6 +407,35 @@
                 android:orientation="vertical" />
         </LinearLayout>
 
+        <!-- 诊断：环境摘要（原在「通用」tab，挪到遥控 tab 与通道自检/日志同屏） -->
+        <TextView
+            style="@style/APSectionTitle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:paddingTop="10dp"
+            android:text="@string/lay_settings_group_diag" />
+
+        <LinearLayout
+            style="@style/APCard"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/lay_settings_diag_hint"
+                android:textAppearance="@style/APTextCaption" />
+
+            <TextView
+                android:id="@+id/tvDiag"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="@string/common_unknown"
+                android:textAppearance="@style/APTextCaption" />
+        </LinearLayout>
+
         <TextView
             style="@style/APSectionTitle"
             android:layout_width="wrap_content"
@@ -480,13 +484,28 @@
             android:layout_height="wrap_content"
             android:orientation="vertical">
 
+        <!-- 关于与支持：版本行 + 检查更新 + 意见反馈。
+             自包含控件：状态、点击、静默检查都在 AboutCard 里，设置页其余代码零改动。 -->
+        <TextView
+            style="@style/APSectionTitle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:paddingTop="10dp"
+            android:text="@string/lay_settings_tab_about" />
+
+        <com.allperiph.ui.AboutCard
+            style="@style/APCard"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical" />
+
         <!-- 维护：两个按钮各占整行（并排时窄屏上文字会顶到边） -->
         <TextView
             style="@style/APSectionTitle"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:paddingTop="10dp"
-            android:text="@string/section_settings" />
+            android:text="@string/about_maintenance" />
 
         <LinearLayout
             style="@style/APCard"
