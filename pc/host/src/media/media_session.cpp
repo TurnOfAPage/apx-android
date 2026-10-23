@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <string>
 
 #if defined(_WIN32)
@@ -249,6 +250,7 @@ MediaSession::Counters MediaSession::counters() const {
 
 // v184 debug：断链原因落盘（复现定位后可移除）
 static void mediaLog(const char* why) {
+#if defined(_WIN32)
     char path[MAX_PATH]; path[0] = 0;
     const char* lad = std::getenv("LOCALAPPDATA");
     if (lad) _snprintf_s(path, sizeof(path), _TRUNCATE, "%s\\AllPeriph\\media_debug.log", lad);
@@ -261,6 +263,25 @@ static void mediaLog(const char* why) {
                 GetCurrentThreadId(), why);
         fclose(f);
     }
+#else
+    // POSIX（macOS/Linux）：同名日志落到 HOME 下，格式与 Windows 版对齐
+    char path[600];
+    const char* home = std::getenv("HOME");
+    std::snprintf(path, sizeof(path), "%s/media_debug.log", home ? home : ".");
+    FILE* f = std::fopen(path, "a");
+    if (f) {
+        const auto now = std::chrono::system_clock::now();
+        const std::time_t tt = std::chrono::system_clock::to_time_t(now);
+        std::tm tmv{};
+        ::localtime_r(&tt, &tmv);
+        const int ms = static_cast<int>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch())
+                .count() % 1000);
+        std::fprintf(f, "[%02d:%02d:%02d.%03d] %s\n",
+                     tmv.tm_hour, tmv.tm_min, tmv.tm_sec, ms, why);
+        std::fclose(f);
+    }
+#endif
 }
 
 
