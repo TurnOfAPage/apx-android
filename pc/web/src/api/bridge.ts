@@ -99,13 +99,8 @@ class Bridge {
   // —— HTTP 传输（macOS / 浏览器面板）——
 
   private startHttp() {
-    // 事件增量游标：服务端环形缓冲保留最近 256 条，seq 单调递增；
-    // 断开重连后从上次游标继续，错过的超 256 条才丢（本地页面刷新代价可忽略）。
     let eventSeq = 0;
-
-    // 状态 + 事件：400ms 同拍轮询（与 WebView2 侧 400ms 定时 PostWebMessage 语义等价）。
     window.setInterval(async () => {
-      // 事件无条件拉（游标需持续推进，防服务端积压后一次性倾泻大响应）
       try {
         const er = await fetch(`/api/events?since=${eventSeq}`);
         if (er.ok) {
@@ -117,19 +112,14 @@ class Bridge {
             }
           }
         }
-      } catch {
-        // 服务未就绪 / 瞬断：跳过本拍，下一拍重试
-      }
-      // 状态仅在有订阅者时拉（与 mock 行为一致，避免空转）
+      } catch {}
       if (this.stateListeners.size === 0) return;
       try {
         const r = await fetch('/api/state');
         if (!r.ok) return;
         const msg = await r.json();
         this.handleEnvelope(msg);
-      } catch {
-        // 同上
-      }
+      } catch {}
     }, 400);
   }
 
@@ -157,7 +147,6 @@ class Bridge {
       };
       this.stateListeners.forEach(l => l(state));
     }, 400);
-    // 不保存 mockInterval —— 让页面存活期内持续推
     (window as any).__mockInterval = mockInterval;
   }
 
@@ -165,22 +154,17 @@ class Bridge {
     this.handleEnvelope(event.data);
   }
 
-  /** 统一消息分发：webview 事件、HTTP 响应、轮询事件/状态都走这里 */
   private handleEnvelope(msg: any) {
     if (!msg || typeof msg !== 'object') return;
-
-    // 状态推流（400ms tick）
     if (msg.kind === 'state') {
       this.stateListeners.forEach(l => l(msg.data));
       return;
     }
-    // 事件
     if (msg.kind === 'event') {
       const set = this.eventListeners.get(msg.name);
       set?.forEach(cb => cb(msg));
       return;
     }
-    // 响应
     if (msg.id && (msg.kind === 'act-response' || msg.kind === 'query-response' || msg.kind === 'open-file-response')) {
       const req = this.pending.get(msg.id);
       if (req) {
@@ -192,7 +176,6 @@ class Bridge {
     }
   }
 
-  /** 发起请求，返回 Promise */
   private request(kind: Kind, name: string, payload?: Record<string, unknown>): Promise<any> {
     const id = `req-${Date.now()}-${++this.seq}`;
     return new Promise((resolve, reject) => {
@@ -213,16 +196,11 @@ class Bridge {
 
       if (this.transport === 'http') {
         if (kind === 'open-file') {
-          // 浏览器沙箱拿不到系统文件绝对路径（<input type=file> 只有相对路径），
-          // 宿主也无法在浏览器语境里打开原生文件对话框 —— 诚实拒绝，
-          // FilePanelModal 现有 catch 会把该消息展示为发送失败原因。Windows 面板不受影响。
           clearTimeout(timeout);
           this.pending.delete(id);
           reject(new Error('浏览器面板不支持系统文件对话框，请在桌面客户端中发送文件'));
           return;
         }
-        // HTTP 一问一答：响应体本身就是 act-response / query-response 协议，
-        // 直接喂给 handleEnvelope 做 id 关联；10s 超时 timer 保留作兑底。
         fetch(`/api/${kind}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -244,15 +222,12 @@ class Bridge {
         return;
       }
 
-      // mock 模式：直接回一个空响应
       window.setTimeout(() => {
         this.pending.delete(id);
         resolve({ id, ok: true, data: {} });
       }, 50);
     });
   }
-
-  // —— 公共 API ——
 
   act(name: string, payload: Record<string, unknown> = {}): Promise<any> {
     return this.request('act', name, payload);
@@ -263,7 +238,6 @@ class Bridge {
   openFile(filter: string): Promise<any> {
     return this.request('open-file', 'dummy', { filter });
   }
-
   subscribeState(listener: Listener): () => void {
     this.stateListeners.add(listener);
     return () => this.stateListeners.delete(listener);
