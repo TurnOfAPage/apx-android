@@ -1,0 +1,60 @@
+package com.allperiph.ui
+
+import android.content.ActivityNotFoundException
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.os.Build
+import android.widget.Toast
+import com.allperiph.BuildConfig
+import com.allperiph.R
+import com.allperiph.shared.util.Log as SharedLog
+import java.net.URLEncoder
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
+/**
+ * 意见反馈：跳 GitHub Issues 新建页（公开仓库，零后端）。
+ *
+ * 与 [Feedback]（按键震动/音效的即时反馈）是两回事 —— 那边先占了 Feedback 这个名字，
+ * 这里叫 IssueLauncher，别再撞车。
+ *
+ * 预填内容：版本 / 机型 / 系统 / 时间 + 最后 50 条运行日志，用户只需补一句"哪里不对"。
+ * 日志在本机拼进 URL、只投向本仓库自己的 issue 页，不经任何第三方。
+ */
+object IssueLauncher {
+    private const val NEW_ISSUE = "https://github.com/guocheng1378/apx-android/issues/new"
+    private const val LABEL = "bug"
+    private const val LOG_LINES = 50
+
+    fun open(context: Context) {
+        val title = "问题反馈 ·  · "
+        val body = buildString {
+            appendLine("### 环境")
+            appendLine("- App 版本：（versionName ）")
+            appendLine("- 设备： ")
+            appendLine("- 系统：Android （SDK ）")
+            appendLine("- 时间：")
+            appendLine()
+            appendLine("### 问题描述")
+            appendLine("<!-- 哪里不对、期望是什么 -->")
+            appendLine()
+            appendLine("### 复现步骤")
+            appendLine("1. ")
+            appendLine("2. ")
+            appendLine()
+            appendLine("### 运行日志（最后  条）")
+            appendLine("\\\")
+        }
+        val url = "?labels=" +
+                "&title=" +
+                "&body="
+        try {
+            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+        } catch (e: ActivityNotFoundException) {
+            SharedLog.w("IssueLauncher", "no browser: ")
+            Toast.makeText(context, R.string.about_feedback_no_browser, Toast.LENGTH_SHORT).show()
+        }
+    }
+}
