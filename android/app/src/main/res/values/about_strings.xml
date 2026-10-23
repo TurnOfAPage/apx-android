@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  设置页「关于」与支持：版本行 · 检查更新 · 意见反馈 · 维护分组标题。
+  单列一个资源文件（与 strings.xml 同包自动合并），避免 25K 的 strings.xml 整体改写带来冲突面。
+-->
+<resources>
+    <string name="about_maintenance">维护</string>
+    <string name="about_version">版本 %1</string>
+    <string name="about_check_update">检查更新</string>
+    <string name="about_feedback">意见反馈</string>
+    <string name="about_checking">正在检查更新…</string>
+    <string name="about_up_to_date">已是最新版本（%1）</string>
+    <string name="about_update_new">发现新版本 %1</string>
+    <string name="about_update_hint">当前 %1，最新 %2。安装包在 GitHub Release 页面下载。</string>
+    <string name="about_update_open">查看更新</string>
+    <string name="about_later">稍后</string>
+    <string name="about_update_fail">检查更新失败，请稍后重试</string>
+    <string name="about_feedback_no_browser">没有可用的浏览器打开反馈页</string>
+</resources>
