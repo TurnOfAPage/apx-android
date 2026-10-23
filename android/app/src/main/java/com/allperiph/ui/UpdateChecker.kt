@@ -1,0 +1,118 @@
+package com.allperiph.ui
+
+import android.app.AlertDialog
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.os.Handler
+import android.os.Looper
+import com.allperiph.BuildConfig
+import com.allperiph.R
+import org.json.JSONObject
+import java.net.HttpURLConnection
+import java.net.URL
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
+
+/**
+ * GitHub Releases 更新检查（设置页 · 关于分段）。
+ *
+ * 数据源：仓库  API → （形如 v205），与本机
+ * [BuildConfig.RELEASE_TAG]（发版构建）/ [BuildConfig.VERSION_NAME]（回退）比**数值段**大小。
+ * 两套号同源的前提在 android/app/build.gradle.kts：CI 打 tag v* 构建时 versionName == tag_name。
+ *
+ * 纪律：
+ *  - 网络在后台线程执行，[check] 的回调保证回主线程；
+ *  - 同时只允许一次在途请求（匿名 API 60 次/小时限频，连点无意义）；
+ *  - 失败只回 [Result.Failed]、不自动重试（想再试由用户再点）。
+ */
+object UpdateChecker {
+    private const val API = "https://api.github.com/repos/guocheng1378/apx-android/releases/latest"
+    private const val UA = "AllPeriph-UpdateCheck"
+
+    sealed class Result {
+        /** 本地不比远端旧 */
+        data class UpToDate(val tag: String) : Result()
+        /** 远端更新（[url] 是 Release 页，下载在这里，不在 App 内装包） */
+        data class NewVersion(val tag: String, val url: String) : Result()
+        /** 网络/接口/解析失败，[why] 只进日志，不直接给用户看 */
+        data class Failed(val why: String) : Result()
+    }
+
+    private val exec = Executors.newSingleThreadExecutor()
+    private val main = Handler(Looper.getMainLooper())
+    private val inflight = AtomicBoolean(false)
+
+    /** 当前构建的版本标识：发版构建是 release tag（v205），否则 versionName（1.8）。 */
+    fun currentTag(): String = BuildConfig.RELEASE_TAG.ifEmpty { BuildConfig.VERSION_NAME }
+
+    /** 拉一次最新 Release。重复调用在在途请求结束前会被直接忽略。 */
+    fun check(context: Context, onResult: (Result) -> Unit) {
+        if (!inflight.compareAndSet(false, true)) return
+        exec.execute {
+            val r = fetchLatest()
+            inflight.set(false)
+            main.post { onResult(r) }
+        }
+    }
+
+    private fun fetchLatest(): Result = try {
+        val conn = URL(API).openConnection() as HttpURLConnection
+        conn.connectTimeout = 5000
+        conn.readTimeout = 5000
+        conn.setRequestProperty("Accept", "application/vnd.github+json")
+        conn.setRequestProperty("User-Agent", UA)
+        try {
+            when (conn.responseCode) {
+                200 -> {
+                    val json = JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
+                    val tag = json.optString("tag_name")
+                    val url = json.optString("html_url")
+                    when {
+                        tag.isEmpty() -> Result.Failed("empty tag_name")
+                        compare(tag, currentTag()) > 0 -> Result.NewVersion(tag, url)
+                        else -> Result.UpToDate(currentTag())
+                    }
+                }
+                404 -> Result.Failed("no published release")
+                else -> Result.Failed("http ")
+            }
+        } finally {
+            conn.disconnect()
+        }
+    } catch (e: Exception) {
+        // 含无网、DNS 失败、超时、JSON 解析异常 —— 一律降级为 Failed，不抛到主线程
+        com.allperiph.shared.util.Log.w("UpdateChecker", "check failed: ")
+        Result.Failed(e.javaClass.simpleName)
+    }
+
+    /** 数值段比较：v205 vs 1.8 → 逐段比大小，缺段按 0 补。a 比 b 新则返回正数。 */
+    private fun compare(a: String, b: String): Int {
+        val pa = parts(a)
+        val pb = parts(b)
+        for (i in 0 until maxOf(pa.size, pb.size)) {
+            val x = pa.getOrNull(i) ?: 0
+            val y = pb.getOrNull(i) ?: 0
+            if (x != y) return x - y
+        }
+        return 0
+    }
+
+    private fun parts(tag: String): List<Int> = tag
+        .removePrefix("v")
+        .split(Regex("[^0-9]+"))
+        .filter { it.isNotEmpty() }
+        .map { it.toIntOrNull() ?: 0 }
+
+    /** 发现新版本的弹窗：跳 Release 页下载，不在 App 内做应用内更新（避免签名/权限/断点续传一套新问题）。 */
+    fun showUpdateDialog(context: Context, tag: String, url: String) {
+        AlertDialog.Builder(context, R.style.Theme_AllPeriph_Miuix_Dialog)
+            .setTitle(context.getString(R.string.about_update_new, tag))
+            .setMessage(context.getString(R.string.about_update_hint, currentTag(), tag))
+            .setPositiveButton(context.getString(R.string.about_update_open)) { _, _ ->
+                runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
+            }
+            .setNegativeButton(context.getString(R.string.about_later), null)
+            .show()
+    }
+}
