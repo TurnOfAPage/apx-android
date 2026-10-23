@@ -82,6 +82,8 @@ std::wstring toWide(const std::string& s) {
 }
 
 // WinHTTP GET。返回 HTTP 状态码；0 = 连接层失败（err 写原因）。
+// 注意：内部 status 必须是 DWORD —— WinHttpQueryHeaders 的 LPDWORD 参数是
+// unsigned long*，换成 unsigned（unsigned int*）在 MSVC 下指针类型不匹配会编译失败。
 unsigned httpsGet(const std::string& host, const std::string& path, std::string& body,
                   std::string& err) {
     HINTERNET ses = ::WinHttpOpen(L"apxhost-check-update/1.0",
@@ -99,7 +101,7 @@ unsigned httpsGet(const std::string& host, const std::string& path, std::string&
                                WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES,
                                WINHTTP_FLAG_SECURE);
     if (!req) { err = "创建请求失败"; ::WinHttpCloseHandle(con); ::WinHttpCloseHandle(ses); return 0; }
-    unsigned status = 0;
+    DWORD status = 0;
     BOOL ok = ::WinHttpSendRequest(req, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
                                    WINHTTP_NO_REQUEST_DATA, 0, 0, 0);
     if (ok) ok = ::WinHttpReceiveResponse(req, nullptr);
@@ -120,7 +122,7 @@ unsigned httpsGet(const std::string& host, const std::string& path, std::string&
         body.append(buf, got);
     }
     ::WinHttpCloseHandle(req); ::WinHttpCloseHandle(con); ::WinHttpCloseHandle(ses);
-    return status;
+    return static_cast<unsigned>(status);
 }
 
 #elif defined(__APPLE__)
