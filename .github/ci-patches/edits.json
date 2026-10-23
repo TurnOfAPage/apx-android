@@ -1,0 +1,54 @@
+{
+  "edits": [
+    {
+      "path": "android/app/src/main/java/com/allperiph/hid/HidKeys.kt",
+      "find": "     * 键盘只有两条真实链路：无线受控目标（9511，手机把同一套 (mod, keys) 语义经 APX1 控制帧上行，\n     * 对端翻成 SendInput / evdev）与 USB HID（rid 21）。**蓝牙 HID 只实现了鼠标与多媒体**，\n     * 所以这里蓝牙一律按\"不可用\"传入 —— 否则界面会显示\"出口：蓝牙 HID\"而按键其实发不出去。\n     *\n     * rid 21：[id, mod, 0, k1..k6]；keys 为空 = 全释放\n     */\n    private fun send(mod: Int, keys: IntArray) {\n        val rt = AgentController.runtime\n        val target = com.allperiph.wireless.ControlTarget\n        val path = Uplink.resolve(\n            rt?.hid,\n            btConnected = false,\n            wireless = target.isControlling() && target.controlClient != null,\n        )",
+      "replace": "     * 键盘三条真实链路：无线受控目标（9511，手机把同一套 (mod, keys) 语义经 APX1 控制帧上行，\n     * 对端翻成 SendInput / evdev）、USB HID（rid 21）与蓝牙 HID（rid 2）。\n     *\n     * 历史坑（2026-10-23 核对源码修复）：这里长期写死 `btConnected = false`，理由注释停留在\n     * \"蓝牙只实现了鼠标与多媒体\"的旧状态 —— 但 [com.allperiph.bt.BtHidDevice.reportKeyboard]\n     * 自 v184 就绪（8 字节 mod+reserved+6 键）。结果是电脑配了蓝牙、触控板/多媒体/手柄都通，\n     * 偏偏按键与复制粘贴等组合键发不出去。现改取真实连接状态并补上 BLUETOOTH 分支，\n     * 判据仍只有 [Uplink.resolve] 一处。\n     *\n     * rid 21：[id, mod, 0, k1..k6]；keys 为空 = 全释放\n     */\n    private fun send(mod: Int, keys: IntArray) {\n        val rt = AgentController.runtime\n        val target = com.allperiph.wireless.ControlTarget\n        val bt = AgentController.module(com.allperiph.core.ModuleId.BTHID) as? com.allperiph.bt.BtHidDevice\n        val path = Uplink.resolve(\n            rt?.hid,\n            btConnected = bt?.isConnected == true,\n            wireless = target.isControlling() && target.controlClient != null,\n        )"
+    },
+    {
+      "path": "android/app/src/main/java/com/allperiph/hid/HidKeys.kt",
+      "find": "                    Uplink.set(Uplink.NONE, \"USB HID 写入失败\")\n                    Log.w(TAG, \"键盘 HID 写入失败：USB 出口不可用\")\n                }\n            }\n            else -> {",
+      "replace": "                    Uplink.set(Uplink.NONE, \"USB HID 写入失败\")\n                    Log.w(TAG, \"键盘 HID 写入失败：USB 出口不可用\")\n                }\n            }\n            Uplink.BLUETOOTH -> {\n                // rid 2：reportKeyboard(data) = [mod, reserved=0, k1..k6]（8 字节，\n                // Report ID 0x02 由 sendReport 的第二参负责，不进 data）。\n                // keys 为空 = 全释放（含修饰键）；与 USB 路径同语义，释放时序仍由\n                // releaseTask(60ms) / releaseHold() 驱动，这里只发当前状态、不自行补 up。\n                Uplink.set(path)\n                val b = ByteArray(keys.size.coerceIn(0, 6))\n                for (i in b.indices) b[i] = keys[i].toByte()\n                bt?.reportKeyboard(mod, b)\n            }\n            else -> {"
+    },
+    {
+      "path": "android/app/src/main/java/com/allperiph/hid/HidKeys.kt",
+      "find": "                Uplink.set(\n                    Uplink.NONE,\n                    if (target.isControlling()) \"受控目标已断开\"\n                    else \"USB HID 未就绪（/dev/hidg0 未挂载或 USB 口被调试占用）\",\n                )\n                if (first) Log.w(TAG, \"键盘无可用出口：USB 未挂载且未选受控设备\")",
+      "replace": "                Uplink.set(\n                    Uplink.NONE,\n                    if (target.isControlling()) \"受控目标已断开\"\n                    else \"USB HID 未就绪、蓝牙未连接（/dev/hidg0 未挂载或 USB 口被调试占用）\",\n                )\n                if (first) Log.w(TAG, \"键盘无可用出口：USB 未挂载、蓝牙未连接、未选受控设备\")"
+    },
+    {
+      "path": "android/app/src/main/java/com/allperiph/ui/MainActivity.kt",
+      "find": "    override fun isBtConnected(): Boolean = false",
+      "replace": "    override fun isBtConnected(): Boolean =\n        (AgentController.module(com.allperiph.core.ModuleId.BTHID) as? com.allperiph.bt.BtHidDevice)?.isConnected == true"
+    },
+    {
+      "path": "docs/ROADMAP.md",
+      "find": "| 待补 | 报告 | 说明 |\n|---|---|---|\n| `reportKeyboard(mod, keys)` | rid 2 | 8B：`[0x02, mod, k1..k6]`（无 reserved，见 `buildBtTlcKeyboard`） |\n| `reportGamepad(btn, x,y,rx,ry)` | rid 4 | 需扩展蓝牙描述符加 gamepad TLC |",
+      "replace": "| 能力 | 报告 | 状态（2026-10-23 源码核对） |\n|---|---|---|\n| `reportKeyboard(mod, keys)` | rid 2 | ✅ 已实现（v184）：8B `[mod, reserved, k1..k6]`，`sendReport(0x02, …)`（Report ID 不进 data，v186 修复）；**接入键盘出口 = 本 PR** |\n| `reportGamepad(btn, x,y,rx,ry)` | rid 4 | ✅ 已实现（v184）：6B `[btn_lo, btn_hi, x, y, rx, ry]`，`GamepadController` 已走蓝牙优先 |"
+    },
+    {
+      "path": "docs/ROADMAP.md",
+      "find": "> 蓝牙描述符**应改用 `shared` 的 `buildBtReportDescriptor()`**（已含 Mouse/Keyboard/Consumer，\n> rid 1/2/3），替换 `BtHidDevice.kt` 里硬编码的 `BtHidDescriptor.bytes`（那份缺 Report ID、键盘结构也不符）。\n> 需要补一个 JNI：`ApxNative.hidBtReportDescriptor()` → `apx::buildBtReportDescriptor()`。",
+      "replace": "> ✅ 已完成（2026-10-23 核对）：`registerApp` 优先取 `ApxNative.btReportDescriptor()`（native，与 `shared` 同源），\n> `BtHidDescriptor.bytes` 降为 libapx.so 未加载时的 fallback，且 v186 已给全部 TLC 补上 Report ID 声明。"
+    },
+    {
+      "path": "docs/ROADMAP.md",
+      "find": "| Android 承载 | `core/ApxFrame.kt`（APX1 组帧）+ `wireless/TcpControlChannel.kt`（服务端 + writer 线程） |\n| Android 出口 | `core/TcpCtrlBridge.kt`；触控板/键盘/多媒体三处以「蓝牙 → USB HID → TCP → 日志」择优 |",
+      "replace": "| Android 承载 | ⚠️ `wireless/TcpControlChannel.kt` 与 `core/TcpCtrlBridge.kt` **已在 v1.11 移入 `.attic/wireless_removed_v1.11/`，源码树中不存在**（2026-10-23 核对：全库搜不到源码）；当前 9511 上行走 `wireless/ControlTarget` + `TvControllerClient`（受控目标 TV/PC） |\n| Android 出口 | 择路唯一判据 = `core/Uplink.kt` 的 `resolve(hid, btConnected, wireless)`：无线目标 → USB → 蓝牙 → NONE，触控板/键盘/多媒体/手柄四点共用 |"
+    },
+    {
+      "path": "docs/ROADMAP.md",
+      "find": "### 3.2 输入出口：统一到 `InputSink`（**建议新增，当前是分散判断**）",
+      "replace": "### 3.2 输入出口：✅ 判据已由 `core/Uplink.kt` 统一（原计划的 `InputSink` 不再需要）\n\n> **2026-10-23 源码核对**：判据唯一化早已落地为 `Uplink.resolve(hid, btConnected, wireless)`，\n> 触控板 / 多媒体 / 键盘 / 手柄四个发送点与通知栏、状态页都读它（`Uplink.current`）。\n> 下文的 `InputSink` 接口草图是**历史方案**，不必实现 —— 现存的重复只是\n> “各发送点自己取模块实例”，不构成第二套判据。本轮补齐的两处缺口：\n> 键盘蓝牙分支（`HidKeys` 写死 `btConnected=false`）与主页 `isBtConnected()` 写死 `false`。\n\n<details><summary>历史方案草图（保留备查）</summary>"
+    },
+    {
+      "path": "docs/ROADMAP.md",
+      "find": "1. **输入统一**：新增 `InputHub`/`InputSink`，把鼠标/键盘/手柄/多媒体的择路收敛（纯重构，行为不变）。",
+      "replace": "1. ~~**输入统一**：新增 `InputHub`/`InputSink`~~ ✅ 已由 `core/Uplink.resolve` 满足（判据唯一，四点共用）；\n   2026-10-23 补齐的是键盘蓝牙分支与 `MainActivity.isBtConnected()` 真值，见 §3.2 顶部核对注。"
+    },
+    {
+      "path": "docs/ROADMAP.md",
+      "find": "> 仍未做：**输入出口统一到 `InputHub`**（§3.2）。当前鼠标/多媒体/键盘各自择路，",
+      "replace": "> 2026-10-23 更新：**输入出口已统一在 `Uplink.resolve`**（§3.2）；`reportKeyboard`/`reportGamepad` 与\n> native 蓝牙描述符均已存在，本轮把键盘接进蓝牙分支。手柄仍无 TCP 出口（发送面受控目标）："
+    }
+  ]
+}
