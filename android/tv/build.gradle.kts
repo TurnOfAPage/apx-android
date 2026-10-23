@@ -3,6 +3,16 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+// 与 :app 同源：CI 打 tag v* 构建时取 GITHUB_REF_NAME（如 v205），
+// master / PR / 本地构建回退 "0.1.0"。同样支持 -PversionName=vXXX 覆盖。
+val releaseTag: String = run {
+    val fromProp = (project.findProperty("versionName") as? String)?.trim().orEmpty()
+    val fromEnv = if (System.getenv("GITHUB_REF")?.startsWith("refs/tags/") == true)
+        System.getenv("GITHUB_REF_NAME")?.trim().orEmpty() else ""
+    val picked = fromProp.ifEmpty { fromEnv }
+    picked.takeIf { it.matches(Regex("v[0-9][0-9A-Za-z.\\-]*")) } ?: ""
+}
+
 android {
     namespace = "com.allperiph.tv"
     compileSdk = 34
@@ -12,7 +22,7 @@ android {
         minSdk = 23
         targetSdk = 34
         versionCode = 1
-        versionName = "0.1.0"
+        versionName = releaseTag.ifEmpty { "0.1.0" }
         // Android 14 要求 foregroundService 必须声明类型，否则 startForeground() 会抛异常
         // TV 端用 connectedDevice（与手机端一致），允许在被控时保持前台服务
         manifestPlaceholders["foregroundServiceType"] = "connectedDevice"
