@@ -9,6 +9,8 @@ name: macOS Build
 #   2) 完整日志尾部推到 ci-logs 分支（contents API 免鉴权可读，拿全现场）——先做，最可靠
 #   3) ::error:: 注解（必须显式 :: 分隔符：消息里若含 std::nullptr_t 这类双冒号，
 #      GitHub 会拿第一个 :: 当分隔符把消息截断；前缀写成 ::error:: 后第一个 :: 就是自己的）
+# 成功时：
+#   strip 后打包 apxhost-macos-arm64.zip 上传 artifact，可直接下载到 mac 上跑
 
 on:
   push:
@@ -38,6 +40,24 @@ jobs:
 
       - name: Build (apxhost)
         run: cmake --build build_host -j4 --target apxhost
+
+      - name: Package (strip + zip)
+        if: success()
+        run: |
+          cd build_host
+          strip apxhost || true
+          zip -9 apxhost-macos-arm64.zip apxhost
+          shasum -a 256 apxhost-macos-arm64.zip | tee apxhost-macos-arm64.zip.sha256
+
+      - name: Upload artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: apxhost-macos-arm64
+          path: |
+            build_host/apxhost-macos-arm64.zip
+            build_host/apxhost-macos-arm64.zip.sha256
+          retention-days: 30
 
       - name: Publish errors on failure
         if: failure()
