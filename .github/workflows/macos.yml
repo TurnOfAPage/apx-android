@@ -4,8 +4,10 @@ name: macOS Build
 #   push mac-port / master —— 构建 apxhost（P0：CLI 宿主，不含 GUI、不含副屏采集）
 #   pull_request→master   —— 合入前拦下编译错误
 #   workflow_dispatch      —— 手动触发
-# 注意：host 工程里 APXDISP_BUILD_APP 被强制 OFF（display 只提供 pipeline 静态库），
-#       所以这里只编 apxhost，不写 apxdisp 目标（写了会报 no rule）。
+# 失败时：
+#   1) make -k 全量报错 + 净化后的 ::error 注解（注意：workflow 命令会按逗号/引号解析
+#      key=value，编译错误长行必须净化截断，否则消息会被吞）
+#   2) 完整错误日志尾部推到 ci-logs 分支 —— contents API 免鉴权可读，拿全现场
 
 on:
   push:
@@ -13,6 +15,9 @@ on:
   pull_request:
     branches: [master]
   workflow_dispatch:
+
+permissions:
+  contents: write   # 失败时推 ci-logs 分支（同仓库 workflow 显式申请写权限）
 
 jobs:
   mac:
@@ -33,15 +38,29 @@ jobs:
       - name: Build (apxhost)
         run: cmake --build build_host -j4 --target apxhost
 
-      - name: Show errors on failure
+      - name: Publish errors on failure
         if: failure()
-        # 1) make -k 跑完所有编译单元，一次暴露全部错误（省 CI 迭代轮次）
-        # 2) 错误行转成 ::error 注解 —— 注解走 check-runs/annotations API（免鉴权可读），
-        #    因为 job logs 端点需要写权限，外部拉不到
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set +e
           cmake --build build_host -j1 --target apxhost -- -k > /tmp/full.log 2>&1
+          # 1) 注解：去 CR、截 400 字符、去掉逗号/引号（否则被 workflow 命令解析器吞）
           grep -E "(error:|Undefined symbols|symbol not found|fatal error|no rule to make target)" /tmp/full.log \
-            | head -50 | sed 's/^/::error /'
-          echo "=========== BUILD FAILED (tail 120) ==========="
-          tail -120 /tmp/full.log
+            | tr -d '\r' | cut -c1-400 | sed -e 's/[,"'"']/ /g' -e 's/^/::error /' | head -50
+          # 2) 全量错误日志尾部推到 ci-logs 分支（免鉴权可读）
+          WORK=$(mktemp -d)
+          cd "$WORK" || exit 1
+          git init -q
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          if git fetch -q origin ci-logs; then
+            git checkout -q -B ci-logs FETCH_HEAD
+          else
+            git checkout -q --orphan ci-logs
+          fi
+          mkdir -p errors
+          tail -400 /tmp/full.log > "errors/run_${GITHUB_RUN_ID}.txt"
+          git add -A
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -q -m "ci errors: run ${GITHUB_RUN_ID}" || exit 0
+          git push -q origin HEAD:ci-logs && echo "errors -> ci-logs branch"
