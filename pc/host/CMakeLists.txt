@@ -233,6 +233,12 @@ set(APXPC_SERVICE_SRC
   # ★ 开机自启：web_panel.cpp 的 tray.setAutostart 需要链接此实现
   "${APXPC_ROOT}/src/autostart.cpp"
 )
+if(APPLE)
+  # update_check 的 macOS HTTP 实现（NSURLSession / ObjC++）。必须在 add_library 前
+  # enable OBJCXX，否则 .mm 无法识别语言。
+  enable_language(OBJCXX)
+  list(APPEND APXPC_SERVICE_SRC "${APXPC_ROOT}/src/app/update_check_mac.mm")
+endif()
 add_library(apxpc_service STATIC ${APXPC_SERVICE_SRC})
 target_link_libraries(apxpc_service PUBLIC apx_shared)
 target_include_directories(apxpc_service PUBLIC "${APXPC_ROOT}/include")
@@ -241,6 +247,12 @@ if(WIN32)
   # advapi32：RegOpenKeyEx/RegSetValueEx/RegDeleteValue（autostart.cpp 注册表操作）
   # winhttp：更新检测（update_check.cpp，与 webpanel/apxsetup 同依赖）
   target_link_libraries(apxpc_service PUBLIC ws2_32 shell32 user32 ole32 advapi32 winhttp)
+endif()
+if(APPLE)
+  # update_check_mac.mm：NSURLSession 的 completionHandler block 跨异步生命周期持有
+  # 对象，必须 ARC；静态库内只有这一个 .mm，按语言粒度开选项不影响其他 C++ TU。
+  target_compile_options(apxpc_service PRIVATE $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
+  target_link_libraries(apxpc_service PUBLIC "-framework Foundation")
 endif()
 
 # ---------------------------------------------------------- 目标：统一控制面（9511）

@@ -1,5 +1,7 @@
 // update_check.cpp —— PC 端更新检测（与 Android UpdateChecker.kt 同一套比对规则）
-// 零依赖：WinHTTP 是 Windows 系统组件（webview2_runtime.cpp / apxsetup 已有先例）。
+// 零依赖：
+//   Windows：WinHTTP（系统组件，webview2_runtime.cpp / apxsetup 已有先例）；
+//   macOS  ：NSURLSession（系统组件，ObjC++ 实现见 update_check_mac.mm）。
 // 国内可用性：直连 api.github.com 失败（超时/被拦）自动回退 gh-proxy.com 镜像（实测可通）。
 #include "apxpc/app/update_check.hpp"
 #include "apxpc/version.hpp"
@@ -17,6 +19,15 @@
 #endif
 
 namespace apxpc::app {
+
+#if defined(__APPLE__) && !defined(_WIN32)
+// macOS HTTPS GET：ObjC++（NSURLSession）实现，定义在 update_check_mac.mm。
+// 放在匿名命名空间**之外**（必须外部链接才能跨 TU 匹配）；CMake 在 APPLE 下把该 .mm
+// 编入 apxpc_service 并开 -fobjc-arc。
+unsigned httpsGetMac(const std::string& host, const std::string& path,
+                     std::string& body, std::string& err);
+#endif
+
 namespace {
 
 std::string stripPrefixV(std::string s) {
@@ -44,8 +55,8 @@ std::vector<long long> versionSegments(const std::string& s) {
     return out;
 }
 
-#ifdef _WIN32
 // 最小化提取 "tag_name": "..."（releases/latest 响应结构固定，不引 JSON 库）。
+// 纯字符串处理，跨平台（此前误锁在 _WIN32 内，mac 也需要）。
 bool extractTagName(const std::string& body, std::string& out) {
     const size_t k = body.find("\"tag_name\"");
     if (k == std::string::npos) return false;
@@ -59,6 +70,8 @@ bool extractTagName(const std::string& body, std::string& out) {
     return !out.empty();
 }
 
+#ifdef _WIN32
+
 std::wstring toWide(const std::string& s) {
     const int n = ::MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
     if (n <= 1) return {};
@@ -69,8 +82,8 @@ std::wstring toWide(const std::string& s) {
 }
 
 // WinHTTP GET。返回 HTTP 状态码；0 = 连接层失败（err 写原因）。
-DWORD httpsGet(const std::string& host, const std::string& path, std::string& body,
-               std::string& err) {
+unsigned httpsGet(const std::string& host, const std::string& path, std::string& body,
+                  std::string& err) {
     HINTERNET ses = ::WinHttpOpen(L"apxhost-check-update/1.0",
                                   WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
                                   WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
@@ -86,7 +99,7 @@ DWORD httpsGet(const std::string& host, const std::string& path, std::string& bo
                                WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES,
                                WINHTTP_FLAG_SECURE);
     if (!req) { err = "创建请求失败"; ::WinHttpCloseHandle(con); ::WinHttpCloseHandle(ses); return 0; }
-    DWORD status = 0;
+    unsigned status = 0;
     BOOL ok = ::WinHttpSendRequest(req, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
                                    WINHTTP_NO_REQUEST_DATA, 0, 0, 0);
     if (ok) ok = ::WinHttpReceiveResponse(req, nullptr);
@@ -109,7 +122,26 @@ DWORD httpsGet(const std::string& host, const std::string& path, std::string& bo
     ::WinHttpCloseHandle(req); ::WinHttpCloseHandle(con); ::WinHttpCloseHandle(ses);
     return status;
 }
-#endif  // _WIN32
+
+#elif defined(__APPLE__)
+
+// macOS：转发到 update_check_mac.mm 的 NSURLSession 实现（签名保持一致）。
+inline unsigned httpsGet(const std::string& host, const std::string& path,
+                         std::string& body, std::string& err) {
+    return httpsGetMac(host, path, body, err);
+}
+
+#else
+
+// 其他平台：无系统 HTTPS 栈（零依赖约束下不引 TLS 库），连接层直接失败。
+inline unsigned httpsGet(const std::string& host, const std::string& path,
+                         std::string& body, std::string& err) {
+    (void)host; (void)path; (void)body;
+    err = "当前平台暂未实现更新检测";
+    return 0;
+}
+
+#endif  // 平台 HTTP 分支
 
 }  // namespace
 
@@ -127,16 +159,16 @@ int compareVersion(const std::string& a, const std::string& b) {
 
 UpdateCheckResult checkForUpdate() {
     UpdateCheckResult r;
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__APPLE__)
     const char* kApiPath = "/repos/guocheng1378/apx-android/releases/latest";
     std::string body, err;
-    DWORD status = httpsGet("api.github.com", kApiPath, body, err);
+    unsigned status = httpsGet("api.github.com", kApiPath, body, err);
     // 直连不通（GFW 常见超时/重置，或 403/429 等非预期状态）→ gh-proxy 国内镜像复查一次。
     // 404 视为真实「无已发布 Release」，不再走镜像（避免把正常 404 当网络问题重试）。
     if (status != 200 && status != 404) {
         std::string body2, err2;
         const std::string path2 = std::string("/https://api.github.com") + kApiPath;
-        const DWORD status2 = httpsGet("gh-proxy.com", path2, body2, err2);
+        const unsigned status2 = httpsGet("gh-proxy.com", path2, body2, err2);
         if (status2 == 200 || status2 == 404) {
             status = status2;
             body = std::move(body2);
@@ -160,7 +192,7 @@ UpdateCheckResult checkForUpdate() {
     r.hasNewer = compareVersion(tag, APXPC_VERSION_STRING) > 0;
     return r;
 #else
-    r.error = "当前平台暂未实现更新检测（仅 Windows）";
+    r.error = "当前平台暂未实现更新检测";
     return r;
 #endif
 }
