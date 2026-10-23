@@ -95,7 +95,8 @@ WirelessSession::WirelessSession() {
     client_.onRemoteInputText = [](const std::string& text, uint8_t flags) {
         // v184：BACKSPACE（0x02）此前被当作空文本直接吞掉 —— 手机端删除键失灵的根因
         if (flags & 0x02) {   // INPUT_FLAG_BACKSPACE（ApxFrame.kt 定义，PC 侧无此常量）
-            apxpc::wireless::injectSpecialKey(0, VK_BACK);
+            // 0x08 = Windows VK_BACK：协议两侧按同一 VK 码空间解释（见 input_injector_*）
+            apxpc::wireless::injectSpecialKey(0, 0x08);
             return;
         }
         if (!apxpc::wireless::injectSystemText(text))
