@@ -22,13 +22,15 @@ import java.util.concurrent.atomic.AtomicBoolean
  * 两套号同源的前提在 android/app/build.gradle.kts：CI 打 tag v* 构建时 versionName == tag_name。
  *
  * 纪律：
- *  - 网络在后台线程执行，[check] 的回调保证回主线程；
+ *  - 网络在后台线程执行，回调保证回主线程；
  *  - 同时只允许一次在途请求（匿名 API 60 次/小时限频，连点无意义）；
- *  - 失败只回 [Result.Failed]、不自动重试（想再试由用户再点）。
+ *  - 静默检查 [autoCheck] 另有 6 小时窗口，防止每次进「关于」都打一次接口；
+ *  - 失败只回 [Result.Failed]、不自动重试（想再试由用户手动再点）。
  */
 object UpdateChecker {
     private const val API = "https://api.github.com/repos/guocheng1378/apx-android/releases/latest"
     private const val UA = "AllPeriph-UpdateCheck"
+    private const val AUTO_INTERVAL_MS = 6L * 60 * 60 * 1000
 
     sealed class Result {
         /** 本地不比远端旧 */
@@ -42,11 +44,12 @@ object UpdateChecker {
     private val exec = Executors.newSingleThreadExecutor()
     private val main = Handler(Looper.getMainLooper())
     private val inflight = AtomicBoolean(false)
+    @Volatile private var lastAutoAt = 0L
 
     /** 当前构建的版本标识：发版构建是 release tag（v205），否则 versionName（1.8）。 */
     fun currentTag(): String = BuildConfig.RELEASE_TAG.ifEmpty { BuildConfig.VERSION_NAME }
 
-    /** 拉一次最新 Release。重复调用在在途请求结束前会被直接忽略。 */
+    /** 手动检查：无视限频窗口，立刻拉一次。 */
     fun check(context: Context, onResult: (Result) -> Unit) {
         if (!inflight.compareAndSet(false, true)) return
         exec.execute {
@@ -54,6 +57,13 @@ object UpdateChecker {
             inflight.set(false)
             main.post { onResult(r) }
         }
+    }
+
+    /** 静默检查（进入「关于」分段触发）：6 小时内不重复打接口；调用方随后照常收回调。 */
+    fun autoCheck(context: Context, onResult: (Result) -> Unit) {
+        if (System.currentTimeMillis() - lastAutoAt < AUTO_INTERVAL_MS) return
+        lastAutoAt = System.currentTimeMillis()
+        check(context, onResult)
     }
 
     private fun fetchLatest(): Result = try {
@@ -104,7 +114,7 @@ object UpdateChecker {
         .filter { it.isNotEmpty() }
         .map { it.toIntOrNull() ?: 0 }
 
-    /** 发现新版本的弹窗：跳 Release 页下载，不在 App 内做应用内更新（避免签名/权限/断点续传一套新问题）。 */
+    /** 发现新版本的弹窗：跳 Release 页下载，不做应用内更新（免签名/权限/断点续付一套新问题）。 */
     fun showUpdateDialog(context: Context, tag: String, url: String) {
         AlertDialog.Builder(context, R.style.Theme_AllPeriph_Miuix_Dialog)
             .setTitle(context.getString(R.string.about_update_new, tag))
