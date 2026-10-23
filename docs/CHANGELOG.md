@@ -1,6 +1,23 @@
 # 全能外设 更新日志
 
 > 所有版本的变更记录。详细用法见 [`docs/使用说明.md`](./使用说明.md)
+> 发版流程见 [`docs/RELEASE.md`](./RELEASE.md)（一条命令发版，三端版本号同源）。
+
+---
+
+## Unreleased（2026-10-23）
+
+### 新增
+- **意见反馈 + 检查更新（关于分段）**：反馈按类型分流到 GitHub Issues（bug / 功能建议模板带 labels）；检查更新读仓库 `releases/latest`，与本机版本按数值段比较，有新版弹窗跳 Release 页下载（`ui/UpdateChecker.kt`）
+- **发版流程同源**：PC 端版本号（面板关于页 / `apxhost --version` / 卸载项 `DisplayVersion`）改为发版 tag 构建时注入 `APXPC_VERSION_STRING`，与 App `versionName`、安装包版本、Release 标签完全一致；新增《发版手册》[`docs/RELEASE.md`](./RELEASE.md)
+
+### 改进
+- 设置页结构分组（通用 / 显示 / 触摸板 / 声音 / 触感 / 蓝牙 / 实验功能 / 关于），各项补说明文案；删除无后端接口的「删除账号」
+- `docs/ROADMAP.md` 六处旧账对齐源码：待补表已实现（`reportKeyboard`/`reportGamepad` v184 即存在）、`TcpControlChannel`/`TcpCtrlBridge` 已移 `.attic`、`InputSink` 方案改判为已由 `core/Uplink.resolve` 满足
+
+### 修复
+- **蓝牙键盘出口**：`HidKeys.send` 长期写死 `btConnected=false` 且无 `Uplink.BLUETOOTH` 分支 —— 电脑配对蓝牙后触控板 / 多媒体 / 手柄正常，唯独按键与复制粘贴等组合键发不出去；现取 `BtHidDevice.isConnected` 真值并接入 `reportKeyboard`（rid 2）
+- 主页 `isBtConnected()` 写死 `false` → 返回真实连接状态
 
 ---
 

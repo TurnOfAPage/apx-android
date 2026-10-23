@@ -59,6 +59,19 @@ option(APXPC_BUILD_TOOLS          "由 pc/tools 的 CMake 调用时置 ON"      
 option(APXPC_USE_LIBUSB           "优先使用 libusb 做 USB 发现/批量传输"      OFF)
 option(APXPC_BUILD_WIN_BACKENDS   "启用经典/WinRT 传感器与 HID 后端（需匹配 SDK 常量）" OFF)
 
+# ---------------------------------------------------------------- 发版版本号同源（2026-10-23）
+# 与 android/app/build.gradle.kts 完全同构：GitHub Actions 打 tag v* 构建时
+# GITHUB_REF 为 refs/tags/*，取 GITHUB_REF_NAME（如 v205）注入 APXPC_VERSION_STRING ——
+# 面板关于页 / `apxhost --version` / 卸载项 DisplayVersion 与 Release tag、App
+# versionName 完全一致。此前 PC 侧硬编码 version.hpp 默认值（0.3.1），三端版本号不同源。
+# 非发版构建与本地构建不注入，保持 version.hpp 的 #ifndef 默认值（预期行为）。
+# 注意：必须放在任何 add_* 目标之前 —— 目标在创建时继承目录级 COMPILE_DEFINITIONS。
+if(DEFINED ENV{GITHUB_REF} AND "$ENV{GITHUB_REF}" MATCHES "^refs/tags/v[0-9]")
+  set(APXPC_RELEASE_TAG "$ENV{GITHUB_REF_NAME}")
+  add_compile_definitions(APXPC_VERSION_STRING="${APXPC_RELEASE_TAG}")
+  message(STATUS "[host] 发版构建：APXPC_VERSION_STRING=${APXPC_RELEASE_TAG}")
+endif()
+
 set(APXPC_ROOT "${CMAKE_CURRENT_SOURCE_DIR}")
 include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/ApxShared.cmake")
 
@@ -86,14 +99,14 @@ endif()
 
 set(LIBUSB_TARGET "")
 if(APXPC_USE_LIBUSB)
-  find_path(LIBUSB_INCLUDE_DIR NAMES libusb-1.0/libusb.h libusb.h)
-  find_library(LIBUSB_LIBRARY NAMES usb-1.0 libusb-1.0)
-  if(LIBUSB_INCLUDE_DIR AND LIBUSB_LIBRARY)
+  find_path(APXPC_USB_INCLUDE_DIR NAMES libusb-1.0/libusb.h libusb.h)
+  find_library(APXPC_USB_LIBRARY NAMES usb-1.0 libusb-1.0)
+  if(APXPC_USB_INCLUDE_DIR AND APXPC_USB_LIBRARY)
     add_library(apx_libusb INTERFACE)
-    target_include_directories(apx_libusb INTERFACE "${LIBUSB_INCLUDE_DIR}")
-    target_link_libraries(apx_libusb INTERFACE "${LIBUSB_LIBRARY}")
+    target_include_directories(apx_libusb INTERFACE "${APXPC_USB_INCLUDE_DIR}")
+    target_link_libraries(apx_libusb INTERFACE "${APXPC_USB_LIBRARY}")
     set(LIBUSB_TARGET apx_libusb)
-    message(STATUS "[host] 启用 libusb: ${LIBUSB_LIBRARY}")
+    message(STATUS "[host] 启用 libusb: ${APXPC_USB_LIBRARY}")
   else()
     message(STATUS "[host] 未找到 libusb，使用平台原生实现")
     set(APXPC_USE_LIBUSB OFF)
@@ -133,17 +146,22 @@ if(WIN32)
     list(APPEND APXPC_SENSORS_SRC
       "${APXPC_ROOT}/src/sensors/sensor_reader_win_sensorapi.cpp")
     if(APXPC_HAVE_CPPWINRT AND EXISTS "${APXPC_ROOT}/src/sensors/sensor_reader_winrt.cpp")
-      list(APPEND APXPC_SENSORS_SRC "${APXPC_ROOT}/src/sensors/sensor_reader_winrt.cpp")
+      list(APPEND APXPC_SENSORS_SRC
+        "${APXPC_ROOT}/src/sensors/sensor_reader_winrt.cpp")
     endif()
   else()
-    list(APPEND APXPC_SENSORS_SRC "${APXPC_ROOT}/src/sensors/sensor_reader_win_stub.cpp")
+    list(APPEND APXPC_SENSORS_SRC
+      "${APXPC_ROOT}/src/sensors/sensor_reader_win_stub.cpp")
   endif()
 else()
   if(LIBUSB_TARGET)
-    list(APPEND APXPC_DISCOVERY_SRC "${APXPC_ROOT}/src/discovery/usb_enum_libusb.cpp")
-    list(APPEND APXPC_CTRL_SRC "${APXPC_ROOT}/src/ctrl/bulk_transport_libusb.cpp")
+    list(APPEND APXPC_DISCOVERY_SRC
+      "${APXPC_ROOT}/src/discovery/usb_enum_libusb.cpp")
+    list(APPEND APXPC_CTRL_SRC
+      "${APXPC_ROOT}/src/ctrl/bulk_transport_libusb.cpp")
   else()
-    list(APPEND APXPC_DISCOVERY_SRC "${APXPC_ROOT}/src/discovery/usb_enum_sysfs.cpp")
+    list(APPEND APXPC_DISCOVERY_SRC
+      "${APXPC_ROOT}/src/discovery/usb_enum_sysfs.cpp")
   endif()
   list(APPEND APXPC_CTRL_SRC "${APXPC_ROOT}/src/ctrl/hid_transport_hidraw.cpp")
   list(APPEND APXPC_SENSORS_SRC "${APXPC_ROOT}/src/sensors/sensor_reader_iio.cpp")
@@ -377,7 +395,7 @@ if(WIN32)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
           "${WV2_DLL_DIR}/WebView2Loader.dll"
           "$<TARGET_FILE_DIR:apxdesktop>/WebView2Loader.dll"
-        COMMENT "[host] 拷贝 WebView2Loader.dll"
+        COMMENT "拷贝 WebView2Loader.dll"
         VERBATIM)
     endif()
   endif()
@@ -408,11 +426,11 @@ if(WIN32)
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
       "$<TARGET_FILE_DIR:apxdesktop>/WebView2Loader.dll"
       "$<TARGET_FILE_DIR:apxsetup>/WebView2Loader.dll"
-    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:apxsetup>"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "$<TARGET_FILE_DIR:apxsetup>"
+    COMMAND "${CMAKE_COMMAND}" -E copy_directory
       "$<TARGET_FILE_DIR:apxdesktop>/web"
       "$<TARGET_FILE_DIR:apxsetup>/web"
-    COMMENT "[host] 为 apxsetup 附带 WebView2Loader.dll + web/ 伴随文件"
+    COMMENT "为 apxsetup 附带 WebView2Loader.dll + web/ 伴随文件"
     VERBATIM)
 endif()
 
