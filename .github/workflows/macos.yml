@@ -1,0 +1,39 @@
+name: macOS Build
+
+# macOS 端（mac-port 分支）编译验证：
+#   push mac-port / master —— 构建 apxhost + apxdisp（P0：CLI 宿主，不含 GUI）
+#   pull_request→master   —— 合入前拦下编译错误
+#   workflow_dispatch      —— 手动触发
+
+on:
+  push:
+    branches: [master, mac-port]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+jobs:
+  mac:
+    name: build (macOS)
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure (CMake)
+        run: |
+          cmake -S pc/host -B build_host \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DAPXPC_BUILD_UI=OFF \
+            -DAPXPC_BUILD_TESTS=OFF \
+            -DAPXDISP_BUILD_TESTS=OFF
+
+      - name: Build (apxhost + apxdisp)
+        run: cmake --build build_host -j4 --target apxhost apxdisp
+
+      - name: Show errors on failure
+        if: failure()
+        run: |
+          echo "=========== BUILD FAILED ==========="
+          cmake --build build_host -j1 --target apxhost apxdisp 2>&1 | tail -120 || true
