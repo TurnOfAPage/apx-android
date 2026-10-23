@@ -193,6 +193,24 @@ class TouchpadActivity : Activity() {
         root.addView(buildTabBar())
         // v1.7 修复：显式 MATCH_PARENT（root 高度塌缩曾致触摸区只剩一小条）
         setContentView(root, ViewGroup.LayoutParams(-1, -1))
+        // Android 15+（targetSdk 35）强制 edge-to-edge，主题里的 windowFullscreen 不再保证内容避开系统栏 ——
+        // R+ 显式接管：关掉 decor 贴合、隐藏状态栏、按实际 insets（状态栏/挖孔/导航栏/输入法）给内容垫边：
+        // 系统认为栏还在（insets>0）就垫开，已隐藏/已贴合时 inset=0 不垫，任何一态都不遮住标题头。
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            window.setDecorFitsSystemWindows(false)
+            window.insetsController?.hide(android.view.WindowInsets.Type.statusBars())
+            root.setOnApplyWindowInsetsListener { v, insets ->
+                val t = insets.getInsets(
+                    android.view.WindowInsets.Type.statusBars() or
+                        android.view.WindowInsets.Type.navigationBars() or
+                        android.view.WindowInsets.Type.displayCutout() or
+                        android.view.WindowInsets.Type.ime()
+                )
+                v.setPadding(t.left, t.top, t.right, t.bottom)
+                insets
+            }
+            root.requestApplyInsets()
+        }
         refreshTabs()
         updateControlledChip()
         // 主页「设置 → 管理快捷键」用 EXTRA_PAGE 直达键盘页；launchMode=singleTask，
@@ -358,6 +376,38 @@ class TouchpadActivity : Activity() {
     }
 
     // —————————————————————————— 第 0 页：触控板 + 常用快捷键 ——————————————————————————
+    /**
+     * v207：方向键叠层——十字四键（↑ ← → ↓）叠在手势面右缘，键帽与键盘页同一套手感；
+     * usage 与 [com.allperiph.ui.KeyLayouts] 方向布局一致（USB HID Keyboard Page 0x07）。
+     * 仅键帽区域消费触摸，键间空隙和手势面其余区域仍走 Activity.onTouchEvent → 触控引擎。
+     */
+    private fun dpadOverlay(): View {
+        fun cell() = LinearLayout.LayoutParams(dp(36), dp(36))
+        fun key(label: String, usage: Int) = keyCap(label, usage)
+        fun gap() = View(this)
+        fun row() = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val col = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = card(cBg, dp(14))
+            setPadding(dp(4), dp(4), dp(4), dp(4))
+        }
+        val up = row()
+        up.addView(gap(), cell())
+        up.addView(key("↑", 0x52), cell())
+        up.addView(gap(), cell())
+        val mid = row()
+        mid.addView(key("←", 0x50), cell())
+        mid.addView(gap(), cell())
+        mid.addView(key("→", 0x4F), cell())
+        val down = row()
+        down.addView(gap(), cell())
+        down.addView(key("↓", 0x51), cell())
+        down.addView(gap(), cell())
+        col.addView(up)
+        col.addView(mid)
+        col.addView(down)
+        return col
+    }
 
     /** 手势面占满剩余空间；页面内子视图除 chips 外均不可点击 → 事件兜底到 Activity.onTouchEvent */
     private fun touchpadPage(): View {
@@ -378,6 +428,11 @@ class TouchpadActivity : Activity() {
             isClickable = false
         }, FrameLayout.LayoutParams(-1, -2, Gravity.CENTER))
         col.addView(area, LinearLayout.LayoutParams(-1, 0, 1f))
+        // v207：方向键叠在手势面上（右缘居中，避开右侧 28dp 边缘起滑区）——
+        // 滑动与方向键同屏，不用翻到键盘页；键帽只消费自身区域，键外照常走触控引擎。
+        area.addView(dpadOverlay(), FrameLayout.LayoutParams(-2, -2, Gravity.CENTER_VERTICAL or Gravity.END).apply {
+            rightMargin = dp(30)
+        })
 
         // 常用快捷键：网格 + 拖拽排序（与主页同一套手势），抬手即用，不占整页
         val head = LinearLayout(this).apply {
