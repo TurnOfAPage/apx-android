@@ -219,6 +219,7 @@ set(APXPC_SERVICE_SRC
   "${APXPC_ROOT}/src/hotkey/hotkey_manager.cpp"
   "${APXPC_ROOT}/src/api/action_router.cpp"
   "${APXPC_ROOT}/src/app/host_service.cpp"
+  "${APXPC_ROOT}/src/app/update_check.cpp"
   "${APXPC_ROOT}/src/tray/tray_win32.cpp"
   # ★ 开机自启：web_panel.cpp 的 tray.setAutostart 需要链接此实现
   "${APXPC_ROOT}/src/autostart.cpp"
@@ -229,7 +230,8 @@ target_include_directories(apxpc_service PUBLIC "${APXPC_ROOT}/include")
 target_link_libraries(apxpc_service PUBLIC apxpc_core apxpc_discovery apxpc_sensors ${LIBUSB_TARGET})
 if(WIN32)
   # advapi32：RegOpenKeyEx/RegSetValueEx/RegDeleteValue（autostart.cpp 注册表操作）
-  target_link_libraries(apxpc_service PUBLIC ws2_32 shell32 user32 ole32 advapi32)
+  # winhttp：更新检测（update_check.cpp，与 webpanel/apxsetup 同依赖）
+  target_link_libraries(apxpc_service PUBLIC ws2_32 shell32 user32 ole32 advapi32 winhttp)
 endif()
 
 # ---------------------------------------------------------- 目标：统一控制面（9511）

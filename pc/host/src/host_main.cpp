@@ -18,6 +18,7 @@
 #include <apxpc/sensors/sensor_reader.hpp>
 #include <apxpc/version.hpp>
 #include <apxpc/app/service.hpp>
+#include <apxpc/app/update_check.hpp>
 #include <apxpc/wireless/ctrl9511.hpp>
 #include <apxpc/wireless/input_capture.hpp>
 #include <apxpc/media/media_session.hpp>
@@ -62,6 +63,8 @@ void printUsage() {
         "                     把本机系统声音（WASAPI loopback）送到手机扬声器，\n"
         "                     并实时显示音量条 —— 用于确认采集到的就是正在放的声音。\n"
         "                     会先列出所有播放设备；不填序号 = 跟随系统默认\n"
+        "  apxhost check-update  检查新版本（GitHub releases/latest，比对规则与手机端一致）\n"
+        "                     退出码：0=已是最新 3=发现新版本 1=检查失败\n"
         "  apxhost --help\n"
         "\n"
         "交互命令：\n"
@@ -401,6 +404,19 @@ int main(int argc, char** argv) {
         if (cmd == "--version" || cmd == "-v") { std::puts(APXPC_VERSION_STRING); return 0; }
         if (cmd == "list") return doList() > 0 ? 0 : 2;
         if (cmd == "sensors") return doSensors();
+        if (cmd == "check-update") {
+            const auto r = apxpc::app::checkForUpdate();
+            if (!r.ok) { std::printf("检查更新失败：%s\n", r.error.c_str()); return 1; }
+            if (r.hasNewer) {
+                std::printf("发现新版本 %s（当前 %s）\n%s\n", r.latestTag.c_str(),
+                            APXPC_VERSION_STRING,
+                            "https://github.com/guocheng1378/apx-android/releases/latest");
+                return 3;
+            }
+            std::printf("当前版本 %s 已是最新（最新 Release：%s）\n",
+                        APXPC_VERSION_STRING, r.latestTag.c_str());
+            return 0;
+        }
 
         // ---- 媒体通道（副屏 / 音箱 / 麦克风）----
         if (cmd == "media") {
