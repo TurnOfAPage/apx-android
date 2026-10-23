@@ -50,6 +50,16 @@ int hidToMacKey(uint8_t u) {
     }
 }
 
+// ---------- 自由函数共用：稳态时钟 + 剪贴板回环抑制（对齐 win 版 clipSuppressFor(600)）---
+long long steadyMsNow() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
+std::atomic<long long> g_clipSuppressMs{0};
+
+}  // namespace（匿名）
+
 class MacInjector : public InputInjector {
 public:
     void injectMouse(uint8_t buttons, int8_t dx, int8_t dy, int8_t wheel) override {
@@ -157,6 +167,9 @@ public:
             std::string last;
             while (running_) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(800));
+                // 回环抑制：setSystemClipboard 写入后 600ms 内不回传（与 win 版一致，
+                // 否则反向剪贴板 0x21 → 写本机 → watcher → 又发回对端 = 刷乱对端剪贴板）
+                if (steadyMsNow() - g_clipSuppressMs.load() < 600) continue;
                 NSPasteboard* pb = [NSPasteboard generalPasteboard];
                 NSString* s = [pb stringForType:NSPasteboardTypeString];
                 if (s) {
@@ -174,12 +187,133 @@ private:
     std::thread thread_;
 };
 
-}  // namespace
-
 std::unique_ptr<InputInjector> createPlatformInjector() { return std::make_unique<MacInjector>(); }
 std::unique_ptr<ClipboardWatcher> createPlatformClipboardWatcher(
     std::function<void(const std::string&)> cb) {
     return std::make_unique<MacClipboardWatcher>(std::move(cb));
+}
+
+// ============================================================================
+// 与 input_injector_win.cpp 对等的自由函数（ctrl9511.hpp 声明，无线会话/宿主直接调用）
+// ============================================================================
+
+// Windows VK 码 → macOS 虚拟键码（协议两侧共用 VK 码空间，见 wireless_session 注释）
+static int vkToMacKey(uint8_t vk) {
+    switch (vk) {
+        case 0x08: return 0x33;  // Backspace（VK_BACK）
+        case 0x09: return 0x30;  // Tab
+        case 0x0D: return 0x24;  // Enter
+        case 0x1B: return 0x35;  // Esc
+        case 0x20: return 0x31;  // Space
+        case 0x21: return 0x74;  // PageUp
+        case 0x22: return 0x79;  // PageDown
+        case 0x23: return 0x77;  // End
+        case 0x24: return 0x73;  // Home
+        case 0x25: return 0x7B;  // Left
+        case 0x26: return 0x7E;  // Up
+        case 0x27: return 0x7C;  // Right
+        case 0x28: return 0x7D;  // Down
+        case 0x2E: return 0x75;  // Delete（forward delete）
+        case 0x70: return 0x7A;  // F1
+        case 0x71: return 0x78;  // F2
+        case 0x72: return 0x63;  // F3
+        case 0x73: return 0x76;  // F4
+        case 0x74: return 0x60;  // F5
+        case 0x75: return 0x61;  // F6
+        case 0x76: return 0x62;  // F7
+        case 0x77: return 0x64;  // F8
+        case 0x78: return 0x65;  // F9
+        case 0x79: return 0x6D;  // F10
+        case 0x7A: return 0x67;  // F11
+        case 0x7B: return 0x6F;  // F12
+        default:   return -1;
+    }
+}
+
+static void postVk(int cgKey, bool down) {
+    if (cgKey < 0) return;
+    CGEventRef e = CGEventCreateKeyboardEvent(nullptr, static_cast<CGKeyCode>(cgKey), down);
+    CGEventPost(kCGHIDEventTap, e);
+    CFRelease(e);
+}
+
+// 特殊键/组合键（0x28）：mod 位图 1=Ctrl 2=Shift 4=Alt（及高位镜像），vk = Windows VK 码
+bool injectSpecialKey(uint8_t mod, uint8_t vk) {
+    const int target = vkToMacKey(vk);
+    if (target < 0) return false;
+    const int modKeys[3] = {0x3B, 0x38, 0x3A};   // Ctrl / Shift / Option（左侧）
+    const uint8_t bits[3] = {0x01, 0x02, 0x04};
+    for (int i = 0; i < 3; ++i) if (mod & bits[i]) postVk(modKeys[i], true);
+    postVk(target, true);
+    postVk(target, false);
+    for (int i = 2; i >= 0; --i) if (mod & bits[i]) postVk(modKeys[i], false);
+    return true;
+}
+
+std::string readSystemClipboard() {
+    @autoreleasepool {
+        NSPasteboard* pb = [NSPasteboard generalPasteboard];
+        NSString* s = [pb stringForType:NSPasteboardTypeString];
+        if (!s) return {};
+        const char* u = [s UTF8String];
+        return u ? std::string(u) : std::string{};
+    }
+}
+
+// 反向剪贴板（0x21）：写本机 NSPasteboard；写入后 600ms 内 watcher 不回传（防回环）
+bool setSystemClipboard(const std::string& text) {
+    @autoreleasepool {
+        NSString* s = [NSString stringWithUTF8String:text.c_str()];
+        if (!s) return false;
+        g_clipSuppressMs.store(steadyMsNow());
+        NSPasteboard* pb = [NSPasteboard generalPasteboard];
+        [pb clearContents];
+        return [pb setString:s forType:NSPasteboardTypeString] ? true : false;
+    }
+}
+
+// 文本注入当前光标处：ASCII 逐键（CGEventKeyboardSetUnicodeString，不走布局表）；
+// 非 ASCII 剪贴板 + Cmd+V 后还原（与 Windows 版同策略，避免逐键丢字）。
+bool injectSystemText(const std::string& text) {
+    if (text.empty()) return true;
+    bool ascii = true;
+    for (unsigned char c : text) { if (c >= 0x80) { ascii = false; break; } }
+    @autoreleasepool {
+        if (ascii) {
+            for (unsigned char c : text) {
+                if (c == '\n') { postVk(0x24, true); postVk(0x24, false); continue; }
+                if (c == '\r') continue;
+                if (c == '\t') { postVk(0x30, true); postVk(0x30, false); continue; }
+                const UniChar u = c;
+                // 注意签名：(event, UniCharCount 长度, const UniChar* 字符串) —— 长度在第 2 参
+                CGEventRef e = CGEventCreateKeyboardEvent(nullptr, 0, true);
+                CGEventKeyboardSetUnicodeString(e, 1, &u);
+                CGEventPost(kCGHIDEventTap, e); CFRelease(e);
+                e = CGEventCreateKeyboardEvent(nullptr, 0, false);
+                CGEventKeyboardSetUnicodeString(e, 1, &u);
+                CGEventPost(kCGHIDEventTap, e); CFRelease(e);
+            }
+            return true;
+        }
+        const std::string old = readSystemClipboard();
+        NSPasteboard* pb = [NSPasteboard generalPasteboard];
+        NSString* s = [NSString stringWithUTF8String:text.c_str()];
+        if (!s) return false;
+        g_clipSuppressMs.store(steadyMsNow());
+        [pb clearContents];
+        [pb setString:s forType:NSPasteboardTypeString];
+        postVk(0x37, true);    // Cmd down
+        postVk(0x09, true);    // V
+        postVk(0x09, false);
+        postVk(0x37, false);   // Cmd up
+        std::this_thread::sleep_for(std::chrono::milliseconds(80));
+        g_clipSuppressMs.store(steadyMsNow());
+        NSString* o = [NSString stringWithUTF8String:old.c_str()];
+        [pb clearContents];
+        if (o) [pb setString:o forType:NSPasteboardTypeString];
+        else   [pb setString:@"" forType:NSPasteboardTypeString];
+        return true;
+    }
 }
 
 }  // namespace apxpc::wireless

@@ -2,9 +2,6 @@
 
 #include "apxpc/log.hpp"
 
-#include <audioclient.h>
-#include <mmdeviceapi.h>
-#include <functiondiscoverykeys_devpkey.h>
 #include <mutex>
 #include <deque>
 #include <thread>
@@ -13,6 +10,10 @@
 #include <memory>
 
 #if defined(_WIN32)
+
+#include <audioclient.h>
+#include <mmdeviceapi.h>
+#include <functiondiscoverykeys_devpkey.h>
 
 namespace apxpc::media {
 namespace {

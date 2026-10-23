@@ -1,4 +1,10 @@
 // Linux hidraw 传输（/dev/hidraw*）：对应 Windows 的 HID Report 5 通道。
+// macOS 无 hidraw 子系统：提供同名工厂的空实现（返回 nullptr，调用方按未接线降级）。
+#include "apxpc/ctrl/transport.hpp"
+#include "apxpc/log.hpp"
+
+#if defined(__linux__)
+
 #include <fcntl.h>
 #include <linux/hidraw.h>
 #include <poll.h>
@@ -14,9 +20,6 @@
 #include <string>
 #include <thread>
 #include <vector>
-
-#include "apxpc/ctrl/transport.hpp"
-#include "apxpc/log.hpp"
 
 namespace apxpc::ctrl {
 namespace {
@@ -113,3 +116,18 @@ std::unique_ptr<ICtrlTransport> createHidTransport(const std::string& devicePath
 }
 
 }  // namespace apxpc::ctrl
+
+#else  // !__linux__（macOS 等：无 hidraw）
+
+#include <memory>
+#include <string>
+
+namespace apxpc::ctrl {
+
+std::unique_ptr<ICtrlTransport> createHidTransport(const std::string&) {
+    return nullptr;
+}
+
+}  // namespace apxpc::ctrl
+
+#endif

@@ -1,0 +1,69 @@
+name: macOS Build
+
+# macOS 端（mac-port 分支）编译验证：
+#   push mac-port / master —— 构建 apxhost（P0：CLI 宿主，不含 GUI、不含副屏采集）
+#   pull_request→master   —— 合入前拦下编译错误
+#   workflow_dispatch      —— 手动触发
+# 失败时：
+#   1) make -k 全量报错
+#   2) 完整日志尾部推到 ci-logs 分支（contents API 免鉴权可读，拿全现场）——先做，最可靠
+#   3) ::error:: 注解（必须显式 :: 分隔符：消息里若含 std::nullptr_t 这类双冒号，
+#      GitHub 会拿第一个 :: 当分隔符把消息截断；前缀写成 ::error:: 后第一个 :: 就是自己的）
+
+on:
+  push:
+    branches: [master, mac-port]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: write   # 失败时推 ci-logs 分支
+
+jobs:
+  mac:
+    name: build (macOS)
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure (CMake)
+        run: |
+          cmake -S pc/host -B build_host \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DAPXPC_BUILD_UI=OFF \
+            -DAPXPC_BUILD_TESTS=OFF
+
+      - name: Build (apxhost)
+        run: cmake --build build_host -j4 --target apxhost
+
+      - name: Publish errors on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set +e
+          cmake --build build_host -j1 --target apxhost -- -k > /tmp/full.log 2>&1
+
+          # ---- 1) 全量日志尾部推到 ci-logs 分支（先做，不依赖后面的行） ----
+          WORK=$(mktemp -d)
+          cd "$WORK" || exit 1
+          git init -q
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          if git fetch -q origin ci-logs; then
+            git checkout -q -B ci-logs FETCH_HEAD
+          else
+            git checkout -q --orphan ci-logs
+          fi
+          mkdir -p errors
+          tail -400 /tmp/full.log > "errors/run_${GITHUB_RUN_ID}.txt"
+          git add -A
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -q -m "ci errors: run ${GITHUB_RUN_ID}" || exit 0
+          git push -q origin HEAD:ci-logs && echo "errors -> ci-logs branch"
+
+          # ---- 2) ::error:: 注解（净化 CR、截 400 字符；::error:: 显式分隔防消息被吞） ----
+          grep -E "(error:|Undefined symbols|symbol not found|fatal error|no rule to make target)" /tmp/full.log \
+            | tr -d '\r' | cut -c1-400 | sed 's/^/::error::/' | head -50

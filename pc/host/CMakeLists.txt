@@ -163,6 +163,15 @@ else()
     list(APPEND APXPC_DISCOVERY_SRC
       "${APXPC_ROOT}/src/discovery/usb_enum_sysfs.cpp")
   endif()
+  # ★ discovery.cpp（usb::Device → discovery::DeviceInfo 包装层，纯跨平台、零 Win32 API）
+  #   此前只进 WIN32 分支 —— 非 Windows 链接 apxhost 时缺 apxpc::discovery::enumerate()
+  #   符号。Linux/mac 从未链接过 PC 宿主（PC CI 只有 Windows），一直没暴露；mac-port 首次踩出。
+  list(APPEND APXPC_DISCOVERY_SRC "${APXPC_ROOT}/src/discovery/discovery.cpp")
+  # ★ usb_types.cpp：Device/Interface/Endpoint 的非 inline 方法（looksLikeApxGadget /
+  #   vidPid / roleName…），纯跨平台（snprintf + 字符串映射）—— 静态库二级依赖：
+  #   discovery.cpp 拉入 sysfs 后端后，sysfs.o 引用 looksLikeApxGadget 随即缺失，同样
+  #   此前只进 WIN32 分支。三端行为同源的必要成员。
+  list(APPEND APXPC_DISCOVERY_SRC "${APXPC_ROOT}/src/discovery/usb_types.cpp")
   list(APPEND APXPC_CTRL_SRC "${APXPC_ROOT}/src/ctrl/hid_transport_hidraw.cpp")
   list(APPEND APXPC_SENSORS_SRC "${APXPC_ROOT}/src/sensors/sensor_reader_iio.cpp")
 endif()
@@ -428,8 +437,8 @@ if(WIN32)
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
       "$<TARGET_FILE_DIR:apxdesktop>/WebView2Loader.dll"
       "$<TARGET_FILE_DIR:apxsetup>/WebView2Loader.dll"
-    COMMAND "${CMAKE_COMMAND}" -E make_directory "$<TARGET_FILE_DIR:apxsetup>"
-    COMMAND "${CMAKE_COMMAND}" -E copy_directory
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:apxsetup>"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
       "$<TARGET_FILE_DIR:apxdesktop>/web"
       "$<TARGET_FILE_DIR:apxsetup>/web"
     COMMENT "为 apxsetup 附带 WebView2Loader.dll + web/ 伴随文件"

@@ -25,6 +25,8 @@ constexpr uint8_t kActCancel = 3;
 constexpr uint8_t kBtnRight = 1u << 1;
 constexpr uint8_t kBtnMid   = 1u << 2;
 
+#if defined(_WIN32)  // —— 以下目标屏映射与诊断日志均为 Win32 实现（macOS 无需）——
+
 // ——————————————————————————————————————————————— v184：触摸目标屏映射 ——————
 // 副屏是**扩展屏**：DDA 抓的是副屏画面，手机归一化坐标语义 = 副屏内相对位置。
 // 旧实现 MOUSEEVENTF_ABSOLUTE（不带 VIRTUALDESK）按**主显示器** 0..65535 注入，
@@ -135,6 +137,8 @@ bool resolveTargetRect(RECT& out) {
     return true;
 }
 
+#endif  // defined(_WIN32)（触摸目标屏映射辅助区结束）
+
 }  // namespace
 
 bool injectTouchFrame(const uint8_t* body, size_t len) {
@@ -180,7 +184,7 @@ bool injectTouchFrame(const uint8_t* body, size_t len) {
                                           : MOUSEEVENTF_LEFTDOWN;
             break;
         case kActUp:
-        case kActCancel:  // 取消按释放处理：绝对不能留下"键卡住"
+        case kActCancel:  // 取消按释放处理：绝不能留下"键卡住"
             click = (buttons & kBtnRight) ? MOUSEEVENTF_RIGHTUP
                   : (buttons & kBtnMid)   ? MOUSEEVENTF_MIDDLEUP
                                           : MOUSEEVENTF_LEFTUP;

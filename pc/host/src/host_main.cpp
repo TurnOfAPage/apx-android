@@ -395,9 +395,11 @@ int interactive() {
 }  // namespace
 
 int main(int argc, char** argv) {
+#if defined(_WIN32)
     // 控制台中文修复：源码字面量为 UTF-8（/utf-8），Windows 控制台默认 GBK(936) 会乱码
     SetConsoleOutputCP(CP_UTF8);
     SetConsoleCP(CP_UTF8);
+#endif
     if (argc > 1) {
         const std::string cmd = argv[1];
         if (cmd == "--help" || cmd == "-h" || cmd == "help") { printUsage(); return 0; }

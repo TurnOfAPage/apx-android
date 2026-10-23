@@ -173,7 +173,7 @@ void TrayIcon::notify(const std::string& title, const std::string& text) {
 }
 
 #else
-bool TrayIcon::create(const std::string&, HICON) { return true; }
+bool TrayIcon::create(const std::string&) { return true; }
 void TrayIcon::quit() { if (onQuit_) onQuit_(); }
 void TrayIcon::setQuitCallback(std::function<void()> cb) { onQuit_ = std::move(cb); }
 void TrayIcon::setOpenCallback(std::function<void()> cb) { onOpen_ = std::move(cb); }
@@ -201,7 +201,7 @@ bool setAutostart(bool enable, const std::string& exePath, const std::string& ar
     RegCloseKey(hk);
     return true;
 #else
-    (void)enable; (void)exePath; return true;
+    (void)enable; (void)exePath; (void)args; return true;
 #endif
 }
 
