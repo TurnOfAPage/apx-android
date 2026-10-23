@@ -16,8 +16,9 @@ concurrency:
 
 jobs:
   apply:
-    #防自触发循环：应用方自己的提交固定用 "apply: ai-edit" 开头
-    if: ${{ !startsWith(github.event.head_commit.message, 'apply: ai-edit') }}
+    # 防自触发循环：应用方自己的提交固定用 apply-ai-edit 开头。
+    # 注意：这里整串必须加引号 —— 表达式里若出现 ": "（冒号+空格）裸标量会直接 YAML 报错（本文件改过一次这个坑）。
+    if: "${{ !startsWith(github.event.head_commit.message, 'apply-ai-edit') }}"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -31,7 +32,7 @@ jobs:
             git config user.name "ai-edit-bot"
             git config user.email "ai-edit-bot@users.noreply.github.com"
             git add -A
-            git commit -m "apply: ai-edit — 应用 edits.json"
+            git commit -m "apply-ai-edit 应用 edits.json"
             git push
             echo "applied"
           else
