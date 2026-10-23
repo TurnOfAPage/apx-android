@@ -46,6 +46,7 @@ struct Options {
     std::string capture = "auto";
     std::string tcpHost;        // --host：TCP 客户端连接目标（副屏无线/NCM/adb reverse）
     uint16_t tcpPort = 9502;    // --port（手机媒体服务端 TcpMediaChannel 端口）
+    bool portSet = false;       // --port 是否显式指定（NCM 默认 9512，显式 --port 时覆盖）
     bool noHandshake = false;   // --no-handshake
     uint32_t bitrateKbps = 12000;
     uint32_t maxFps = 60;
@@ -86,7 +87,7 @@ void usage() {
         "  --codec h264|hevc|av1|raw_lz4\n"
         "  --backend auto|nvenc|qsv|amf|mf|raw_lz4\n"
         "  --capture auto|dda|null\n"
-        "  --transport auto|tcp|winusb|loopback\n"
+        "  --transport auto|tcp|winusb|loopback|ncm\n"
         "  --host IP                TCP 模式连接的手机地址（副屏无线/NCM/adb reverse）\n"
         "  --port N                 TCP 端口（默认 9502，手机媒体通道）\n"
         "  --no-handshake           跳过 §4 控制面握手直接推流（手机端应答未实现时用）\n"
@@ -260,6 +261,22 @@ int runSelfTest() {
     check("右上角映射", p.x == 1920 + 1079, ("x=" + std::to_string(p.x)).c_str());
     check("Y 中值映射", p.y == 1199, ("y=" + std::to_string(p.y)).c_str());
 
+    // 7) NCM 传输（Issue #14：工厂/适配器枚举，无需真机）
+    gprintf("[7] NCM 传输\n");
+#ifdef APXDISP_ENABLE_NCM
+    {
+        auto ncm = createNcmTransport();
+        check("NcmTransport 工厂就绪", ncm != nullptr && ncm->kind() == TransportKind::Ncm);
+        const auto adapters = NcmTransport::listAdapters();
+        check("NCM 适配器枚举可执行", true,
+              ("count=" + std::to_string(adapters.size())).c_str());
+    }
+#else
+    check("本构建未启用 NCM（APXDISP_ENABLE_NCM=OFF）", true);
+#endif
+    check("Auto 工厂可产出传输",
+          createTransport(TransportKind::Auto, UsbFilter{}) != nullptr);
+
     gprintf("== 自测结束：%s（失败 %d 项）==\n", g_failures == 0 ? "全部通过" : "存在失败", g_failures);
     return g_failures == 0 ? 0 : 1;
 }
@@ -304,6 +321,15 @@ int runPipeline(const Options& opt) {
     // v1.10：TCP 承载接入（PipelineConfig.transportSpec 优先于 transportKind）
     if (opt.transport == "tcp") {
         cfg.transportSpec = TransportSpec::tcpClient(opt.tcpHost, opt.tcpPort);
+    }
+    // Issue #14：NCM 承载（TCP over USB-ECM）——--host=手机 usb0 地址（客户端连接）；
+    // 省略 --host 则本端监听。--port 显式指定时覆盖 NcmConfig 默认 9512。
+    if (opt.transport == "ncm") {
+        NcmConfig nc;
+        nc.isServer = opt.tcpHost.empty();
+        nc.peerIp = opt.tcpHost;
+        if (opt.portSet) nc.port = opt.tcpPort;
+        cfg.transportSpec = TransportSpec::ncmSpec(nc);
     }
     cfg.enableHandshake = !opt.noHandshake;
     // --no-handshake 同时禁用心跳：手机端无心跳应答实现，开着会触发假断线
@@ -489,7 +515,7 @@ int main(int argc, char** argv) {
         else if (a == "--fps") opt.maxFps = static_cast<uint32_t>(std::stoul(next()));
         else if (a == "--seconds") opt.seconds = static_cast<uint32_t>(std::stoul(next()));
         else if (a == "--host") opt.tcpHost = next();
-        else if (a == "--port") opt.tcpPort = static_cast<uint16_t>(std::stoul(next()));
+        else if (a == "--port") { opt.tcpPort = static_cast<uint16_t>(std::stoul(next())); opt.portSet = true; }
         else if (a == "--no-handshake") opt.noHandshake = true;
         else if (a == "--dump") opt.dump = next();
         else if (a == "-v" || a == "--verbose") opt.verbose = true;
