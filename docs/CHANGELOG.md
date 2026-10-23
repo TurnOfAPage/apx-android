@@ -6,9 +6,12 @@
 
 ---
 
-## Unreleased（2026-10-23）
+## v209（2026-10-23）
 
 ### 新增
+- **NCM 传输通道接入（Issue #14 代码侧收口）**：`TransportKind::Ncm` 工厂分支；Auto 链改为 WinUSB → NCM → Loopback（预检到网卡才尝试 NCM，无网卡不白等 accept 超时）；`apxdisp --transport ncm`（`--host` 客户端 / 省略监听，`--port` 可覆盖默认 9512）；自检新增 [7] NCM 段（PR #23）
+- **Windows 真手柄注入（ViGEmBus 可选）**：0x07 手柄帧经虚拟 X360 设备注入游戏/Steam；运行时探测 `ViGEmClient.dll`，未装驱动自动回退原键盘降级，链接期零依赖；L2/R2 映射满按模拟扳机、摇杆 Y 轴方向对齐 XInput（PR #24）
+- **PC 端检查更新**：`apxhost check-update` 走 WinHTTP 读 `releases/latest`，比对算法与手机端 `UpdateChecker.kt` 一致（去 v 前缀、按非数字切段、缺段补 0）；退出码 0=已是最新 / 3=发现新版本 / 1=检查失败（PR #24）
 - **意见反馈 + 检查更新（关于分段）**：反馈按类型分流到 GitHub Issues（bug / 功能建议模板带 labels）；检查更新读仓库 `releases/latest`，与本机版本按数值段比较，有新版弹窗跳 Release 页下载（`ui/UpdateChecker.kt`）
 - **发版流程同源**：PC 端版本号（面板关于页 / `apxhost --version` / 卸载项 `DisplayVersion`）改为发版 tag 构建时注入 `APXPC_VERSION_STRING`，与 App `versionName`、安装包版本、Release 标签完全一致；新增《发版手册》[`docs/RELEASE.md`](./RELEASE.md)
 
