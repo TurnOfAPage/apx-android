@@ -5,9 +5,10 @@ name: macOS Build
 #   pull_request→master   —— 合入前拦下编译错误
 #   workflow_dispatch      —— 手动触发
 # 失败时：
-#   1) make -k 全量报错 + 净化后的 ::error 注解（注意：workflow 命令会按逗号/引号解析
-#      key=value，编译错误长行必须净化截断，否则消息会被吞）
-#   2) 完整错误日志尾部推到 ci-logs 分支 —— contents API 免鉴权可读，拿全现场
+#   1) make -k 全量报错
+#   2) 完整日志尾部推到 ci-logs 分支（contents API 免鉴权可读，拿全现场）——先做，最可靠
+#   3) ::error:: 注解（必须显式 :: 分隔符：消息里若含 std::nullptr_t 这类双冒号，
+#      GitHub 会拿第一个 :: 当分隔符把消息截断；前缀写成 ::error:: 后第一个 :: 就是自己的）
 
 on:
   push:
@@ -17,7 +18,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write   # 失败时推 ci-logs 分支（同仓库 workflow 显式申请写权限）
+  contents: write   # 失败时推 ci-logs 分支
 
 jobs:
   mac:
@@ -45,10 +46,8 @@ jobs:
         run: |
           set +e
           cmake --build build_host -j1 --target apxhost -- -k > /tmp/full.log 2>&1
-          # 1) 注解：去 CR、截 400 字符、去掉逗号/引号（否则被 workflow 命令解析器吞）
-          grep -E "(error:|Undefined symbols|symbol not found|fatal error|no rule to make target)" /tmp/full.log \
-            | tr -d '\r' | cut -c1-400 | sed -e 's/[,"'"']/ /g' -e 's/^/::error /' | head -50
-          # 2) 全量错误日志尾部推到 ci-logs 分支（免鉴权可读）
+
+          # ---- 1) 全量日志尾部推到 ci-logs 分支（先做，不依赖后面的行） ----
           WORK=$(mktemp -d)
           cd "$WORK" || exit 1
           git init -q
@@ -64,3 +63,7 @@ jobs:
           git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
             commit -q -m "ci errors: run ${GITHUB_RUN_ID}" || exit 0
           git push -q origin HEAD:ci-logs && echo "errors -> ci-logs branch"
+
+          # ---- 2) ::error:: 注解（净化 CR、截 400 字符；::error:: 显式分隔防消息被吞） ----
+          grep -E "(error:|Undefined symbols|symbol not found|fatal error|no rule to make target)" /tmp/full.log \
+            | tr -d '\r' | cut -c1-400 | sed 's/^/::error::/' | head -50
