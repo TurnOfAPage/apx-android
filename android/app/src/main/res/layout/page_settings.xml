@@ -242,11 +242,7 @@
                         android:text="@string/lay_settings_text_hotkey"
                         android:textAppearance="@style/APTextSubtitle" />
 
-                    <TextView
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:text="@string/lay_settings_text_manual"
-                        android:textAppearance="@style/APTextCaption" />
+
                 </LinearLayout>
 
                 <Switch
@@ -257,27 +253,6 @@
             </LinearLayout>
         </LinearLayout>
 
-        <!-- 环境摘要：详细链路与延迟预算在「状态」页，这里只留一行结论 -->
-        <TextView
-            style="@style/APSectionTitle"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:paddingTop="10dp"
-            android:text="@string/lay_settings_env" />
-
-        <LinearLayout
-            style="@style/APCard"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical">
-
-            <TextView
-                android:id="@+id/tvDiag"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/common_unknown"
-                android:textAppearance="@style/APTextCaption" />
-        </LinearLayout>
 
         </LinearLayout><!-- /groupGeneral -->
 
@@ -430,6 +405,35 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical" />
+        </LinearLayout>
+
+        <!-- 诊断：环境摘要（原在「通用」tab，挪到遥控 tab 与通道自检/日志同屏） -->
+        <TextView
+            style="@style/APSectionTitle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:paddingTop="10dp"
+            android:text="@string/lay_settings_group_diag" />
+
+        <LinearLayout
+            style="@style/APCard"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/lay_settings_diag_hint"
+                android:textAppearance="@style/APTextCaption" />
+
+            <TextView
+                android:id="@+id/tvDiag"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="@string/common_unknown"
+                android:textAppearance="@style/APTextCaption" />
         </LinearLayout>
 
         <TextView

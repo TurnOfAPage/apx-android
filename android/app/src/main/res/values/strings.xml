@@ -300,7 +300,7 @@
     <string name="lay_settings_text_hotkey_template_touchpad">按场景一键铺满触控板页的快捷键条；也可以把当前这条存成自己的模板</string>
     <string name="lay_settings_modules">功能开关</string>
     <string name="lay_transport_usb_group">有线（USB）</string>
-    <string name="lay_settings_text_hotkey">快捷键自动排序</string>
+    <string name="lay_settings_text_hotkey">快捷键自动排序（最常用排前面；手动拖过自动关掉）</string>
     <string name="lay_settings_text_manual">最常用的自动排到前面；手动拖过就自动关掉</string>
     <string name="lay_settings_cd_hotkey">快捷键自动排序开关</string>
     <string name="lay_settings_env">环境摘要</string>
@@ -320,4 +320,6 @@
     <string name="lay_settings_group_tools">工具</string>
     <string name="lay_settings_status_target">当前控制：%1$s · %2$s</string>
     <string name="lay_settings_status_local">未连接（触摸板控本机）· %1$s</string>
+    <string name="lay_settings_group_diag">诊断</string>
+    <string name="lay_settings_diag_hint">环境摘要；通道自检与日志在上方 TV 控制卡的「工具」小节</string>
 </resources>
