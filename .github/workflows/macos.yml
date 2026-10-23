@@ -34,7 +34,13 @@ jobs:
 
       - name: Show errors on failure
         if: failure()
-        # -k：尽量把所有编译单元的错误一次性暴露完，减少 CI 迭代轮次
+        # 1) make -k 跑完所有编译单元，一次暴露全部错误（省 CI 迭代轮次）
+        # 2) 错误行转成 ::error 注解 —— 注解走 check-runs/annotations API（免鉴权可读），
+        #    因为 job logs 端点需要写权限，外部拉不到
         run: |
-          echo "=========== BUILD FAILED (keep going) ==========="
-          cmake --build build_host -j1 --target apxhost apxdisp -- -k 2>&1 | tail -250 || true
+          set +e
+          cmake --build build_host -j1 --target apxhost apxdisp -- -k > /tmp/full.log 2>&1
+          grep -E "(error:|Undefined symbols|symbol not found|fatal error)" /tmp/full.log \
+            | head -50 | sed 's/^/::error /'
+          echo "=========== BUILD FAILED (tail 120) ==========="
+          tail -120 /tmp/full.log
