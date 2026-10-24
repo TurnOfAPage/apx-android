@@ -11,8 +11,8 @@ name: macOS Build
 #   3) ::error:: 注解（必须显式 :: 分隔符：消息里若含 std::nullptr_t 这类双冒号，
 #      GitHub 会拿第一个 :: 当分隔符把消息截断；前缀写成 ::error:: 后第一个 :: 就是自己的）
 # 成功时：
-#   strip 后打包 apxhost-macos-arm64.zip 上传 artifact —— 含 web/ 前端 dist，
-#   解压即用（./apxhost panel 或 ./apxdesktop 自动打开浏览器面板）
+#   strip 后打包 apxhost/apxdesktop + web/ 前端 dist 为 zip 上传 artifact，
+#   解压即用（./apxdesktop 或 ./apxhost panel 自动打开浏览器面板）
 
 on:
   push:
@@ -49,8 +49,9 @@ jobs:
             -DAPXPC_BUILD_TESTS=OFF
 
       - name: Build (apxhost + apxdesktop)
-        # apxdesktop：mac 桌面壳（desktop_main → runWebPanelHttp）。历史上 mac CI 只 build
-        # apxdesktop，desktop_main 的 mac 兼容性（share.h / 宿主栈符号面）从未过堂。
+        # apxdesktop：mac 桌面壳（desktop_main → runWebPanelHttp）。历史上 mac CI **只 build
+        # apxhost**，desktop_main 的 mac 兼容性（share.h / 宿主栈符号面）从未过堂 —— 本步把它
+        # 纳入编译，mac-desktop 起第一次真刀验证。
         run: cmake --build build_host -j4 --target apxhost apxdesktop
 
       - name: Package (strip + web dist + zip)

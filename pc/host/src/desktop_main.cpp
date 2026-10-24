@@ -15,10 +15,9 @@
 // 入口仍是 runPanel()。旧面板自身在 Panel 构造函数里创建/持有完整宿主栈生命周期。
 //
 // macOS 分支（mac-desktop）：GUI 三件事（崩溃取证/防火墙/DPI）为 Win 专属；
-// 桌面壳走与 apxhost panel 相同的 runWebPanelHttp（HTTP 面板，内部自含 9511 受控端 /
-// 9512 收文件 / startAuto / 媒体泵 / 托盘接线）；ScreenPush 不创建（虚拟显示器仅 Win，
-// apxpc_screen 未链接 —— bundle 填 nullptr，panel_http 已按未初始化形态呈现）。
-// Linux：桌面壳暂不支持（报错退出，提示用 apxhost panel）。
+// 桌面壳走与 apxhost panel 相同的 runWebPanelHttp（HTTP 面板，内部自含 9512 收文件 /
+// startAuto / 媒体泵 / 托盘接线；9511 受控端在本文件上方创建，单一创建点）；
+// ScreenPush 在 mac **完全不声明**（见下方链接说明）；Linux 报错退出。
 
 #include "apxpc/log.hpp"
 #include "apxpc/ui/web_panel.hpp"
@@ -356,11 +355,13 @@ int main(int /*argc*/, char** /*argv*/) {
     auto media       = std::make_unique<apxpc::media::MediaSession>();
 #if defined(_WIN32)
     auto screenPush  = std::make_unique<apxpc::media::ScreenPush>();
-#else
-    // mac：apxpc_screen 未链接（虚拟显示器仅 Windows）—— 不创建对象（make_unique 会引入
-    // 构造/析构符号引用 → 链接必缺），bundle 填 nullptr；panel_http 已按未初始化形态呈现。
-    std::unique_ptr<apxpc::media::ScreenPush> screenPush;
 #endif
+    // mac：**连 unique_ptr 声明都不做**（链接错误教训，CI run 首次踩出）：
+    //   ① unique_ptr<T> 的析构 deleter 是无条件模板实例化，会引用 T::~T() ——
+    //      运行时对象为 null 不豁免链接期符号需求；
+    //   ② `if (ptr) ptr->stop()` 的 guard 是**运行时**判断，调用指令本身仍产生
+    //      ScreenPush::stop() 的符号引用 —— 链接器不认运行时可达性。
+    // 因此 mac 分支不声明该对象，下面打包与退出两处也用 #if 同步条件编译。
     auto audio       = std::make_unique<apxpc::media::AudioCapture>();
     auto micBridge   = std::make_unique<apxpc::media::MicBridge>();
     auto fileRecv    = std::make_unique<apxpc::wireless::FileReceiver>();
@@ -398,7 +399,11 @@ int main(int /*argc*/, char** /*argv*/) {
     bundle.session      = session.get();
     bundle.fileReceiver = fileRecv.get();
     bundle.media        = media.get();
-    bundle.screenPush   = screenPush.get();   // 空 unique_ptr → nullptr ✓
+#if defined(_WIN32)
+    bundle.screenPush   = screenPush.get();
+#else
+    bundle.screenPush   = nullptr;   // 副屏不可用（虚拟显示器仅 Win；panel_http 已按未初始化形态呈现）
+#endif
     bundle.audio        = audio.get();
     bundle.micBridge    = micBridge.get();
     bundle.tray         = tray.get();
@@ -411,10 +416,10 @@ int main(int /*argc*/, char** /*argv*/) {
     const int rc = apxpc::ui::runWebPanel(bundle);
 #elif defined(__APPLE__)
     // mac 桌面壳 = 与 apxhost panel 同一 HTTP 面板入口（webDir 空 = exe 旁 web/）。
-    // runWebPanelHttp 内部已含：9511？——否，9511 在上面本文件已起（此处保留单一创建点，
-    // panel_http 内的起服务段对 desktop 实例是**重复**的 —— 实际上 runWebPanelHttp 内部
-    // 也会起一次，端口冲突时它会打警告并继续（与 Win desktop_main 对 apxhost 占用的容错
-    // 一致）。其余：startAuto / 9512 收文件（带 on-file-received 事件）/ 媒体泵 / 麦克风接线。
+    // 9511 受控端在上方本文件已起（单一创建点）—— runWebPanelHttp 内部也会尝试起一次，
+    // 端口冲突时它只打警告并继续（面板侧实例失败、desktop 侧实例在跑，信标不断），
+    // 与 Win desktop_main 对 apxhost 占用 9511 的容错一致。
+    // 其余（startAuto / 9512 收文件事件 / 媒体泵 / 麦克风接线）由 runWebPanelHttp 统一负责。
     const int rc = apxpc::ui::runWebPanelHttp(bundle, {});
 #else
     std::fprintf(stderr,
@@ -427,7 +432,9 @@ int main(int /*argc*/, char** /*argv*/) {
     fileRecv->stop();
     audio->stop();
     micBridge->stop();
-    if (screenPush) screenPush->stop();   // mac 空指针 guard
+#if defined(_WIN32)
+    screenPush->stop();   // mac 无此对象（唯一调用点同条件编译 —— 链接期零引用）
+#endif
     media->disconnect();
     session->stop();
     ctrlSrv.stop();
