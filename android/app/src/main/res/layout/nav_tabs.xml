@@ -56,7 +56,7 @@
     </LinearLayout>
 
     <LinearLayout
-        android:id="@+id/tabStatus"
+        android:id="@+id/tabKeyboard"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:layout_weight="1"
@@ -66,7 +66,7 @@
         android:orientation="vertical">
 
         <LinearLayout
-            android:id="@+id/tabPillStatus"
+            android:id="@+id/tabPillKeyboard"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:gravity="center"
@@ -77,19 +77,19 @@
             android:paddingBottom="6dp">
 
             <ImageView
-                android:id="@+id/ivTabStatus"
+                android:id="@+id/ivTabKeyboard"
                 android:layout_width="23dp"
                 android:layout_height="23dp"
                 android:contentDescription="@null"
                 android:scaleType="fitCenter"
-                android:src="@drawable/ic_apx_status" />
+                android:src="@drawable/ic_apx_keyboard" />
 
             <TextView
-                android:id="@+id/tvTabStatus"
+                android:id="@+id/tvTabKeyboard"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:paddingTop="3dp"
-                android:text="@string/ui_page_state"
+                android:text="@string/ui_touchpad_label_keyboard"
                 android:textSize="10sp" />
         </LinearLayout>
     </LinearLayout>

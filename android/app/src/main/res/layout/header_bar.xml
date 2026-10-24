@@ -36,6 +36,31 @@
             android:textAppearance="@style/APTextCaption" />
     </LinearLayout>
 
+    <!-- 状态 ↔ 设置 页内分页（状态页并入设置 tab 后的二级切换；非这两页时隐藏） -->
+    <LinearLayout
+        android:id="@+id/segPages"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginEnd="8dp"
+        android:orientation="horizontal"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/segGoStatus"
+            style="@style/APTextButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/ui_page_state" />
+
+        <TextView
+            android:id="@+id/segGoSettings"
+            style="@style/APTextButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="6dp"
+            android:text="@string/section_settings" />
+    </LinearLayout>
+
     <TextView
         android:id="@+id/badgeStatus"
         style="@style/APBadge"
