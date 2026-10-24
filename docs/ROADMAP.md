@@ -282,7 +282,7 @@ MSVC 回归），**真机实测尚未执行**（用户声明跳过）—— 下�
 | 能力 | 状态 | 落点 / 说明 |
 |---|---|---|
 | 浏览器控制面板 | ✅ | `apxhost panel` / `./apxdesktop` → `src/ui/panel_http.cpp`（方案 B：仅 127.0.0.1，`?host=1`），协议与 Windows WebView2 面板同构；前端 `bridge.ts` 第三态 `http`（400ms 轮询 state/events，POST act/query） |
-| 桌面壳 apxdesktop | ✅ | `desktop_main.cpp` mac 分支（GUI 基础设施 Win 条件化；`share.h` 归位），CI 已纳入编译（macos.yml `--target apxhost apxdesktop`）；**无 .app 包 / 无托盘**（终端运行，`Ctrl+C` 退出） |
+| 桌面壳 apxdesktop | ✅ | `desktop_main.cpp` mac 分支（GUI 基础设施 Win 条件化；`share.h` 归位），CI 已纳入编译（macos.yml `--target apxhost apxdesktop`）；zip 内含 **`AllPeriph.app`**（ad-hoc 签名 + Info.plist 授权宿主，双击起壳自动开面板），终端 `./apxdesktop` 等价；**托盘仍无**（退出 `pkill -x apxdesktop`） |
 | 9511 受控端 + 信标 | ✅ | `Ctrl9511Server` + `gethostname`（双入口自带），手机「TV 控制」列表可发现（标 `(PC)`）；与 `apxhost serve` 并存时端口冲突会警告降级 |
 | 控制面客户端（连手机） | ✅ | `wireless_session` 跨平台（此前已可编），`startAuto` 自动发现 |
 | 文件接收 9512 | ✅ | `file.list`/`file.delete` 可用（浏览器文件卡）；**发送本机文件 ❌**（浏览器无系统文件对话框，明确报错） |
@@ -294,15 +294,15 @@ MSVC 回归），**真机实测尚未执行**（用户声明跳过）—— 下�
 | 全局热键 / USB 有线 | ❌ | 热键 Win-only；mac 无 `/sys`（`usb_enum_sysfs` 空枚举），USB 线路不可用（IOKit 枚举为后续项） |
 | 开机自启 | ✅ | `~/Library/LaunchAgents/` plist（`autostart.cpp` 非 Win 分支） |
 | 检查更新 | ✅ | `update_check_mac.mm`（NSURLSession + gh-proxy 镜像兑底，与 Windows 同比对算法） |
-| 发版产物 | ✅ | macos.yml `tags: ['v*']` → `AllPeriph-<tag>-macos-arm64.zip` 上传 Release（与 build.yml release 双向幂等） |
+| 发版产物 | ✅ | macos.yml `tags: ['v*']` → `AllPeriph-<tag>-macos-arm64.zip` 上传 Release（与 build.yml release job 双向幂等） |
 
 **mac 构建/发版**：`cmake -S pc/host -B build_host -DCMAKE_BUILD_TYPE=Release -DAPXPC_BUILD_UI=OFF`
 （部署目标自动压 12.0）；前端 `pc/web` npm build 后 dist 拷到 exe 旁 `web/`；日常直接用
 CI artifact 或 Release 资产。详见 [`使用说明.md`](./使用说明.md) 二/七/九章与 README。
 
-**待办（按价值排序）**：① 真机实测（面板/连接/媒体/TCC 授权归属——CLI 无 Info.plist 的
-授权宿主是未知项）② `.app` 壳 + NSStatusItem 托盘 ③ USB/IOKit 枚举 ④ `panel_http`
-的 9511 "已在运行"检测（消除双起警告日志）。
+**待办（按价值排序）**：① 真机实测（面板/连接/媒体/系统授权弹窗）② NSStatusItem 托盘 +
+.app 内退出入口（`.app` 壳已交付：ad-hoc 签名 + Info.plist 授权宿主，壳内无运行时改造，
+事件循环语义待实机） ③ USB/IOKit 枚举 ④ `panel_http` 的 9511 "已在运行"检测（消除双起警告日志）。
 
 ---
 

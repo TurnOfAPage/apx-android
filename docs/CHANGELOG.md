@@ -23,6 +23,12 @@
 - **发版链补 mac（PR #34）**：macos.yml 加 `tags: ['v*']` 触发，zip 改名
   `AllPeriph-<tag>-macos-arm64.zip` 上传 Release（与 build.yml release job **双向幂等**：
   谁先完成谁建 Release、后到者 `--clobber`）；build.yml Release 正文新增 macOS 章节
+- **`.app` 壳（双击入口 + TCC 授权宿主）**：zip 内含 `AllPeriph.app`——strip 后统一
+  ad-hoc 补签（arm64 执行要求），`plutil -lint` + `codesign --verify --strict --deep` 进 CI；
+  Info.plist 挂 `NSMicrophoneUsageDescription` 与 `NSAudioCaptureUsageDescription`
+  （macOS 14.2+，官方键），麦克风/系统音频的授权从此按 bundle 归属记录——此前 CLI 裸跑
+  无 Info.plist 宿主的授权未知项关闭。壳 v1 无托盘菜单（退出 `pkill -x apxdesktop`），
+  NSStatusItem 托盘随后续版本（需 NSApp 事件循环，运行时语义待实机）
 
 ### 文档（PR #35）
 - README：产物表 `AllPeriph-vXXX-*` 五件套（替换过时 v186 手写表，`vXXX` 占位防再过时）、
@@ -34,7 +40,8 @@
 ### macOS 已知边界（如实降级，非缺陷）
 - 副屏不支持（虚拟显示器仅 Windows，面板显示不支持并明确报错）；发送本机文件不支持
   （浏览器无系统文件对话框；接收不受影响）；全局热键 / USB 有线暂不可用；
-  无 `.app` 包与托盘（终端运行，`Ctrl+C` 退出），TCC 授权归属待真机验证
+  无托盘菜单（`.app` 壳退出暂用 `pkill -x apxdesktop`）；ad-hoc 签名未公证；
+  TCC 授权宿主已就位（Info.plist），实际弹窗归属待真机验证
 
 ---
 
