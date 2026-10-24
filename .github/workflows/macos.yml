@@ -2,6 +2,7 @@ name: macOS Build
 
 # macOS 端（mac-port 分支）编译验证：
 #   push mac-port / master —— 构建 apxhost（CLI 宿主 + 浏览器面板 panel_http）
+#                              + apxdesktop（桌面壳，mac=HTTP 面板宿主，mac-desktop 起纳入 CI）
 #   pull_request→master   —— 合入前拦下编译错误
 #   workflow_dispatch      —— 手动触发
 # 失败时：
@@ -10,8 +11,8 @@ name: macOS Build
 #   3) ::error:: 注解（必须显式 :: 分隔符：消息里若含 std::nullptr_t 这类双冒号，
 #      GitHub 会拿第一个 :: 当分隔符把消息截断；前缀写成 ::error:: 后第一个 :: 就是自己的）
 # 成功时：
-#   strip 后打包 apxhost-macos-arm64.zip 上传 artifact —— 含 web/ 前端 dist，
-#   解压即用（./apxhost panel 自动打开浏览器面板）
+#   strip 后打包 apxhost/apxdesktop + web/ 前端 dist 为 zip 上传 artifact，
+#   解压即用（./apxdesktop 或 ./apxhost panel 自动打开浏览器面板）
 
 on:
   push:
@@ -33,7 +34,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Build web frontend (Vite + React)
-        # 浏览器面板的前端 dist：`apxhost panel` 从 exe 旁 web/ 读取。
+        # 浏览器面板的前端 dist：`apxhost panel` / `apxdesktop` 从 exe 旁 web/ 读取。
         # 用 npm install 而非 npm ci（不强依赖 package-lock.json，与 Windows 侧构建口径一致）
         run: |
           cd pc/web
@@ -47,22 +48,28 @@ jobs:
             -DAPXPC_BUILD_UI=OFF \
             -DAPXPC_BUILD_TESTS=OFF
 
-      - name: Build (apxhost)
-        run: cmake --build build_host -j4 --target apxhost
+      - name: Build (apxhost + apxdesktop)
+        # apxdesktop：mac 桌面壳（desktop_main → runWebPanelHttp）。历史上 mac CI **只 build
+        # apxhost**，desktop_main 的 mac 兼容性（share.h / 宿主栈符号面）从未过堂 —— 本步把它
+        # 纳入编译，mac-desktop 起第一次真刀验证。
+        run: cmake --build build_host -j4 --target apxhost apxdesktop
 
       - name: Package (strip + web dist + zip)
         if: success()
         run: |
           cd build_host
           strip apxhost || true
+          strip apxdesktop || true
           STAGE=apxhost-macos-arm64
           mkdir -p "$STAGE/web"
           cp apxhost "$STAGE/"
+          cp apxdesktop "$STAGE/"
           cp -r ../pc/web/dist/. "$STAGE/web/"
           printf '%s\n' \
             "全能外设 macOS 命令行宿主（arm64，未签名）" \
             "" \
             "快速上手：" \
+            "  ./apxdesktop         桌面壳（自动打开浏览器面板，自带 9511 受控端）" \
             "  ./apxhost panel       浏览器控制面板（自动打开 http://127.0.0.1:…/?host=1）" \
             "  ./apxhost serve       无界面常驻服务（9511 受控 + 热键）" \
             "  ./apxhost list        枚举设备与传感器" \
@@ -70,9 +77,10 @@ jobs:
             "" \
             "首次打开（未签名应用）：" \
             "  系统设置 → 隐私与安全性 → 底部「仍要打开」" \
-            "  或执行：xattr -dr com.apple.quarantine ./apxhost" \
+            "  或执行：xattr -dr com.apple.quarantine ./apxhost ./apxdesktop" \
             "" \
-            "浏览器面板要求 web/ 目录与 apxhost 同级（本包已附带）。" \
+            "浏览器面板要求 web/ 目录与可执行文件同级（本包已附带）。" \
+            "音箱首次使用需授权「系统音频录制」（系统设置 → 隐私与安全性）。" \
             > "$STAGE/README.txt"
           zip -9 -r apxhost-macos-arm64.zip "$STAGE"
           shasum -a 256 apxhost-macos-arm64.zip | tee apxhost-macos-arm64.zip.sha256
@@ -93,7 +101,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set +e
-          cmake --build build_host -j1 --target apxhost -- -k > /tmp/full.log 2>&1
+          cmake --build build_host -j1 --target apxhost apxdesktop -- -k > /tmp/full.log 2>&1
 
           # ---- 1) 全量日志尾部推到 ci-logs 分支（先做，不依赖后面的行） ----
           WORK=$(mktemp -d)

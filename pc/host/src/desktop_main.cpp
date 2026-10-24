@@ -13,9 +13,15 @@
 //
 // 回退：APXPC_BUILD_UI_WEBVIEW2=OFF 时编译旧 Win32 GDI+ 面板（panel_win32.cpp），
 // 入口仍是 runPanel()。旧面板自身在 Panel 构造函数里创建/持有完整宿主栈生命周期。
+//
+// macOS 分支（mac-desktop）：GUI 三件事（崩溃取证/防火墙/DPI）为 Win 专属；
+// 桌面壳走与 apxhost panel 相同的 runWebPanelHttp（HTTP 面板，内部自含 9512 收文件 /
+// startAuto / 媒体泵 / 托盘接线；9511 受控端在本文件上方创建，单一创建点）；
+// ScreenPush 在 mac **完全不声明**（见下方链接说明）；Linux 报错退出。
 
 #include "apxpc/log.hpp"
 #include "apxpc/ui/web_panel.hpp"
+#include "apxpc/ui/panel_http.hpp"
 #include "apxpc/wireless/wireless_session.hpp"
 #include "apxpc/wireless/ctrl9511.hpp"
 #include "apxpc/wireless/file_receiver.hpp"
@@ -36,6 +42,7 @@
 #include <shellapi.h>
 #include <dbghelp.h>
 #include <tlhelp32.h>
+#include <share.h>
 #include <exception>
 #include <cstdlib>
 #include <cstdio>
@@ -43,6 +50,8 @@
 #include <string>
 #pragma comment(lib, "dbghelp")
 #pragma comment(lib, "shell32")
+#else
+#include <unistd.h>
 #endif
 
 #include <atomic>
@@ -51,12 +60,12 @@
 #include <filesystem>
 #include <memory>
 #include <mutex>
-#include <share.h>
 #include <string>
 #include <thread>
 
 namespace {
 
+#if defined(_WIN32)
 // —————— 防火墙放行（与 host_service.cpp 同款做法）——
 // apxdesktop 会 bind UDP 9501 收手机信标；Public 网络 Windows 默认拦入站，
 // 没有这条规则状态会永远停在"正在发现"。首次启动提权(netsh runas)放行本 exe。
@@ -207,7 +216,7 @@ void apxInvalidParamHandler(const wchar_t* expr, const wchar_t* func, const wcha
             const int n = std::swprintf(buf, 1024, L"invalid parameter: expr=%s func=%s file=%s line=%u\r\n",
                                         expr ? expr : L"?", func ? func : L"?", file ? file : L"?", line);
             DWORD written = 0;
-            if (n > 0) ::WriteFile(f, buf, static_cast<DWORD>(n), &written, nullptr);
+            if (n > 0) ::WriteFile(f, buf, static_cast<DWORD>(n) * sizeof(wchar_t), &written, nullptr);
             ::CloseHandle(f);
         }
     }
@@ -273,13 +282,14 @@ void startFileLogging() {
         }
     });
 }
+#endif  // _WIN32（GUI 基础设施：防火墙/崩溃取证/日志 —— 均为 Win 专属，mac 不需要）
 
 }  // namespace
 
 int main(int /*argc*/, char** /*argv*/) {
 #if defined(_WIN32)
     // DPI 感知必须在任何 GDI/User32 调用之前设置
-    // Win10 1703+ 用 SetProcessDpiAwarenessContext；老系统动态加载失败即跳过（manifest 兜底）
+    // Win10 1703+ 用 SetProcessDpiAwarenessContext；老系统动态加载失败即跳过（manifest 兑底）
     {
         HMODULE user32 = ::GetModuleHandleW(L"user32.dll");
         using SetCtx_t = BOOL (WINAPI*)(void*);
@@ -305,22 +315,32 @@ int main(int /*argc*/, char** /*argv*/) {
     // 析构时反向运行，保证"托盘退出 → 所有子系统已停"。
 
     // 9511 受控端（广播 APX1PC 信标，手机/TV 可选本机控制）
+    // 主机名获取分平台：Win=GetComputerNameW（UTF-8 转换），POSIX=gethostname。
+    std::string hostUtf8;
 #if defined(_WIN32)
     wchar_t hostW[64] = {};
     DWORD hn = sizeof(hostW);
     if (!::GetComputerNameW(hostW, &hn) || hostW[0] == L'\0') wcscpy_s(hostW, (size_t)sizeof(hostW)/sizeof(hostW[0]), L"PC");
-    std::string hostUtf8;
     {
         const int n = ::WideCharToMultiByte(CP_UTF8, 0, hostW, -1, nullptr, 0, nullptr, nullptr);
         if (n > 0) { hostUtf8.resize(static_cast<size_t>(n));
                      ::WideCharToMultiByte(CP_UTF8, 0, hostW, -1, hostUtf8.data(), n, nullptr, nullptr); }
     }
+#else
+    {
+        char hn[256] = {};
+        if (gethostname(hn, sizeof(hn) - 1) == 0 && hn[0] != '\0') {
+            hn[sizeof(hn) - 1] = '\0';
+            hostUtf8 = hn;
+        }
+        if (hostUtf8.empty()) hostUtf8 = "Mac";   // gethostname 失败时的诚实兑底名
+    }
+#endif
     apxpc::wireless::Ctrl9511Server ctrlSrv;
     if (!ctrlSrv.start(9511, "", hostUtf8))
         APX_LOGW("9511 受控端启动失败（端口可能已被 apxhost 占用）");
     else
         APX_LOGI("9511 受控端已启动（桌面端自带）");
-#endif
 
     // 配置
     std::string cfgPath = apxpc::config::defaultConfigPath();
@@ -333,7 +353,15 @@ int main(int /*argc*/, char** /*argv*/) {
     // —— 宿主栈 ——
     auto session     = std::make_unique<apxpc::wireless::WirelessSession>();
     auto media       = std::make_unique<apxpc::media::MediaSession>();
+#if defined(_WIN32)
     auto screenPush  = std::make_unique<apxpc::media::ScreenPush>();
+#endif
+    // mac：**连 unique_ptr 声明都不做**（链接错误教训，CI run 首次踩出）：
+    //   ① unique_ptr<T> 的析构 deleter 是无条件模板实例化，会引用 T::~T() ——
+    //      运行时对象为 null 不豁免链接期符号需求；
+    //   ② `if (ptr) ptr->stop()` 的 guard 是**运行时**判断，调用指令本身仍产生
+    //      ScreenPush::stop() 的符号引用 —— 链接器不认运行时可达性。
+    // 因此 mac 分支不声明该对象，下面打包与退出两处也用 #if 同步条件编译。
     auto audio       = std::make_unique<apxpc::media::AudioCapture>();
     auto micBridge   = std::make_unique<apxpc::media::MicBridge>();
     auto fileRecv    = std::make_unique<apxpc::wireless::FileReceiver>();
@@ -346,15 +374,20 @@ int main(int /*argc*/, char** /*argv*/) {
 
     // 托盘：「打开面板」暂不注册（WebView2 窗口句柄在 runWebPanel 内部）
     // runWebPanel 会在退出前把窗口句柄传回给 tray 的 setOpenCallback。
+#if defined(_WIN32)
     tray->setQuitCallback([] { ::PostQuitMessage(0); });
+#endif
+    // mac 托盘为空实现（无菜单无回调源）；面板退出走 SIGINT / window.quit，无需此处接线。
     if (!tray->create("全能外设 · WebView2"))
         APX_LOGW("托盘图标创建失败");
 
     if (cfg.autostart) apxpc::tray::setAutostart(true);
 
+#if defined(_WIN32)
     // FileReceiver 后台监听（9512 端口）—— 收到文件：托盘气泡提示 + 推给前端文件面板。
     // 回调跑在接收线程；notifyFileReceived 内部 PostWebMessageAsJson（线程安全）。
-#if defined(_WIN32)
+    // mac/HTTP 分支**不在这里 start**：9512 由 runWebPanelHttp 内部统一启动（事件+托盘回调一体），
+    // 重复 start 会端口冲突。
     fileRecv->start(9512, std::string{}, [](const std::string& path, uint64_t size) {
         APX_LOGI("收到对端文件: {}（{} 字节）", path.c_str(), size);
         apxpc::ui::notifyFileReceived(path);
@@ -366,7 +399,11 @@ int main(int /*argc*/, char** /*argv*/) {
     bundle.session      = session.get();
     bundle.fileReceiver = fileRecv.get();
     bundle.media        = media.get();
+#if defined(_WIN32)
     bundle.screenPush   = screenPush.get();
+#else
+    bundle.screenPush   = nullptr;   // 副屏不可用（虚拟显示器仅 Win；panel_http 已按未初始化形态呈现）
+#endif
     bundle.audio        = audio.get();
     bundle.micBridge    = micBridge.get();
     bundle.tray         = tray.get();
@@ -375,19 +412,32 @@ int main(int /*argc*/, char** /*argv*/) {
     bundle.configPath   = cfgPath;
 
     // —— 启动面板 ——
+#if defined(_WIN32)
     const int rc = apxpc::ui::runWebPanel(bundle);
+#elif defined(__APPLE__)
+    // mac 桌面壳 = 与 apxhost panel 同一 HTTP 面板入口（webDir 空 = exe 旁 web/）。
+    // 9511 受控端在上方本文件已起（单一创建点）—— runWebPanelHttp 内部也会尝试起一次，
+    // 端口冲突时它只打警告并继续（面板侧实例失败、desktop 侧实例在跑，信标不断），
+    // 与 Win desktop_main 对 apxhost 占用 9511 的容错一致。
+    // 其余（startAuto / 9512 收文件事件 / 媒体泵 / 麦克风接线）由 runWebPanelHttp 统一负责。
+    const int rc = apxpc::ui::runWebPanelHttp(bundle, {});
+#else
+    std::fprintf(stderr,
+                 "apxdesktop 桌面壳暂仅支持 Windows/macOS；Linux 请用 apxhost panel\n");
+    const int rc = 1;
+#endif
 
     // —— 退出清理（反向顺序）——
     APX_LOGI("宿主栈关闭中…");
     fileRecv->stop();
     audio->stop();
     micBridge->stop();
-    screenPush->stop();
+#if defined(_WIN32)
+    screenPush->stop();   // mac 无此对象（唯一调用点同条件编译 —— 链接期零引用）
+#endif
     media->disconnect();
     session->stop();
-#if defined(_WIN32)
     ctrlSrv.stop();
-#endif
     hk->stop();
     tray->quit();
     apxpc::config::saveConfig(cfgPath, cfg);
