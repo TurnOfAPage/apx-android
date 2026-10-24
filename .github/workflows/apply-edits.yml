@@ -1,0 +1,18 @@
+name: apply-edits
+
+# 一次性编辑应用器（方向锁定功能专用，脚本用完自毁）：
+# 手动 dispatch → runner 上跑 scripts/apply_orient_lock.py（9 处编辑 → 自删两个工具文件 → commit push）。
+# 本骨架同时存在 master（供 workflow 注册/调度）与 feat/orient-lock（供执行）。
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply orient-lock edits
+        run: python3 scripts/apply_orient_lock.py
