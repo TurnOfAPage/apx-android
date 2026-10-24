@@ -229,9 +229,9 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
         // ⚠️ 事实与旧注释相反：AndroidManifest 里本 Activity 的 configChanges **含 orientation**，
         // 所以旋屏**不会**重建 Activity（也就不会去加载 layout-land），横屏走的是
         // applyOrientationLayout() 那套运行时切换。这里只在真的被重建时（如内存不足回收）
-        // 恢复页签。另：Bundle.getInt() 返回非空 Int（缺省 0），`?.let` 恒执行 ——
-        // 所以必须再判一次范围，且只接受确实存过的值，否则会把 buildTabs() 按物理朝向
-        // 选好的初始页（横屏冷启动应是沉浸操控面）强行切回第 0 页。
+        // 恢复页签。另：Bundle.getInt() 返回非空 Int（缺省 0）——
+        // 所以必须再判一次范围，且只接受确实存过的值，避免把 buildTabs() 选好的
+        // 初始页（固定触控板）强行切走。
         if (savedInstanceState?.containsKey(KEY_PAGE) == true) {
             val page = savedInstanceState.getInt(KEY_PAGE)
             if (page in PAGE_TITLES.indices) showPage(page)
@@ -450,9 +450,8 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
     // ————————————————————————— 横竖屏 —————————————————————————
 
     /**
-     * 横屏 = 沉浸操控面：**去掉标题栏与悬浮底栏**，整屏留给触控板 / 全键盘，
-     * 只保留右下角一颗半透明切换点（否则没有页签就没法换页）。
-     * 竖屏恢复完整 chrome（标题 + 玻璃底栏）。
+     * 横屏 = 沉浸操控面：**去掉标题栏与悬浮底栏**，整屏留给触控板 / 键盘 / 状态 / 设置，
+     * 页间用四指左右滑循环切换。竖屏恢复完整 chrome（标题 + 玻璃底栏 + 页签底栏）。
      */
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
@@ -465,7 +464,7 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
     private fun applyOrientationLayout() {
         // landscape 由调用方设置（orientListener / onConfigurationChanged），
         // 这里不再从 resources.configuration 重读 —— 避免 requestedOrientation 未生效时
-        // 配置方向滞后于物理朝向，导致横屏仍停在触控板页。
+        // 配置方向滞后于物理朝向，导致布局朝向与实际手持不一致。
         val dm = resources.displayMetrics
         Log.i(
             TAG,
@@ -496,11 +495,9 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
             )
         }
 
-        // 朝向即操控面：竖屏=触控板，横屏=全键盘（键盘页已移出底栏，横屏自动呈现）。
-        // 旋屏时 Activity 不重建（configChanges 含 orientation），这里是唯一的切页时机。
+        // 旋转只换布局、不切页：横竖屏各自铺各自的布局，当前页面保持不动
+        //（键盘页已转正进底栏，不再“横过来就自动跳键盘”）。
         if (::pager.isInitialized) {
-            val target = if (landscape) PAGE_KEYBOARD else PAGE_TOUCHPAD
-            if (pager.displayedChild != target) showPage(target)
 
             // 横屏下状态/设置页左右限宽居中：两页复用竖屏整宽块，宽屏拉满后卡片行过长、
             // 视线要横跨整屏。留白随屏宽自适应（窄屏不强切）。子项顺序 = 页常量：
@@ -564,7 +561,16 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
                         val dx = ev.x - fourFingerStartX
                         if (abs(dx) > dp(56)) {
                             fourFingerSwiped = true
-                            val next = if (dx < 0) PAGE_KEYBOARD else PAGE_TOUCHPAD
+                            // 横屏无底栏，四指是唯一换页方式：按页序循环（触控板→键盘→状态→设置）
+                            val order = intArrayOf(
+                                PAGE_TOUCHPAD, PAGE_KEYBOARD, PAGE_STATUS, PAGE_SETTINGS,
+                            )
+                            val cur = order.indexOf(pager.displayedChild).coerceAtLeast(0)
+                            val next = if (dx < 0) {
+                                order[(cur + 1) % order.size]
+                            } else {
+                                order[(cur + order.size - 1) % order.size]
+                            }
                             if (next != pager.displayedChild) {
                                 cancelChildGestures(ev)
                                 showPage(next)
@@ -615,7 +621,7 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
         // 方向锁定恢复：重建后 requestedOrientation 已复位为 manifest 默认，必须重新上锁
         restoreOrientLock()
         // 朝向兜底：个别 ROM（MIUI 某些省电/分屏场景）旋屏不派发 onConfigurationChanged，
-        // 导致「横屏键盘没了」。每秒比对一次实际朝向，不一致就补切（幂等，代价可忽略）。
+        // 导致「横竖屏布局没跟上」。每秒比对一次实际朝向，不一致就补请求（幂等，代价可忽略）。
         handler.postDelayed(orientPoll, 1000)
     }
 
@@ -705,11 +711,11 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
     // ——————————————————— 物理朝向检测（不依赖系统方向锁） ———————————————————
 
     /**
-     * 拿机方向 = 操控面：**竖持=触控板、横持=键盘**，与系统的方向锁定完全无关。
+     * 拿机方向 = 操控面：**横持铺开横屏布局、竖持铺开竖屏布局**，与系统的方向锁定完全无关。
      *
      * 原理：加速度计判断物理倾角 → 横持时 [Activity#setRequestedOrientation]
      * **由 App 主动请求横屏**（视频 App 的横屏按钮同原理，系统方向锁拦不住 App 自己的请求），
-     * configuration 随之变化 → [applyOrientationLayout] 自动切键盘；竖持同理切回触控板。
+     * configuration 随之变化 → [applyOrientationLayout] 只换布局、不切页。
      *
      * 细节：
      *  - 只在触控板/键盘两页之间自动切换，用户停在状态/设置页时不抢方向控制权；
@@ -759,10 +765,9 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
                     ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
                 else
                     ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-                // 直接按物理朝向切换页面，不等待 onConfigurationChanged ——
-                // 某些 ROM 下 requestedOrientation 未即时生效，配置方向滞后，
-                // 若只靠 applyOrientationLayout 里的 resources.configuration 判断，
-                // 横屏后会仍停在触控板页。
+                // 立即按物理朝向刷新布局，不等待 onConfigurationChanged ——
+                // 某些 ROM 下 requestedOrientation 未即时生效，配置方向滞后。
+                // 只换布局不切页：当前页面保持不动。
                 if (landscape != toLandscape) {
                     landscape = toLandscape
                     applyOrientationLayout()
@@ -774,11 +779,11 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
 
     /** 底部页签：绑定点击与选中态（胶囊底 + 图标 / 文字同步染色） */
     private fun buildTabs() {
-        // 键盘页不占底栏位：横屏沉浸模式自动呈现（底栏 3 页签：触控板 / 状态 / 设置）。
-        // 朝向切换由 [applyOrientationLayout] + orientPoll 兜底轮询保证。
+        // 底栏 3 页签：触控板 / 键盘 / 设置（状态页并入设置页，顶栏分页互切）。
+        // 旋转只换布局不切页，页面选择权始终在用户手里。
         listOf(
             intArrayOf(R.id.tabTouchpad, R.id.ivTabTouchpad, R.id.tvTabTouchpad, R.id.tabPillTouchpad),
-            intArrayOf(R.id.tabStatus, R.id.ivTabStatus, R.id.tvTabStatus, R.id.tabPillStatus),
+            intArrayOf(R.id.tabKeyboard, R.id.ivTabKeyboard, R.id.tvTabKeyboard, R.id.tabPillKeyboard),
             intArrayOf(R.id.tabSettings, R.id.ivTabSettings, R.id.tvTabSettings, R.id.tabPillSettings),
         ).forEachIndexed { tabIndex, ids ->
             val page = TAB_PAGES[tabIndex]
@@ -816,8 +821,8 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
                 }
             }
         }
-        // 初始页跟随朝向：竖屏=触控板，横屏=键盘（与 applyOrientationLayout 保持一致）
-        showPage(if (landscape) PAGE_KEYBOARD else PAGE_TOUCHPAD)
+        // 初始页固定触控板（横竖屏一致；旋转只换布局，不再自动跳键盘页）
+        showPage(PAGE_TOUCHPAD)
     }
 
     /**
@@ -847,6 +852,10 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
         ripple.play()
     }
 
+    /** 页 → 底栏页签下标（状态页并入设置 tab，高亮归并到「设置」；未映射返回 -1） */
+    private fun tabIndexFor(page: Int): Int =
+        TAB_PAGES.indexOf(if (page == PAGE_STATUS) PAGE_SETTINGS else page)
+
     /** 切页：标题栏、页签染色与选中胶囊同步（内容页各自独立滚动） */
     private fun showPage(i: Int) {
         if (!::pager.isInitialized) return
@@ -854,13 +863,29 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
         tvPageTitle.text = getString(PAGE_TITLES[i])
         tvPageSub.text = getString(PAGE_SUBS[i])
         if (i == PAGE_TOUCHPAD) renderChips()
+        val activeTab = tabIndexFor(i)
         tabViews.indices.forEach { k ->
-            val on = TAB_PAGES[k] == i
+            val on = k == activeTab
             val color = resources.getColor(if (on) R.color.md_primary else R.color.state_idle)
             tabIcons[k].setColorFilter(color)
             tabLabels[k].setTextColor(color)
             tabLabels[k].setTypeface(null, if (on) Typeface.BOLD else Typeface.NORMAL)
             tabPills[k].background = null // 选中底由底栏 Drawable 里的滑动胶囊承担
+        }
+        // 状态/设置 页内分页：顶栏分段（竖屏 header 可见；横屏靠四指循环互切）
+        val onSeg = i == PAGE_STATUS || i == PAGE_SETTINGS
+        findViewById<View>(R.id.segPages)?.visibility = if (onSeg) View.VISIBLE else View.GONE
+        if (onSeg) {
+            val cOn = resources.getColor(R.color.md_primary)
+            val cOff = resources.getColor(R.color.state_idle)
+            findViewById<TextView>(R.id.segGoStatus)?.apply {
+                setTextColor(if (i == PAGE_STATUS) cOn else cOff)
+                setTypeface(null, if (i == PAGE_STATUS) Typeface.BOLD else Typeface.NORMAL)
+            }
+            findViewById<TextView>(R.id.segGoSettings)?.apply {
+                setTextColor(if (i == PAGE_SETTINGS) cOn else cOff)
+                setTypeface(null, if (i == PAGE_SETTINGS) Typeface.BOLD else Typeface.NORMAL)
+            }
         }
         // 横屏沉浸模式：没有底栏，靠四指左右滑换页
         if (landscape) return
@@ -875,7 +900,7 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
             navGlass.setIndicator(null)
             return
         }
-        val tabIndex = TAB_PAGES.indexOf(pager.displayedChild)
+        val tabIndex = tabIndexFor(pager.displayedChild)
         if (tabIndex < 0) return
         val pill = tabPills[tabIndex]
         if (pill.width <= 0) return
@@ -915,7 +940,7 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
         indicatorAnimator?.cancel()
         navGlass.setIndicator(null)
         val bar = findViewById<View>(R.id.tabBar)
-        val pill = tabPills.getOrNull(TAB_PAGES.indexOf(pager.displayedChild)) ?: return
+        val pill = tabPills.getOrNull(tabIndexFor(pager.displayedChild)) ?: return
         val bl = IntArray(2)
         val pl = IntArray(2)
         bar.getLocationInWindow(bl)
@@ -1602,6 +1627,15 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
             isChecked = orientLocked
             setOnCheckedChangeListener { _, on -> setOrientLock(on) }
         }
+        // 状态 ↔ 设置 页内分页（状态页已并入设置 tab，两页经顶栏分段互切）
+        findViewById<TextView>(R.id.segGoStatus)?.setOnClickListener {
+            Feedback.tap(it)
+            showPage(PAGE_STATUS)
+        }
+        findViewById<TextView>(R.id.segGoSettings)?.setOnClickListener {
+            Feedback.tap(it)
+            showPage(PAGE_SETTINGS)
+        }
         findViewById<Button>(R.id.btnExportTheme).setOnClickListener { exportTheme() }
         findViewById<Button>(R.id.btnImportTheme).setOnClickListener { importTheme() }
         findViewById<Button>(R.id.btnShareTheme).setOnClickListener { shareTheme() }
@@ -2150,9 +2184,9 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
 
         /**
          * 底栏页签 → ViewFlipper 页面 index 的映射。
-         * 键盘页不占底栏位（横屏自动呈现），页签：触控板(0) / 状态(2) / 设置(3)。
+         * 页签：触控板(0) / 键盘(1) / 设置(3)；状态页(2) 并入设置 tab（tabIndexFor 归并高亮）。
          */
-        private val TAB_PAGES = intArrayOf(PAGE_TOUCHPAD, PAGE_STATUS, PAGE_SETTINGS)
+        private val TAB_PAGES = intArrayOf(PAGE_TOUCHPAD, PAGE_KEYBOARD, PAGE_SETTINGS)
 
         /** 横屏切页手势的手指数（四指，避开触控板自身的一~三指手势） */
         private const val FINGERS_TO_SWITCH = 4
