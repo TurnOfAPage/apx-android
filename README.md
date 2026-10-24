@@ -25,10 +25,10 @@
 | ⌨️ **远程输入** | 手机打字，电脑即时上屏；支持增量输入和整段粘贴 |
 | 🎵 **多媒体控制** | 音量、播放、暂停、切歌 |
 | 🔊 **音箱 + 麦克风** | 电脑音频从手机播放；手机麦克风当电脑麦克风 |
-| 🖥️ **副屏（扩展屏）** | 手机当电脑第二块屏，触摸直接操作 |
+| 🖥️ **副屏（扩展屏）** | 手机当电脑第二块屏，触摸直接操作（macOS 不支持，见已知限制） |
 | 📱 **手机互控** | 两台手机双向实时控制 + 互传文件 |
 | 📺 **TV 被控** | 手机/电脑控制 Android TV |
-| 🔌 **USB HID 外设** | 通过 USB 枚举为键盘、鼠标、声卡（需 root） |
+| 🔌 **USB HID 外设** | 通过 USB 枚举为键盘、鼠标、声卡（需 root；仅 Windows） |
 
 ---
 
@@ -36,8 +36,11 @@
 
 ### 方式一：无线（推荐，免 root）
 
-1. **电脑**：下载 `apxsetup.exe`，双击安装 → 开始菜单打开「全能外设」
-2. **手机**：安装 `app-release.apk` → 打开 App → 进入「触控板」页
+1. **电脑**：
+   - **Windows**：下载 `AllPeriph-vXXX-Setup.exe`，双击安装 → 开始菜单打开「全能外设」
+   - **macOS（arm64，测试版）**：下载 `AllPeriph-vXXX-macos-arm64.zip` 解压，终端执行 `./apxdesktop`
+     （或 `./apxhost panel`）→ 自动打开浏览器控制面板
+2. **手机**：安装 `AllPeriph-vXXX-app.apk` → 打开 App → 进入「触控板」页
 3. **连接**：手机自动发现同一局域网内的电脑，点设备列表里的电脑名即可连接
 4. **开搞**：滑动 = 移动鼠标，轻点 = 左键，双指 = 滚动，点「键盘」= 打字
 
@@ -45,7 +48,7 @@
 
 1. 手机开启 USB 调试 → 插线连电脑
 2. 手机端 App 开启「有线模式」
-3. 电脑端 `apxdesktop.exe` 自动发现并连接
+3. 电脑端 `apxdesktop.exe`（Windows）自动发现并连接（USB 有线仅 Windows）
 
 ### 方式三：手机被电脑控制
 
@@ -53,19 +56,24 @@
 2. **开启系统「无障碍服务」**（否则只能看不能操作）
 3. 电脑端选设备列表里的手机名 → 开始控制
 
+> **macOS 首次打开（未签名应用）**：系统设置 → 隐私与安全性 → 底部「仍要打开」，
+> 或执行 `xattr -dr com.apple.quarantine ./apxhost ./apxdesktop`。
+> **音箱**首次使用需授权「系统音频录制」（需 macOS 14.2+）。
+
 ---
 
 ## 📦 产物一览
 
 | 平台 | 文件 | 说明 |
 |------|------|------|
-| 📱 手机 | `AllPeriph-v186-app-release.apk` | 手机端 App（遥控器 / USB 外设 / 被控 / 副屏） |
-| 📺 TV | `AllPeriph-v186-tv-release.apk` | Android TV 被控端 |
-| 💻 电脑 | `AllPeriph-v186-apxdesktop.exe` | 桌面面板（设备发现 / 控制 / 副屏） |
-| 💻 电脑 | `AllPeriph-v186-apxhost.exe` | 常驻服务（9511 受控端 + 热键） |
-| 💻 电脑 | `AllPeriph-v186-apxsetup.exe` | 安装包（一键装到开始菜单） |
+| 📱 手机 | `AllPeriph-vXXX-app.apk` | 手机端 App（遥控器 / USB 外设 / 被控 / 副屏） |
+| 📺 TV | `AllPeriph-vXXX-tv.apk` | Android TV 被控端 |
+| 💻 Windows | `AllPeriph-vXXX-Setup.exe` | 安装包（桌面面板 + 宿主 + 前端资源，一键装） |
+| 💻 Windows | `AllPeriph-vXXX-portable.zip` | 便携版（解压即用，双击 apxdesktop.exe） |
+| 🍎 macOS (arm64) | `AllPeriph-vXXX-macos-arm64.zip` | **测试版**：`apxdesktop` 桌面壳 + `apxhost` + `web/` 浏览器面板（未签名，首次打开需放行；包内附 README） |
 
-> 所有 PC exe **未做 Windows Authenticode 代码签名**，外发会被 SmartScreen 拦截。
+> `vXXX` 为发版版本号（见 [Releases](../../releases)）。
+> 所有 PC exe **未做代码签名**：Windows 会被 SmartScreen 拦（更多信息 → 仍要运行）；macOS 按上文放行。
 > 所有 APK 使用自签证书，**不能上架 Google Play**。
 
 ---
@@ -74,16 +82,30 @@
 
 ### 电脑端（Windows）
 
-> 前提：Windows 10/11 + Visual Studio 2022（C++ 桌面开发）+ CMake ≥ 3.20
+> 前提：Windows 10/11 + Visual Studio（C++ 桌面开发）+ CMake ≥ 3.20
 
 ```bat
 :: 一键构建三件套（apxhost / apxdesktop / apxsetup）
 scripts\build.bat
 
 :: 或手动
-cmake -S pc/host -B build_host -DAPXPC_BUILD_SDK=OFF -DAPXPC_BUILD_EXAMPLES=OFF -DAPXPC_BUILD_UI=OFF
+cmake -S pc/host -B build_host -DAPXPC_BUILD_SDK=OFF -DAPXPC_BUILD_EXAMPLES=OFF -DAPXPC_BUILD_UI=ON
 cmake --build build_host --config Release --target apxhost apxdesktop apxsetup
 ```
+
+### 电脑端（macOS，arm64）
+
+> 前提：Xcode Command Line Tools + CMake ≥ 3.20 + Node 20（前端）
+
+```bash
+cmake -S pc/host -B build_host -DCMAKE_BUILD_TYPE=Release -DAPXPC_BUILD_UI=OFF
+cmake --build build_host --target apxhost apxdesktop
+
+# 前端 dist（放到可执行文件旁 web/ 目录，浏览器面板依赖）
+cd pc/web && npm install && npm run build
+```
+
+> 也可直接用 CI（macos.yml）的 artifact / Release 资产，无需本地构建。
 
 ### 手机端（Android）
 
@@ -94,7 +116,7 @@ cd android
 gradlew assembleRelease
 ```
 
-### 副屏模块（可选）
+### 副屏模块（可选，仅 Windows）
 
 ```bat
 cmake -S pc/display -B build_display
@@ -129,7 +151,7 @@ cmake --build build_display --config Release
 |------|------|------|
 | 9511 | TCP | 统一控制面（手机/TV/PC 互控） |
 | 9502 | TCP | 媒体通道（副屏视频下行 + 触控上行 + 音频） |
-| 9501 | UDP | 局域网发现信标（广播 `APX1TV`） |
+| 9501 | UDP | 局域网发现信标（广播 `APX1TV` / `APX1PC` / `APX1PH`） |
 | 9512 | TCP | 文件传输 |
 
 ---
@@ -138,7 +160,7 @@ cmake --build build_display --config Release
 
 | 文档 | 内容 |
 |------|------|
-| [docs/使用说明.md](docs/使用说明.md) | **最终用户使用说明** |
+| [docs/使用说明.md](docs/使用说明.md) | **最终用户使用说明**（Windows / macOS / Android 三端） |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 双主线架构、通道表、降级策略 |
 | [docs/PROTOCOL.md](docs/PROTOCOL.md) | APX1 帧格式、控制面命令 |
 | [docs/REALDEVICE-NOTES.md](docs/REALDEVICE-NOTES.md) | 真机实测结论 |
@@ -166,6 +188,9 @@ build_host\Release\arbiter_test.exe
 2. **Windows 无原生虚拟麦克风 API**，需第三方虚拟声卡（如 VB-Cable）
 3. **副屏握手**仅代码层确认，建议首次使用真机验证
 4. **被控手机显示名**为 `APX1TV`，不够直观（可后续优化为真实机型名）
+5. **macOS 平台边界**（测试版）：副屏不支持（虚拟显示器仅 Windows）；音箱走 CoreAudio Process Tap
+   （需 macOS 14.2+ 与「系统音频录制」授权，DRM 保护内容可能采集为静音）；USB 有线模式与全局热键
+   暂不可用；浏览器面板不支持发送本机文件（无系统文件对话框，收文件/面板控制不受影响）
 
 ---
 
