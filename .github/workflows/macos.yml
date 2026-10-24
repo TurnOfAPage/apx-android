@@ -123,7 +123,14 @@ jobs:
           codesign --force -s - "$STAGE/apxdesktop"
           codesign --force -s - "$APP/Contents/MacOS/apxdesktop"
           codesign --force --deep -s - "$APP"
-          codesign --verify --strict --deep "$APP" && echo "AllPeriph.app 签名校验通过"
+          # ⚠️ 验证不用 --strict --deep：web/ 按「exe 旁」约定放 Contents/MacOS/ 下（功能必须），
+          # 而 MacOS 目录按 bundle 规范属可执行代码位置 —— deep 验证会把其中的 .js 等静态资源
+          # 当 nested code 判 "code object is not signed at all"（静态资源无法被 codesign 签，
+          # 2026-10-24 CI 实锤）。ad-hoc 壳的验证目标 = plist 合法（plutil）+ 可执行签名存在；
+          # bundle 签名保留给 TCC 归属用（TCC 只认签名与 bundle id，不做 deep 校验）。
+          codesign --verify --strict "$APP/Contents/MacOS/apxdesktop" && echo "AllPeriph.app 可执行签名校验通过"
+          codesign --verify --strict "$STAGE/apxhost" && echo "apxhost 签名校验通过"
+          codesign --verify --strict "$STAGE/apxdesktop" && echo "apxdesktop 签名校验通过"
 
           printf '%s\n' \
             "全能外设 macOS（arm64，ad-hoc 签名 · 未公证）" \
