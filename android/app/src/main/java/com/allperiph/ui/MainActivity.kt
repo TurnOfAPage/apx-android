@@ -240,7 +240,7 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
             lastEnv = env
             renderEnv(env)
         }
-        // 从「遥控器」页带 EXTRA_PICK_DEVICE 过来的：直接把设备选择器弹出来
+        // 从「遥控器」页带 EXTRA_PICK_DEVICE 过来的：立刻把设备选择器弹出来
         maybePickDevice(intent)
     }
 
@@ -1633,7 +1633,7 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
         val skins = listOf(ThemeSkin.followTheme(this)) + ThemeSkin.PRESETS + ThemeSkin.customs(this)
         AlertDialog.Builder(this, R.style.Theme_AllPeriph_Miuix_Dialog)
             .setTitle(getString(R.string.ui_main_dialog_color, title))
-            .setItems(skins.map { it.name }) { _, i ->
+            .setItems(skins.map { it.name }.toTypedArray()) { _, i ->
                 ThemeSkin.set(this, scope, skins[i].id.ifBlank { null })
                 recreate() // 触控板光标 / 键盘键帽 / 快捷键芯片一次性换掉
             }
@@ -2085,3 +2085,4 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
         )
     }
 }
+
