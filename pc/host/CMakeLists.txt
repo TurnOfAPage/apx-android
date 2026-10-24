@@ -394,6 +394,10 @@ endif()
 set(APXDESKTOP_SRC "${APXPC_ROOT}/src/desktop_main.cpp")
 if(WIN32)
   list(APPEND APXDESKTOP_SRC "${APXPC_ROOT}/res/apx.rc")
+elseif(APPLE)
+  # HTTP 面板后端（runWebPanelHttp）直接进 exe 源（同 apxhost 的做法）：objs 先于 libs，
+  # 无线/媒体/service 符号都在下方链接面里，无静态库顺序问题。Win 不需要（走 webpanel）。
+  list(APPEND APXDESKTOP_SRC "${APXPC_ROOT}/src/ui/panel_http.cpp")
 endif()
 add_executable(apxdesktop ${APXDESKTOP_SRC})
 
@@ -402,7 +406,13 @@ if(APXPC_BUILD_UI AND APXPC_BUILD_UI_WEBVIEW2 AND WIN32)
 elseif(APXPC_BUILD_UI AND WIN32)
   target_link_libraries(apxdesktop PRIVATE apxpc_ui apxpc_wireless apxpc_core)
 else()
-  target_link_libraries(apxdesktop PRIVATE apxpc_core)
+  # 无 WebView2 壳的平台（mac/Linux，或 Win 关 UI）：desktop_main 的宿主栈与 HTTP 面板
+  # （mac 进 exe 的 panel_http.cpp）需要与 apxhost **同一符号面**。此前这里只链 core ——
+  # mac 一编 apxdesktop 就会缺 wireless/media/service 全套符号（历史从不编，一直没暴露；
+  # macos.yml 此前只 build --target apxhost，本次纳入 apxdesktop 后补齐）。
+  # Win 无 UI 的罕见构建同样落此分支，链全集无害（库都在）。
+  target_link_libraries(apxdesktop PRIVATE apxpc_core apxpc_discovery apxpc_sensors
+    apxpc_service apxpc_wireless apxpc_media)
 endif()
 
 if(WIN32)
