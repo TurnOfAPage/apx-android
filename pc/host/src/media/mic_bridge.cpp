@@ -255,8 +255,7 @@ void MicBridge::renderLoop() {
 //   · 400ms 环形上限，超出丢最旧（保时效）
 //   · 失败不在 start() 同步抛 —— 进 status().error，running 自动回落 false
 // 设备选择：macOS 暂只支持默认输出（renderDeviceId 忽略；面板在 mac 的下拉列表
-// 本来就是空的 → 传空 → 默认设备，自洽）。要指定设备需要 AudioObject 按 UID
-// 枚举，留下次。
+// 本来就是空的 → 传空 → 默认设备，自洽）。
 #include <AudioToolbox/AudioToolbox.h>
 #include <CoreAudio/CoreAudio.h>
 #include <cstring>
@@ -274,7 +273,7 @@ constexpr uint32_t kAqBufFrames = 1024;     // AudioQueue 回调 buffer 帧数�
 std::string defaultOutputName() {
     AudioObjectPropertyAddress addr{
         kAudioHardwarePropertyDefaultOutputDevice,
-        kAudioHardwarePropertyScopeGlobal,
+        kAudioObjectPropertyScopeGlobal,        // ← 修正：此域是 kAudioObject*Scope*，非 kAudioHardware*
         kAudioObjectPropertyElementMain};
     AudioDeviceID dev = kAudioObjectUnknown;
     UInt32 sz = sizeof(dev);
@@ -296,10 +295,35 @@ std::string defaultOutputName() {
     return ok ? std::string(buf) : std::string("默认输出设备");
 }
 
-// AudioQueue 回调：从队列取样本拷进 buffer，不足补静音（与 Win renderLoop 同语义）。
-// 每回调消耗一份、末尾把同一 buffer enqueue 回去 —— 单 buffer 链式循环即可持续驱动。
-void aqOutputCb(void* user, AudioQueueRef q, AudioQueueBufferRef b) {
-    auto* self = static_cast<MicBridge::Impl*>(user);
+}  // namespace
+
+// AudioQueue 回调定义为 Impl 的**静态成员**（本次 CI 修复）：
+//   · 匿名命名空间的自由函数无权命名 MicBridge::Impl（hpp 里 private）→ 访问违规；
+//   · 且自由函数写在 Impl 定义之前会撞上不完整类型（一连串 member access 错）。
+//   · 作为静态成员：声明进下方 struct Impl 定义、函数体放 Impl 之后 ——
+//     类外定义私有成员函数合法，hpp 一个字不动（Win 分支不受影响）。
+struct MicBridge::Impl {
+    std::mutex mu;
+    std::deque<int16_t> q;             // interleaved int16 样本
+    std::atomic<bool> running{false};
+    std::thread th;
+
+    // CoreAudio（仅渲染线程触碰；非空 = 队列在跑）
+    AudioQueueRef queue = nullptr;
+
+    // 状态（mu 保护；running 用原子）
+    std::string device;
+    std::string error;
+    uint64_t fed = 0, played = 0, dropped = 0;
+    std::string renderDeviceId;        // macOS 暂忽略（见上方块注释）
+
+    // AudioQueue 输出回调：从队列取样本拷进 buffer，不足补静音（与 Win renderLoop 同语义）。
+    // 每回调消耗一份、末尾把同一 buffer enqueue 回去 —— 单 buffer 链式循环即可持续驱动。
+    static void aqCb(void* user, AudioQueueRef q, AudioQueueBufferRef b);
+};
+
+void MicBridge::Impl::aqCb(void* user, AudioQueueRef q, AudioQueueBufferRef b) {
+    auto* self = static_cast<Impl*>(user);
     if (!self || !b) return;
     const size_t wantFrames =
         static_cast<size_t>(b->mAudioDataByteSize) / (kSrcChannels * sizeof(int16_t));
@@ -324,24 +348,6 @@ void aqOutputCb(void* user, AudioQueueRef q, AudioQueueBufferRef b) {
         static_cast<UInt32>(wantFrames * kSrcChannels * sizeof(int16_t));
     AudioQueueEnqueueBuffer(q, b, 0, nullptr);
 }
-
-}  // namespace
-
-struct MicBridge::Impl {
-    std::mutex mu;
-    std::deque<int16_t> q;             // interleaved int16 样本
-    std::atomic<bool> running{false};
-    std::thread th;
-
-    // CoreAudio（仅渲染线程触碰；非空 = 队列在跑）
-    AudioQueueRef queue = nullptr;
-
-    // 状态（mu 保护；running 用原子）
-    std::string device;
-    std::string error;
-    uint64_t fed = 0, played = 0, dropped = 0;
-    std::string renderDeviceId;        // macOS 暂忽略（见上方块注释）
-};
 
 bool MicBridge::start(const std::string& renderDeviceId, std::string* err) {
     stop();   // 同 Win：stop 保证 impl_ 懒初始化 + join 旧线程
@@ -421,7 +427,9 @@ void MicBridge::renderLoop() {
     asbd.mBitsPerChannel     = kSrcBits;
 
     AudioQueueRef q = nullptr;
-    OSStatus st = AudioQueueNewOutput(&asbd, aqOutputCb, impl_.get(),
+    // 修复：impl_ 是**裸指针**（非 unique_ptr），直接作 user data（隐式转 void*）；
+    // 回调是 Impl 的静态成员，静态成员函数指针可无损转 C 函数指针。
+    OSStatus st = AudioQueueNewOutput(&asbd, &MicBridge::Impl::aqCb, impl_,
                                       nullptr, nullptr, 0, &q);
     if (st != noErr) {
         std::lock_guard<std::mutex> lk(impl_->mu);
