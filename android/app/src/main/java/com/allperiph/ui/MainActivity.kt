@@ -501,6 +501,22 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
         if (::pager.isInitialized) {
             val target = if (landscape) PAGE_KEYBOARD else PAGE_TOUCHPAD
             if (pager.displayedChild != target) showPage(target)
+
+            // 横屏下状态/设置页左右限宽居中：两页复用竖屏整宽块，宽屏拉满后卡片行过长、
+            // 视线要横跨整屏。留白随屏宽自适应（窄屏不强切）。子项顺序 = 页常量：
+            // 0 触控板 1 键盘 2 状态 3 设置（两套 activity_main.xml 的 ViewFlipper 顺序）。
+            val sidePad = if (landscape) {
+                ((resources.displayMetrics.widthPixels - dp(680)).coerceAtLeast(0)) / 2
+            } else 0
+            for (i in PAGE_STATUS..PAGE_SETTINGS) {
+                val child = pager.getChildAt(i) ?: continue
+                val lp = child.layoutParams as? android.widget.FrameLayout.LayoutParams ?: continue
+                if (lp.marginStart != sidePad) {
+                    lp.marginStart = sidePad
+                    lp.marginEnd = sidePad
+                    child.layoutParams = lp
+                }
+            }
         }
 
         if (landscape) navGlass.setIndicator(null)
@@ -596,9 +612,61 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
         landscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
         applyOrientationLayout() // 竖屏/横屏两套 chrome（横屏为沉浸操控面）
         findViewById<View>(R.id.contentStack).post { snapIndicator() }
+        // 方向锁定恢复：重建后 requestedOrientation 已复位为 manifest 默认，必须重新上锁
+        restoreOrientLock()
         // 朝向兜底：个别 ROM（MIUI 某些省电/分屏场景）旋屏不派发 onConfigurationChanged，
         // 导致「横屏键盘没了」。每秒比对一次实际朝向，不一致就补切（幂等，代价可忽略）。
         handler.postDelayed(orientPoll, 1000)
+    }
+
+    /** 从 SharedPreferences 恢复用户方向锁定（Activity 重建后 requestedOrientation 已复位，必须重新锁） */
+    private fun restoreOrientLock() {
+        if (!getSharedPreferences(PREF_ORIENT, MODE_PRIVATE).getBoolean(KEY_LOCK, false)) return
+        orientLocked = true
+        lockedOrient = if (landscape) 1 else 2
+        requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LOCKED
+        Log.i(TAG, "恢复方向锁定：orient=$lockedOrient")
+        renderOrientLock()
+    }
+
+    /**
+     * 方向锁定开关（顶栏按钮 + 设置页开关双入口，幂等：传入目标状态而不是翻转）。
+     *  - 锁定：SCREEN_ORIENTATION_LOCKED 冻结当前朝向，orientListener（物理检测）与
+     *    orientPoll（兜底轮询）全部暂停 —— 与朝向循环止血补丁正交互补：补丁让自动切换
+     *    不发疯，锁定给用户一键彻底停。
+     *  - 解锁：交还系统（UNSPECIFIED；不用 PORTRAIT —— MIUI 收到竖屏请求会写死
+     *    user_rotation=0，之后横持请求全被忽略，见 orientListener 注释），并把 forcedOrient
+     *    归零，让下一个物理事件立即重新接管方向（保留旧值会让 listener 误判"已到位"直接 return）。
+     */
+    private fun setOrientLock(lock: Boolean) {
+        if (lock == orientLocked) { renderOrientLock(); return }
+        orientLocked = lock
+        if (lock) {
+            lockedOrient = if (resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) 1 else 2
+            requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LOCKED
+            Log.i(TAG, "方向锁定：orient=$lockedOrient")
+        } else {
+            requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            forcedOrient = 0
+            lockedOrient = 0
+            Log.i(TAG, "方向解锁：交还系统，物理检测恢复")
+        }
+        getSharedPreferences(PREF_ORIENT, MODE_PRIVATE).edit().putBoolean(KEY_LOCK, lock).apply()
+        renderOrientLock()
+    }
+
+    private fun toggleOrientLock() = setOrientLock(!orientLocked)
+
+    /** 双入口状态同步：顶栏按钮三态文案（锁定中显示锁定方向）+ 设置开关勾选态（程序化 setChecked 不回调 listener） */
+    private fun renderOrientLock() {
+        findViewById<TextView>(R.id.btnOrientLock)?.apply {
+            text = when {
+                !orientLocked -> context.getString(R.string.ui_main_btn_orient_lock)
+                lockedOrient == 1 -> context.getString(R.string.ui_main_btn_orient_locked_land)
+                else -> context.getString(R.string.ui_main_btn_orient_locked_port)
+            }
+        }
+        findViewById<Switch>(R.id.swOrientLock)?.isChecked = orientLocked
     }
 
     /** orientPoll 上次 re-request 方向的时刻（3s 冷却，防每秒请求风暴） */
@@ -606,6 +674,11 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
 
     private val orientPoll = object : Runnable {
         override fun run() {
+            if (orientLocked) {
+                // 锁定中：只保持心跳，不比对不 re-request（避免解锁瞬间积压的方向请求）
+                handler.postDelayed(this, 1000)
+                return
+            }
             val configLand = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
             if (configLand != landscape) {
                 // 配置方向与期望方向（物理朝向）不一致：说明 requestedOrientation 尚未生效
@@ -652,6 +725,7 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
         orientListener = object : OrientationEventListener(this, android.hardware.SensorManager.SENSOR_DELAY_GAME) {
             override fun onOrientationChanged(deg: Int) {
                 if (deg == ORIENTATION_UNKNOWN) return
+                if (orientLocked) return   // 锁定中：物理旋转不再接管方向
                 if (!::pager.isInitialized) return
                 // 只自动切换两个操控面；状态/设置页保持用户当前的方向控制权
                 val cur = pager.displayedChild
@@ -1519,6 +1593,15 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
         // 环境摘要点开：为什么必须 root、没有 root 还能用什么
         tvDiag.setOnClickListener { showRootHelp() }
         // 模块配色：导出 / 导入 / 分享
+        // 方向锁定：顶栏按钮（竖屏快捷）+ 设置页开关（横屏经四指滑可达），两入口由 renderOrientLock 同步
+        findViewById<TextView>(R.id.btnOrientLock)?.setOnClickListener {
+            Feedback.tap(it)
+            toggleOrientLock()
+        }
+        findViewById<Switch>(R.id.swOrientLock)?.apply {
+            isChecked = orientLocked
+            setOnCheckedChangeListener { _, on -> setOrientLock(on) }
+        }
         findViewById<Button>(R.id.btnExportTheme).setOnClickListener { exportTheme() }
         findViewById<Button>(R.id.btnImportTheme).setOnClickListener { importTheme() }
         findViewById<Button>(R.id.btnShareTheme).setOnClickListener { shareTheme() }
@@ -2043,6 +2126,19 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
          */
         @Volatile private var forcedOrient = 0          // 0=尚未强制 1=已强制横屏 2=已强制竖屏
         @Volatile private var lastOrientSwitchMs = 0L
+
+        /**
+         * 用户方向锁定（顶栏按钮 / 设置页开关）：true = 冻结当前朝向 ——
+         * 物理检测与兜底轮询全部暂停。放 companion 跨重建保持（与 forcedOrient 同理，
+         * 实例字段会随重建归零 → 重建后锁失效），并由 SharedPreferences 持久化到重启后。
+         */
+        @Volatile private var orientLocked = false
+        /** 锁定时刻锁定的朝向（1=横 2=竖），用于顶栏按钮文案与恢复 */
+        @Volatile private var lockedOrient = 0
+
+        /** 方向锁定持久化 */
+        private const val PREF_ORIENT = "apx_orient_lock"
+        private const val KEY_LOCK = "locked"
 
         /** 旋屏重建时保存/恢复当前页签 */
         private const val KEY_PAGE = "page"

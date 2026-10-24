@@ -305,6 +305,13 @@
     <string name="lay_settings_text_hotkey">快捷键自动排序（最常用排前面；手动拖过自动关掉）</string>
     <string name="lay_settings_text_manual">最常用的自动排到前面；手动拖过就自动关掉</string>
     <string name="lay_settings_cd_hotkey">快捷键自动排序开关</string>
+
+    <string name="ui_main_btn_orient_lock">锁定</string>
+    <string name="ui_main_btn_orient_locked_land">已锁·横屏</string>
+    <string name="ui_main_btn_orient_locked_port">已锁·竖屏</string>
+    <string name="ui_main_cd_orient_lock">锁定或解锁屏幕方向</string>
+    <string name="lay_settings_text_orient_lock">屏幕方向锁定（关掉横竖自动切换，横持自动弹出键盘也暂停）</string>
+    <string name="lay_settings_cd_orient_lock">屏幕方向锁定开关</string>
     <string name="lay_settings_env">环境摘要</string>
     <string name="lay_settings_text_theme">主题方案</string>
     <string name="lay_settings_text_color">模块配色</string>
