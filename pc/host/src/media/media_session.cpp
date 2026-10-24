@@ -12,6 +12,7 @@
 #include <cstring>
 #include <ctime>
 #include <string>
+#include <thread>
 
 #if defined(_WIN32)
 #if !defined(WIN32_LEAN_AND_MEAN)
@@ -19,6 +20,17 @@
 #endif
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#else
+#include <arpa/inet.h>
+#include <cerrno>
+#include <fcntl.h>
+#include <netdb.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
+#include <sys/select.h>
+#include <sys/socket.h>
+#include <sys/time.h>
+#include <unistd.h>
 #endif
 
 namespace apxpc::media {
@@ -41,6 +53,15 @@ void ensureWsa() {
     }();
     (void)once;
 }
+
+constexpr SOCKET kInvalidSock = INVALID_SOCKET;
+inline void closeSock(SOCKET s) { closesocket(s); }
+/// socket 层错误码：connect/reader/sendAllBlocking 的日志与重试判定统一走这里
+inline int sockErr() { return WSAGetLastError(); }
+#else
+constexpr int kInvalidSock = -1;
+inline void closeSock(int s) { ::close(s); }
+inline int sockErr() { return errno; }
 #endif
 
 /// 组一个 APX1 帧。
@@ -82,12 +103,12 @@ bool MediaSession::connect(const std::string& host, uint16_t port, const std::st
     // 持锁调用会直接死锁（与 wireless_link.cpp 同一处坑）。
     disconnect();
     std::lock_guard<std::mutex> lk(mu_);
-#if !defined(_WIN32)
-    st_.connected = false;
-    st_.error = "媒体通道目前仅实现 Windows 宿主";
-    return false;
-#else
+    // mac-port：原非 Win 分支在这里返回「媒体通道目前仅实现 Windows 宿主」。
+    // 现跨平台化 —— 差异点只剩 5 处小 #if（WSA/非阻塞/超时结构/错误码/关闭），
+    // 骨架与 Win 版同一份代码，行为语义逐行对齐（握手、缓冲策略、失败文案均不变）。
+#if defined(_WIN32)
     ensureWsa();
+#endif
     token_ = token;
     st_.peer = host + ":" + std::to_string(static_cast<unsigned>(port));
 
@@ -104,36 +125,46 @@ bool MediaSession::connect(const std::string& host, uint16_t port, const std::st
         return false;
     }
 
-    SOCKET s = ::socket(res->ai_family, res->ai_socktype, res->ai_protocol);
-    if (s == INVALID_SOCKET) {
+    auto s = ::socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+    if (s == kInvalidSock) {
         freeaddrinfo(res);
         st_.error = "socket 创建失败";
         return false;
     }
 
     // 非阻塞 connect + select 3s 超时
+#if defined(_WIN32)
     u_long nb = 1;
     ioctlsocket(s, FIONBIO, &nb);
+#else
+    const int fl = ::fcntl(s, F_GETFL, 0);
+    ::fcntl(s, F_SETFL, fl | O_NONBLOCK);
+#endif
     const int rc = ::connect(s, res->ai_addr, static_cast<int>(res->ai_addrlen));
     freeaddrinfo(res);
-    if (rc == SOCKET_ERROR) {
+    if (rc != 0) {
         fd_set w;
         FD_ZERO(&w);
         FD_SET(s, &w);
         timeval tv{3, 0};
-        if (select(0, nullptr, &w, nullptr, &tv) <= 0) {
-            closesocket(s);
+        // nfds：Win 上被忽略、POSIX 必需 —— 统一传 s+1 两边合法（原 Win 版传 0，等价）
+        if (select(static_cast<int>(s + 1), nullptr, &w, nullptr, &tv) <= 0) {
+            closeSock(s);
             st_.connected = false;
             st_.error = "媒体连接超时（3s）：" + st_.peer;
             APX_LOGW("媒体连接失败：{}", st_.error);
             return false;
         }
     }
+#if defined(_WIN32)
     nb = 0;
     ioctlsocket(s, FIONBIO, &nb);
+#else
+    ::fcntl(s, F_SETFL, fl & ~O_NONBLOCK);
+#endif
 
-    // 低延迟：大流量流最怕 Nagle 把小帧攒成 200ms 一发
-    BOOL nodelay = TRUE;
+    // 低延迟：大流量流最怕 Nagle 把小帧攒成 200ms 一发（两边同为 int 1）
+    int nodelay = 1;
     setsockopt(s, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char*>(&nodelay),
                sizeof(nodelay));
     // ★ 发送缓冲**不能开大**：512KB/1MB 这种"看起来更抗抖动"的缓冲，实际是
@@ -143,9 +174,17 @@ bool MediaSession::connect(const std::string& host, uint16_t port, const std::st
     //   现在对齐那条策略：64KB 缓冲 + 50ms 发送超时（拥塞时立即失败丢帧，保住时效）。
     int sndBuf = 64 * 1024;
     setsockopt(s, SOL_SOCKET, SO_SNDBUF, reinterpret_cast<const char*>(&sndBuf), sizeof(sndBuf));
+#if defined(_WIN32)
     DWORD sndTimeout = 50;   // ms
     setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char*>(&sndTimeout),
                sizeof(sndTimeout));
+#else
+    // macOS/BSD：SO_SNDTIMEO 收 timeval（Win 收毫秒 DWORD）。不支持时此调用失败可忽略 ——
+    // 发送侧还有 sendAllBlocking 的 5s 拥塞重试兕底，语义不丢。
+    timeval sndTimeout{0, 50 * 1000};   // 50ms
+    setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char*>(&sndTimeout),
+               sizeof(sndTimeout));
+#endif
 
     // 令牌握手：u32 LE 长度 + UTF-8 令牌（**无回执字节**，与 Android 侧对称）
     const uint32_t len = static_cast<uint32_t>(token_.size());
@@ -156,7 +195,7 @@ bool MediaSession::connect(const std::string& host, uint16_t port, const std::st
     if (::send(s, reinterpret_cast<const char*>(hdr), 4, 0) != 4 ||
         (len > 0 && ::send(s, token_.data(), static_cast<int>(len), 0) !=
                         static_cast<int>(len))) {
-        closesocket(s);
+        closeSock(s);
         st_.connected = false;
         st_.error = "媒体令牌握手发送失败";
         return false;
@@ -187,18 +226,13 @@ bool MediaSession::connect(const std::string& host, uint16_t port, const std::st
 
     APX_LOGI("媒体通道已连接 {}", st_.peer);
     return true;
-#endif
 }
 
 void MediaSession::disconnect() {
     // 与 connect 互斥：reader_/writer_ 的 join/赋值绝不能并发（见 hpp lifecycleMu_）
     std::lock_guard<std::recursive_mutex> lkLife(lifecycleMu_);
     const bool wasRunning = running_.exchange(false);
-#if defined(_WIN32)
-    const bool hadSock = (sock_ != INVALID_SOCKET);
-#else
-    const bool hadSock = (sock_ != -1);
-#endif
+    const bool hadSock = (sock_ != kInvalidSock);
     if (!wasRunning && !hadSock) {
         // 收流线程自己退出过（TCP 断 → readerLoop 调 teardown）：这里**必须**回收
         // reader_/writer_ 对象 —— 线程虽死但对象仍 joinable，漏了 join 的话，
@@ -286,16 +320,18 @@ static void mediaLog(const char* why) {
 
 
 void MediaSession::readerLoop() {
-#if defined(_WIN32)
+    // mac-port：原循环体整个圈在 #if _WIN32 内（非 Win 直接跳过收流）。循环体本身
+    // 差异只有 recv 签名与错误码 —— 统一后跨平台跑（recv 返回值两边都用 int 接，
+    // 64KB 缓冲内无截断风险；-Wall/-Wextra 不含 -Wconversion，无收窄告警）。
     std::vector<uint8_t> buf(64 * 1024);
     std::vector<uint8_t> acc;
     acc.reserve(1 << 20);
     while (running_.load()) {
-        const int n = ::recv(sock_, reinterpret_cast<char*>(buf.data()),
-                             static_cast<int>(buf.size()), 0);
+        const int n = static_cast<int>(::recv(sock_, reinterpret_cast<char*>(buf.data()),
+                                              static_cast<int>(buf.size()), 0));
         if (n <= 0) {
             mediaLog((std::string("reader exit n=") + std::to_string(n) +
-                      " err=" + std::to_string(WSAGetLastError())).c_str());
+                      " err=" + std::to_string(sockErr())).c_str());
             break;
         }
         acc.insert(acc.end(), buf.data(), buf.data() + n);
@@ -332,7 +368,8 @@ void MediaSession::readerLoop() {
             switch (h.streamId) {
                 case kStreamMic:    bump(bodyLen, cMicFrames_, cMicBytes_); break;
 
-                case kStreamTouch:  // 副屏触摸：计数 + SendInput 注入（毫秒级，可留收流线程）
+                case kStreamTouch:  // 副屏触摸：计数 + 注入（毫秒级，可留收流线程；
+                                    // mac 注入为诚实降级，不影响其余流）
                     bump(bodyLen, cTouchFrames_, cTouchBytes_);
                     injectTouchFrame(body, bodyLen);
                     break;
@@ -345,7 +382,6 @@ void MediaSession::readerLoop() {
         if (off == acc.size()) acc.clear();
         else if (off > 0) acc.erase(acc.begin(), acc.begin() + static_cast<long>(off));
     }
-#endif
     APX_LOGI("媒体通道收流结束");
     teardown();
 }
@@ -446,7 +482,8 @@ bool MediaSession::sendFragmented(uint8_t streamId, const uint8_t* body, size_t 
 }
 
 void MediaSession::writerLoop() {
-#if defined(_WIN32)
+    // mac-port：原循环体整个圈在 #if _WIN32 内 —— 体本身只依赖队列 + sendAllBlocking，
+    // 跨平台直接跑。
     while (running_.load()) {
         std::vector<uint8_t> frame;
         {
@@ -474,12 +511,10 @@ void MediaSession::writerLoop() {
             break;
         }
     }
-#endif
     teardown();
 }
 
 bool MediaSession::sendAllBlocking(const uint8_t* p, size_t n) {
-#if defined(_WIN32)
     size_t sent = 0;
     // v184 fix("副屏老是断"): the 50ms SO_SNDTIMEO is only the yield granularity of a
     // single send() call, NOT a link-down verdict. Previously one congestion timeout
@@ -487,44 +522,51 @@ bool MediaSession::sendAllBlocking(const uint8_t* p, size_t n) {
     // caused a reconnect cycle every ~3s. Now congestion retries **within the same
     // frame** for up to 5s: cSendTimeouts_ still feeds ABR to lower the bitrate,
     // and frame alignment is preserved (peer clears rx buffer on reconnect).
-    const ULONGLONG deadline = GetTickCount64() + 5000;
+    // mac-port：deadline 用跨平台 nowMs()（原 GetTickCount64）、yield 用
+    // std::this_thread::sleep_for（原 Sleep）、错误码分平台判定（WSAE* vs errno E*）。
+    const int64_t deadline = nowMs() + 5000;
     while (sent < n) {
-        const int r = ::send(sock_, reinterpret_cast<const char*>(p) + sent,
-                             static_cast<int>(n - sent), 0);
+        const auto r = ::send(sock_, reinterpret_cast<const char*>(p) + sent,
+                              static_cast<int>(n - sent), 0);
         if (r > 0) {
             sent += static_cast<size_t>(r);
             continue;
         }
-        const int e = WSAGetLastError();
-        if (e == WSAEWOULDBLOCK || e == WSAETIMEDOUT || e == WSAENOBUFS) {
+        const int e = sockErr();
+#if defined(_WIN32)
+        const bool retryable = (e == WSAEWOULDBLOCK || e == WSAETIMEDOUT ||
+                                e == WSAENOBUFS);
+#else
+        const bool retryable = (e == EAGAIN || e == EWOULDBLOCK ||
+                                e == ETIMEDOUT || e == ENOBUFS);
+#endif
+        if (retryable) {
             cSendTimeouts_.fetch_add(1, std::memory_order_relaxed);
-            if (GetTickCount64() > deadline) {
+            if (nowMs() > deadline) {
                 mediaLog("send congest 5s giveup");
                 return false;
             }
-            Sleep(2);                                        // yield to kernel buffer
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));  // yield to kernel buffer
             continue;
         }
         mediaLog((std::string("send real err=") + std::to_string(e)).c_str());
         return false;                                        // real error: reset/unreachable
     }
     return true;
-#else
-    (void)p; (void)n;
-    return false;
-#endif
 }
 
 void MediaSession::teardown() {
     mediaLog("teardown");
     running_.store(false);
+    if (sock_ != kInvalidSock) {
 #if defined(_WIN32)
-    if (sock_ != INVALID_SOCKET) {
         ::shutdown(sock_, SD_BOTH);
-        closesocket(sock_);
-        sock_ = INVALID_SOCKET;
-    }
+#else
+        ::shutdown(sock_, SHUT_RDWR);
 #endif
+        closeSock(sock_);
+        sock_ = kInvalidSock;
+    }
     qcv_.notify_all();
     {
         std::lock_guard<std::mutex> lk(qmu_);

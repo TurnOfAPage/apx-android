@@ -295,6 +295,11 @@ target_link_libraries(apxpc_media PUBLIC apxpc_core)
 if(WIN32)
   target_link_libraries(apxpc_media PUBLIC ws2_32 ole32 uuid)
 endif()
+if(APPLE)
+  # mic_bridge 的 macOS 实现（下一个 commit）：CoreAudio AudioQueue 播放
+  # + 默认输出设备名查询；media_session 的 POSIX socket 无框架依赖。
+  target_link_libraries(apxpc_media PUBLIC "-framework CoreAudio" "-framework AudioToolbox")
+endif()
 target_link_libraries(apxpc_wireless PUBLIC apxpc_media)
 
 # ---------------------------------------------------------------- 目标：副屏推流
