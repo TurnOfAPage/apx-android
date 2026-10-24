@@ -351,7 +351,8 @@ void handleAct(HttpPanel* p, const std::string& id, const std::string& name, con
         if (devId) opt.deviceId = devId->asString();
         std::string err;
         const bool ok = b.audio->start(b.media, opt, &err);
-        return postResponse(p, id, ok ? okResp() : failResp(err));
+        return postResponse(p, id, ok ? okResp()
+                                      : failResp(err.empty() ? "音箱启动失败" : err));
     }
 
     // —— 麦克风桥（手机麦 → 本机播放设备）——
@@ -360,7 +361,8 @@ void handleAct(HttpPanel* p, const std::string& id, const std::string& name, con
         std::string devId = payload.find("deviceId") ? payload.find("deviceId")->asString() : "";
         std::string err;
         const bool ok = b.micBridge->start(devId, &err);
-        return postResponse(p, id, ok ? okResp() : failResp(err));
+        return postResponse(p, id, ok ? okResp()
+                                      : failResp(err.empty() ? "麦克风桥启动失败" : err));
     }
 
     // —— 设置项 ——
@@ -786,6 +788,21 @@ int runWebPanelHttp(const HostBundle& bundle, const std::string& webDir) {
     if (panel.bundle.session) {
         panel.bundle.session->startAuto();
         APX_LOGI("无线自动发现已启动（等待手机 APX1PH 信标）");
+    }
+
+    // 麦克风收流接线：对齐老 Win32 面板（panel_win32）的既有语义 ——
+    // streamId==kStreamMic 且麦克风桥在跑 → feed。回调在媒体收流线程上执行，
+    // feed 自身加锁不阻塞 ✓。注：Win 的 web_panel 模式此前未接这条线（既有缺口，
+    // 不在本 PR 范围），HTTP 面板补上。
+    if (panel.bundle.media && panel.bundle.micBridge) {
+        apxpc::media::MediaSession* media = panel.bundle.media;
+        apxpc::media::MicBridge* mic = panel.bundle.micBridge;
+        media->setHandler([mic](uint8_t streamId, uint8_t /*flags*/, uint32_t /*seq*/,
+                                const uint8_t* body, size_t len) {
+            if (streamId == apxpc::media::kStreamMic && mic->running()) {
+                mic->feed(body, len);
+            }
+        });
     }
 
     // 文件接收（TCP 9512）：收到 → 托盘气泡（mac no-op）+ 推事件给前端文件面板
