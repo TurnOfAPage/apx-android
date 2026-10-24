@@ -1,6 +1,17 @@
 cmake_minimum_required(VERSION 3.20)
 project(allperiph_host VERSION 0.1.0 LANGUAGES CXX)
 
+# ---------------------------------------------------------------- macOS 部署目标（尽早，影响后续所有目标）
+# CoreAudio Process Tap 是 macOS 14.2 的 API（API_AVAILABLE）—— 要让链接器把它标成
+# weak_import、运行时 @available 才能真正降级，整体部署目标必须压到 14.2 以下；
+# 否则产物直接按当前系统版本链接，旧系统 dyld 拒启，版本门白写。
+# 12.0 覆盖仓内现有全部 Apple API（NSURLSession/AppKit/CoreGraphics 均为 10.x 级）；
+# 未被用户显式指定时才接管，尊重外部 -DCMAKE_OSX_DEPLOYMENT_TARGET 传入。
+if(APPLE AND (NOT DEFINED CMAKE_OSX_DEPLOYMENT_TARGET OR CMAKE_OSX_DEPLOYMENT_TARGET STREQUAL ""))
+  set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0" CACHE STRING "macOS 最低部署版本" FORCE)
+  message(STATUS "[host] macOS 部署目标 = 12.0（为 14.2 Tap API 弱链接留空间）")
+endif()
+
 # ---------------------------------------------------------------- WebView2 SDK（仅 Windows + 开启 WebView2 面板）
 if(WIN32 AND APXPC_BUILD_UI AND APXPC_BUILD_UI_WEBVIEW2)
   include(FetchContent)
@@ -289,6 +300,12 @@ set(APXPC_MEDIA_SRC
   "${APXPC_ROOT}/src/media/mic_bridge.cpp"
   "${APXPC_ROOT}/src/media/touch_inject.cpp"
 )
+if(APPLE)
+  # 系统声音采集（CoreAudio Process Tap，14.2+）：CATapDescription 是 ObjC 类，
+  # 必须 .mm；OBJCXX 在 service 块已 enable，这里幂等再声明一次防顺序调整。
+  enable_language(OBJCXX)
+  list(APPEND APXPC_MEDIA_SRC "${APXPC_ROOT}/src/media/audio_capture_mac.mm")
+endif()
 add_library(apxpc_media STATIC ${APXPC_MEDIA_SRC})
 target_include_directories(apxpc_media PUBLIC "${APXPC_ROOT}/include")
 target_link_libraries(apxpc_media PUBLIC apxpc_core)
@@ -296,9 +313,11 @@ if(WIN32)
   target_link_libraries(apxpc_media PUBLIC ws2_32 ole32 uuid)
 endif()
 if(APPLE)
-  # mic_bridge 的 macOS 实现（下一个 commit）：CoreAudio AudioQueue 播放
-  # + 默认输出设备名查询；media_session 的 POSIX socket 无框架依赖。
+  # mic_bridge 的 macOS 实现：CoreAudio AudioQueue 播放 + 默认输出设备名；
+  # audio_capture_mac.mm（Tap）所需的 API 全部在 CoreAudio（无需额外框架）。
   target_link_libraries(apxpc_media PUBLIC "-framework CoreAudio" "-framework AudioToolbox")
+  # ARC：audio_capture_mac.mm 的 CATapDescription/NSDictionary 对象句柄
+  target_compile_options(apxpc_media PRIVATE $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
 endif()
 target_link_libraries(apxpc_wireless PUBLIC apxpc_media)
 
