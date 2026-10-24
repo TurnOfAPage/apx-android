@@ -42,4 +42,14 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:text="@string/common_unknown" />
+
+    <!-- 方向锁定快捷开关（竖屏可见；横屏 header 隐藏，由设置页开关承接） -->
+    <TextView
+        android:id="@+id/btnOrientLock"
+        style="@style/APTextButton"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="12dp"
+        android:text="@string/ui_main_btn_orient_lock"
+        android:contentDescription="@string/ui_main_cd_orient_lock" />
 </LinearLayout>

@@ -251,6 +251,39 @@
                     android:layout_height="wrap_content"
                     android:contentDescription="@string/lay_settings_cd_hotkey" />
             </LinearLayout>
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:layout_marginTop="8dp"
+                android:background="@color/card_stroke" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingTop="12dp">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/lay_settings_text_orient_lock"
+                        android:textAppearance="@style/APTextSubtitle" />
+                </LinearLayout>
+
+                <Switch
+                    android:id="@+id/swOrientLock"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:contentDescription="@string/lay_settings_cd_orient_lock" />
+            </LinearLayout>
         </LinearLayout>
 
 
