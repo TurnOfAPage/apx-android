@@ -74,13 +74,16 @@ jobs:
           cp -r ../pc/web/dist/. "$STAGE/web/"
 
           # —— AllPeriph.app（双击入口 + TCC 授权宿主）——
-          # web/ 必须与可执行文件同级（runWebPanelHttp 默认「exe 旁 web/」）→ Contents/MacOS/web。
+          # ⚠️ 签名阶段 Contents/MacOS/web 必须不存在：codesign --deep 会把 Contents/MacOS/
+          # 下的 web/ 当嵌套代码树要求签名，.js 不可签 → "code object is not signed at all
+          # In subcomponent: web/assets/..." exit 1（#47/#48/#50/#52 四轮 CI 实锤，
+          # 每次都是 Package 毫秒级秒挂）。所以先签干净 bundle，签完再放回 web 打包 ——
+          # ad-hoc 未公证，Gatekeeper/TCC 只认签名存在与 bundle id，不校验 web 的 seal。
           # strip 会破坏链接期 ad-hoc 签名，这里统一补签：arm64 的 Mach-O 执行与 TCC 按
           # bundle 归属记录都依赖签名。ad-hoc（无公证）→ 下载后仍走「仍要打开」放行流程。
           APP="$STAGE/AllPeriph.app"
-          mkdir -p "$APP/Contents/MacOS/web"
+          mkdir -p "$APP/Contents/MacOS"
           cp apxdesktop "$APP/Contents/MacOS/apxdesktop"
-          cp -r ../pc/web/dist/. "$APP/Contents/MacOS/web/"
           printf 'APPL????' > "$APP/Contents/PkgInfo"
           VER="0.0.0-dev"
           case "${GITHUB_REF_NAME}" in
@@ -123,11 +126,10 @@ jobs:
           codesign --force -s - "$STAGE/apxdesktop"
           codesign --force -s - "$APP/Contents/MacOS/apxdesktop"
           codesign --force --deep -s - "$APP"
-          # 不做 codesign --verify 回读：--strict --deep 会把「exe 旁 web/」（Contents/MacOS/web）
-          # 的静态资源判 not signed at all；--strict 单文件回读 bundle 内嵌套 code 同样误报。
-          # （2026-10-24 #47/#48/#50/#51 三轮 CI 实锤，签名/构建动作本身全部成功。）
-          # 校验由两道承担：codesign 签名动作失败即非零退出直接红；plist 由 plutil -lint 硬校验。
-          echo "ad-hoc 签名完成（codesign 动作 + plutil 校验通过）"
+          echo "ad-hoc 签名完成（web 暂时在场外，接下来放回）"
+          # 签名完成后放回 web/ —— 功能约定「exe 旁 web/」，runWebPanelHttp 从 exe 同级读取。
+          mkdir -p "$APP/Contents/MacOS/web"
+          cp -r ../pc/web/dist/. "$APP/Contents/MacOS/web/"
 
           printf '%s\n' \
             "全能外设 macOS（arm64，ad-hoc 签名 · 未公证）" \
