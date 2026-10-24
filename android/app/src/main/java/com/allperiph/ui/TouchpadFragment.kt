@@ -65,6 +65,9 @@ class TouchpadFragment : Fragment() {
     /** 横屏分栏重排器：旋屏不重建 Activity（configChanges），在布局 pass 里换结构 */
     private var touchpadSplit: TouchpadSplit? = null
 
+    /** 物理蓝牙键盘 → 电脑 转发桥（Window.Callback 包装，见 PhysKeyBridge） */
+    private var physKeyBridge: PhysKeyBridge? = null
+
     private var frameCount = 0L
     private var lastShown = 0L
 
@@ -148,6 +151,9 @@ class TouchpadFragment : Fragment() {
             // 横屏分栏：旋屏不重建 Activity（configChanges 含 orientation，layout-land
             // 不重新加载），改在布局 pass 里幂等重排触控板页结构（见 TouchpadSplit）。
             touchpadSplit = TouchpadSplit(a).also { it.bind(a.window.decorView) }
+            // 物理蓝牙键盘：包装 Window.Callback 抢先拦 KeyEvent → HidKeys 上行到电脑；
+            // 聚焦输入框 / 无出口 / 认不出的键全部放行，手机本地用法不受影响。
+            physKeyBridge = PhysKeyBridge(a).also { it.attach(a.window) }
         }
     }
 
@@ -156,6 +162,8 @@ class TouchpadFragment : Fragment() {
         get() = ::touchHint.isInitialized && ::touchArea.isInitialized && ::touchCursor.isInitialized
 
     override fun onDetach() {
+        physKeyBridge?.detach()
+        physKeyBridge = null
         touchpadSplit?.unbind()
         touchpadSplit = null
         handler.removeCallbacks(dragTask)
