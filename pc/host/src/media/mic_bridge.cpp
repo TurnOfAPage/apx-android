@@ -273,7 +273,7 @@ constexpr uint32_t kAqBufFrames = 1024;     // AudioQueue 回调 buffer 帧数�
 std::string defaultOutputName() {
     AudioObjectPropertyAddress addr{
         kAudioHardwarePropertyDefaultOutputDevice,
-        kAudioObjectPropertyScopeGlobal,        // ← 修正：此域是 kAudioObject*Scope*，非 kAudioHardware*
+        kAudioObjectPropertyScopeGlobal,
         kAudioObjectPropertyElementMain};
     AudioDeviceID dev = kAudioObjectUnknown;
     UInt32 sz = sizeof(dev);
@@ -297,9 +297,9 @@ std::string defaultOutputName() {
 
 }  // namespace
 
-// AudioQueue 回调定义为 Impl 的**静态成员**（本次 CI 修复）：
+// AudioQueue 回调定义为 Impl 的**静态成员**（CI 修复）：
 //   · 匿名命名空间的自由函数无权命名 MicBridge::Impl（hpp 里 private）→ 访问违规；
-//   · 且自由函数写在 Impl 定义之前会撞上不完整类型（一连串 member access 错）。
+//   · 且自由函数写在 Impl 定义之前会撞上不完整类型。
 //   · 作为静态成员：声明进下方 struct Impl 定义、函数体放 Impl 之后 ——
 //     类外定义私有成员函数合法，hpp 一个字不动（Win 分支不受影响）。
 struct MicBridge::Impl {
@@ -334,10 +334,13 @@ void MicBridge::Impl::aqCb(void* user, AudioQueueRef q, AudioQueueBufferRef b) {
         const size_t srcFrames =
             std::min<size_t>(self->q.size() / kSrcChannels, wantFrames);
         if (srcFrames > 0) {
-            std::memcpy(d, self->q.data(), srcFrames * kSrcChannels * sizeof(int16_t));
+            // deque 是**分块**容器，没有 .data()（连续内存是 vector 的特性）——
+            // 用下标逐元素拷贝，不赌分块连续，也无需 <algorithm>。
+            const size_t samples = srcFrames * kSrcChannels;
+            for (size_t i = 0; i < samples; ++i) d[i] = self->q[i];
             self->q.erase(self->q.begin(),
-                          self->q.begin() + static_cast<std::ptrdiff_t>(srcFrames * kSrcChannels));
-            self->played += srcFrames * kSrcChannels;
+                          self->q.begin() + static_cast<std::ptrdiff_t>(samples));
+            self->played += samples;
         }
         if (srcFrames < wantFrames) {
             std::memset(d + srcFrames * kSrcChannels, 0,
@@ -427,7 +430,7 @@ void MicBridge::renderLoop() {
     asbd.mBitsPerChannel     = kSrcBits;
 
     AudioQueueRef q = nullptr;
-    // 修复：impl_ 是**裸指针**（非 unique_ptr），直接作 user data（隐式转 void*）；
+    // impl_ 是**裸指针**（非 unique_ptr），直接作 user data（隐式转 void*）；
     // 回调是 Impl 的静态成员，静态成员函数指针可无损转 C 函数指针。
     OSStatus st = AudioQueueNewOutput(&asbd, &MicBridge::Impl::aqCb, impl_,
                                       nullptr, nullptr, 0, &q);
