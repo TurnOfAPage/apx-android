@@ -61,6 +61,9 @@ class TouchpadFragment : Fragment() {
     private lateinit var touchArea: FrameLayout
     private lateinit var touchCursor: TouchCursorView
 
+    /** 横屏分栏重排器：旋屏不重建 Activity（configChanges），在布局 pass 里换结构 */
+    private var touchpadSplit: TouchpadSplit? = null
+
     private var frameCount = 0L
     private var lastShown = 0L
 
@@ -71,7 +74,7 @@ class TouchpadFragment : Fragment() {
     }
 
     /**
-     * 长按锁定拖拽的**可见**提示 —— 光震动不够：手指此刻正压在屏幕上、液态光标被手挡住，
+     * 长按锁定拖拽的**可见**提示 —— 光震动不够：手指此刻正压在屏幕上，液态光标被手挡住，
      * 而设置页的震动档位是可以关掉的（关掉后长按就完全没有反馈了）。
      * 所以补一行文字，1.6s 后自行收起，不占用常态布局。
      */
@@ -141,6 +144,9 @@ class TouchpadFragment : Fragment() {
         activity?.let { a ->
             a.findViewById<TextView>(R.id.btnFileSend)?.setOnClickListener { pickFileToSend() }
             a.findViewById<TextView>(R.id.btnClipSend)?.setOnClickListener { sendClipToPeer() }
+            // 横屏分栏：旋屏不重建 Activity（configChanges 含 orientation，layout-land
+            // 不重新加载），改在布局 pass 里幂等重排触控板页结构（见 TouchpadSplit）。
+            touchpadSplit = TouchpadSplit(a).also { it.bind(a.window.decorView) }
         }
     }
 
@@ -149,6 +155,8 @@ class TouchpadFragment : Fragment() {
         get() = ::touchHint.isInitialized && ::touchArea.isInitialized && ::touchCursor.isInitialized
 
     override fun onDetach() {
+        touchpadSplit?.unbind()
+        touchpadSplit = null
         handler.removeCallbacks(dragTask)
         handler.removeCallbacks(rightDragTask)
         handler.removeCallbacks(hideHintTask)
@@ -186,7 +194,7 @@ class TouchpadFragment : Fragment() {
             touchCursor.onGesture(ev, loc[0].toFloat(), loc[1].toFloat())
         }
         frameCount++
-        val now = System.currentTimeMillis()
+        val now = SystemClock.uptimeMillis()
         if (now - lastShown > 250) { // 4Hz 刷新，避免 UI 抖动
             lastShown = now
             if (frameCount <= 3) touchHint.visibility = View.INVISIBLE // 手指落下后收起提示文字
