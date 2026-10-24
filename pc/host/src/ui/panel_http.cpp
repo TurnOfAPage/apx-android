@@ -33,6 +33,7 @@
 #include "apxpc/log.hpp"
 #include "apxpc/net/json.hpp"
 #include "apxpc/tray/tray_win32.hpp"
+#include "apxpc/wireless/ctrl9511.hpp"
 #include "apxpc/wireless/file_receiver.hpp"
 #include "apxpc/wireless/wireless_session.hpp"
 #include "apxpc/media/media_session.hpp"
@@ -104,6 +105,11 @@ struct HttpPanel {
     std::atomic<bool> running{false};
     std::string webDir;
     uint16_t port = 0;
+
+    // 9511 受控端（对齐 Windows 桌面端 desktop_main）：广播 APX1PC 信标 —— 手机端
+    // 「TV 控制」设备列表才能发现本机（标为 (PC)）。缺这条时浏览器面板只能
+    // **主动连手机**（session 客户端方向），手机反过来发现不了本机，受控场景缺失。
+    apxpc::wireless::Ctrl9511Server ctrlSrv;
 
     // USB 传输探测节流（枚举较重，~10s 一次；macOS 无 /sys → enumerate 空 → 三态全 false，诚实）
     bool usbScanned = false;
@@ -790,6 +796,21 @@ int runWebPanelHttp(const HostBundle& bundle, const std::string& webDir) {
         APX_LOGI("无线自动发现已启动（等待手机 APX1PH 信标）");
     }
 
+    // 9511 受控端（对齐 Windows 桌面端 desktop_main 的既有语义）：广播 APX1PC 信标 ——
+    // 手机端「TV 控制」的设备列表才能发现本机（标为 (PC)）。缺这条时浏览器面板只能
+    // **主动连手机**（session 客户端方向），手机反过来发现不了本机 —— 受控场景缺失。
+    // 主机名：POSIX gethostname（Win 版 desktop_main 用 GetComputerNameW 同义）。
+    {
+        char hname[256] = {};
+        if (gethostname(hname, sizeof(hname) - 1) == 0 && hname[0] != '\0') {
+            hname[sizeof(hname) - 1] = '\0';
+            if (!panel.ctrlSrv.start(9511, "", hname))
+                APX_LOGW("9511 受控端启动失败（端口可能已被 apxhost serve/其他实例占用）");
+            else
+                APX_LOGI("9511 受控端已启动（面板自带，主机名 {}）", hname);
+        }
+    }
+
     // 麦克风收流接线：对齐老 Win32 面板（panel_win32）的既有语义 ——
     // streamId==kStreamMic 且麦克风桥在跑 → feed。回调在媒体收流线程上执行，
     // feed 自身加锁不阻塞 ✓。注：Win 的 web_panel 模式此前未接这条线（既有缺口，
@@ -904,6 +925,7 @@ int runWebPanelHttp(const HostBundle& bundle, const std::string& webDir) {
 
     // —— 清理：只 join 本文件创建的线程；宿主对象生命周期在调用方 ——
     ::close(lfd);
+    panel.ctrlSrv.stop();   // 9511 受控端 + APX1PC 信标广播停止
     if (panel.mediaThread.joinable()) panel.mediaThread.join();
     g_hp = nullptr;
     APX_LOGI("浏览器面板已退出");
