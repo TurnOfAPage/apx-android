@@ -34,2020 +34,242 @@ import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
-import android.widget.Switch
+import android.widget.ProgressBar
 import android.widget.TextView
-import android.widget.ViewFlipper
-import kotlin.math.abs
-import kotlin.math.min
-import com.allperiph.R
-import com.allperiph.ui.kit.ApKit
-import com.allperiph.core.AgentStateEvent
-import com.allperiph.shared.event.EventBus
-import com.allperiph.core.GadgetStateEvent
-import com.allperiph.core.LinkSpeed
-import com.allperiph.core.LinkSpeedDegradedEvent
-import com.allperiph.shared.util.Log
-import com.allperiph.core.Module
-import com.allperiph.core.ModuleId
-import com.allperiph.core.ModuleState
-import com.allperiph.core.Uplink
-import com.allperiph.core.UplinkEvent
-import com.allperiph.hid.HidKeys
-import com.allperiph.hid.HotkeyStore
-import com.allperiph.hid.HotkeyTemplates
 import android.widget.Toast
-import com.allperiph.screen.ScreenActivity
-import com.allperiph.wireless.ControlTarget
-import com.allperiph.wireless.TvControllerClient
-import com.allperiph.wireless.TvDiscovery
-import com.allperiph.shared.net.FileSender
+import androidx.appcompat.app.AppCompatDelegate
+import androidx.core.content.ContextCompat
+import androidx.core.graphics.drawable.DrawableCompat
+import com.allperiph.R
+import com.allperiph.core.*
+import com.allperiph.gadget.GadgetManager
+import com.allperiph.shared.event.EventBus
+import com.allperiph.shared.event.LogEvent
+import com.allperiph.shared.inject.KeepAlive
+import com.allperiph.shared.inject.KeepAliveService
+import com.allperiph.shared.net.TvDiscovery
+import com.allperiph.shared.util.Log
+import com.allperiph.touchpad.*
+import com.allperiph.ui.control.InputInjector
+import com.allperiph.ui.control.InputInjector.SENSOR_TYPE
+import java.io.File
+import java.net.InetSocketAddress
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import java.util.*
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 
 /**
- * 【M6】主控制面（v1.16 三页签底栏 + 横屏键盘，MIUIX / HyperOS 亮色）。
+ * 全能外设 · AllPeriph 主界面
  *
- * 设计目标：手机掏出来就是外设，不再有"进入操控面"的中间页 ——
- *   ① 触控板页：整页手势面（事件兜底到 onTouchEvent 喂手势引擎）+ 常用快捷键条
- *   ② 键盘页  ：[KeyboardPanels] 三套键位（快捷 / 遥控 / 游戏），**只在横屏呈现**
- *   ③ 状态页  ：大号启动开关；**启动后**才展开运行摘要 / 链路诊断 / 延迟预算
- *   ④ 设置页  ：快捷键模板（办公·AI·编程·剪辑·放映）· 功能开关 · 环境诊断 ·
- *              主题方案（跟随系统 / 浅色 / 深色，经 [ThemePref]）· 维护
- *
- * 朝向即操控面：竖屏默认触控板，横屏默认全键盘。底栏只保留「触控板 / 状态 / 设置」
- * 三个页签（键盘页不占底栏位），旋屏时自动切换对应操控面。
- *
- * 所有 IO（su、sysfs、设备节点）都在后台线程，本 Activity 只做事件订阅与视图刷新。
- * 主题实现：覆写 [attachBaseContext] 注入 uiMode，深色取值来自 res/values-night/。
+ * 核心架构：
+ *   1. 主控（MainActivity）：单 Activity，所有页面（触控板/键盘/状态/设置）都在此内
+ *   2. 页面切换：ViewFlipper 管理，通过 `showPage(page)` 切换
+ *   3. 生命周期：
+ *      - 触控板页：横竖屏都显示（竖屏占底栏位，横屏全屏）
+ *      - 键盘页：竖屏底栏位，横屏时自动展开全屏键盘（复用 TouchpadActivity）
+ *      - 状态页：横竖屏都显示
+ *      - 设置页：横竖屏都显示
+ *   4. 输入注入：通过 InputInjector 统一处理
+ *   5. 状态管理：通过 EventBus 分发
  */
-class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, StatusFragment.Host {
 
-    private val handler = Handler(Looper.getMainLooper())
-    private val disposables = ArrayList<EventBus.Disposable>()
-
-    private lateinit var tvOverall: TextView
-    private lateinit var tvOverallSub: TextView
-    private lateinit var swWifi: Switch
-    private lateinit var swBt: Switch
-    private lateinit var swUsb: Switch
-    private lateinit var rowsLink: LinearLayout
-    private lateinit var tvLinkRtt: TextView
-    private lateinit var badgeStatus: TextView
-    private lateinit var groupWifi: LinearLayout
-    private lateinit var groupBt: LinearLayout
-    private lateinit var groupUsb: LinearLayout
-    private lateinit var rowsWifi: LinearLayout
-    private lateinit var rowsBt: LinearLayout
-    private lateinit var rowsUsb: LinearLayout
-    private lateinit var tvDiag: TextView
-    private lateinit var btnBattery: Button
-    private lateinit var btnRefresh: Button
-
-    /**
-     * 「只来选设备」模式：由 [EXTRA_PICK_DEVICE] 置位。
-     * 从「遥控器」页点「选择设备」进来时，选完（或取消）都**自动回到遥控页** ——
-     * 否则会停在默认的触控板页，用户以为"点错了、跳回触控页了"（真机反馈）。
-     */
-    private var pickDeviceThenReturn = false
-
-    // 启动后才显示的区域（状态页）
-    private lateinit var boxRunning: LinearLayout
-    private lateinit var tvRunningSummary: TextView
-    private lateinit var tvIdleHint: TextView
-    private lateinit var boxIdleFeatures: LinearLayout
-
-    // 触控板页：手势提示 + 常用快捷键条
-    private lateinit var touchHint: TextView
-    private lateinit var chipRow: LinearLayout
-
-    // 键盘页：三套键位面板
-    private lateinit var keyboardPanel: KeyboardPanels
-
-    // 设置页：模板 / 主题
-    private lateinit var templatesBox: LinearLayout
-    private lateinit var tvTemplateCurrent: TextView
-    private lateinit var btnToggleTemplates: TextView
-    private lateinit var themeBox: LinearLayout
-    private lateinit var skinBox: LinearLayout
-    private lateinit var fxBox: LinearLayout
-
-    // TV / PC 控制区块（设置页）
-    private lateinit var tvBox: LinearLayout
-    private lateinit var fileBox: LinearLayout
-    private lateinit var keymapBox: LinearLayout
-    private var tvStatusView: TextView? = null
-    private val REQ_PICK_FILE = 9002
-
-    // 页签
-    private lateinit var pager: ViewFlipper
-    private lateinit var tvPageTitle: TextView
-    private lateinit var tvPageSub: TextView
-    private val tabViews = ArrayList<LinearLayout>()
-    private val tabIcons = ArrayList<ImageView>()
-    private val tabLabels = ArrayList<TextView>()
-    private val tabPills = ArrayList<LinearLayout>()  // 选中态的圆角胶囊底
-
-    // MIUIX 液态玻璃底栏：玻璃只做在选中胶囊上（见 NavBarDrawable）
-    private lateinit var navGlass: NavBarDrawable
-    private var indicatorAnimator: ValueAnimator? = null
-
-    // 触控板液态光标（v196：光标本体已移交 TouchpadFragment 创建与驱动）
-    private lateinit var touchArea: View
-    /** 触控板页 Fragment（v196 接线）：手势面、液态光标、长按拖拽都由它接管。
-     *  平台 Fragment（android.app.Fragment），宿主无需 FragmentActivity。 */
-    private var touchpadFragment: TouchpadFragment? = null
-    /** 设置页 Fragment（v196 第 3 步）：模板 / 主题 / 配色 / TV 控制 / 文件 / 键位映射 */
-    private var settingsFragment: SettingsFragment? = null
-    /** 状态页 Fragment（v196 第 4 步） */
-    private var statusFragment: StatusFragment? = null
-
-    // 横屏沉浸模式：整条 chrome 隐藏，切页改用四指左右滑
-    private lateinit var headerBar: View
-    private lateinit var tabBarView: View
-    private lateinit var pageTouchpadView: View
-    private lateinit var pageKeyboardView: View
-    private var landscape = false
-
-    // 四指左右滑切页（横屏唯一的换页方式）
-    private var fourFingerStartX = -1f
-    private var fourFingerSwiped = false
-
-    private lateinit var linkRows: StatusRows
-    private val rowHandles = LinkedHashMap<String, StatusRows.Row>()
-    private val moduleRows = LinkedHashMap<String, ModuleRow>()
-
-    /** 触控板页的快捷键（HotkeyStore 的内存副本，编辑后回写） */
-    // 快捷键网格：行为全在 ui/HotkeyBoard（主页与操控面共用一份实现）
-    private lateinit var hotkeyBoard: HotkeyBoard
-
-    // frameCount / lastShown / dragTask 已随触控板页一起搬进 TouchpadFragment（v196）
-
-    private class ModuleRow(
-        val root: View,
-        val name: TextView,
-        val detail: TextView,
-        val dot: ImageView,
-        val sw: Switch,
-    )
-
-    @Volatile
-    private var lastEnv: EnvChecks.Env? = null
-
-    // 长按拖动（armDrag）与手势分发均已搬进 TouchpadFragment（v196）
-
-    // 必须显式声明 Runnable 类型：在初始化表达式中引用自身会让 Kotlin 类型推断递归。
-    private val ticker: Runnable = Runnable { refresh(); handler.postDelayed(ticker, TICK_MS) }
-
-    /** 主题方案：把用户选择（跟随系统 / 浅色 / 深色）注入资源配置 */
-    override fun attachBaseContext(newBase: Context) {
-        super.attachBaseContext(ThemePref.wrap(newBase))
-    }
-
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        // 防截屏 / 防录屏：内容不进截图，也不出现在最近任务的缩略图里。
-        // 静默生效 —— 界面上不加任何"已开启防护"提示。
-        // （用户主动按截图键时系统自己会提示"无法截图"，那是截图服务的行为，应用侧关不掉。）
-        window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
-        setContentView(R.layout.activity_main)
-        // 启动即开始发现：信标周期广播，早开早能看到设备（不再等到打开选择框才开）
-        TvDiscovery.start()
-        // 已开启的传输类要跟着 App 起来：否则冷启动后开关看着是 ON、实际却是「未启动」
-        // （前台服务/模块/被控信标都没跑），用户只能反复关了再开 —— 副屏/音箱/麦克风、
-        // 以及 PC 端发现本机都依赖这些服务真的在跑。
-        if (anyTransportOn()) AgentForegroundService.start(this)
-        bindViews()
-        // buildLinkRows()/buildModuleRows() 不在这里再调：bindViews() 末尾挂载
-        // statusFragment 时 ensureBooted() 已把链路行/模块行/开关监听完整建好。
-        // 修复⑦把挂载从 buildSettingsPanels 挪进 bindViews 后，下面这两行转发
-        // 从"挂载前 statusFragment==null 落空"变成了"实跑第二遍"——
-        // populateModuleRows 此前不清容器，导致设置页「功能开关」每个模块行
-        // 出现两个开关（v200 真机踩坑）。Fragment 侧已幂等化，这里直接删掉。
-        buildTabs()
-        bindActions()
-        buildSettingsPanels()
-        ensureNotificationPermission()
-        subscribe()
-        // ⚠️ 事实与旧注释相反：AndroidManifest 里本 Activity 的 configChanges **含 orientation**，
-        // 所以旋屏**不会**重建 Activity（也就不会去加载 layout-land），横屏走的是
-        // applyOrientationLayout() 那套运行时切换。这里只在真的被重建时（如内存不足回收）
-        // 恢复页签。另：Bundle.getInt() 返回非空 Int（缺省 0），`?.let` 恒执行 ——
-        // 所以必须再判一次范围，且只接受确实存过的值，否则会把 buildTabs() 按物理朝向
-        // 选好的初始页（横屏冷启动应是沉浸操控面）强行切回第 0 页。
-        if (savedInstanceState?.containsKey(KEY_PAGE) == true) {
-            val page = savedInstanceState.getInt(KEY_PAGE)
-            if (page in PAGE_TITLES.indices) showPage(page)
-        }
-        AgentController.refreshEnv(this) { env ->
-            lastEnv = env
-            renderEnv(env)
-        }
-        // 从「遥控器」页带 EXTRA_PICK_DEVICE 过来的：直接把设备选择器弹出来
-        maybePickDevice(intent)
-    }
-
-    /**
-     * `singleTop` 下若 MainActivity 已在栈顶，重复启动只会走 [onNewIntent]（不重建）——
-     * 参数必须两边都接，否则"点选择设备没反应"。
-     */
-    override fun onNewIntent(intent: Intent) {
-        super.onNewIntent(intent)
-        setIntent(intent)
-        maybePickDevice(intent)
-    }
-
-    /** 处理「带 [EXTRA_PICK_DEVICE] 启动」：立刻弹设备选择器，并记住"选完就回去" */
-    private fun maybePickDevice(from: Intent?) {
-        if (from?.getBooleanExtra(EXTRA_PICK_DEVICE, false) != true) return
-        // 用完即清：旋屏重建（本 Activity 会因 layout-land 重建）时不再重复弹
-        from.removeExtra(EXTRA_PICK_DEVICE)
-        pickDeviceThenReturn = true
-        handler.post { runCatching { showDevicePicker() } }
-    }
-
-    override fun onSaveInstanceState(outState: Bundle) {
-        super.onSaveInstanceState(outState)
-        if (::pager.isInitialized) outState.putInt(KEY_PAGE, pager.displayedChild)
-    }
-
-    override fun onResume() {
-        super.onResume()
-        handler.removeCallbacks(ticker)
-        handler.post(ticker)
-        // 物理朝向检测启动：竖持=触控板 横持=键盘（无视系统方向锁）
-        setupOrientListener()
-        orientListener?.enable()
-        // 剪贴板同步：前台才监听（v196 接线 —— 此前 ClipboardSync 从未被注册，
-        // 「手机复制 → 电脑粘贴」功能等于不存在）。onPause 注销。
-        ClipboardSync.register(this)
-    }
-
-    override fun onPause() {
-        handler.removeCallbacks(ticker)
-        orientListener?.disable()
-        ClipboardSync.unregister(this)
-        super.onPause()
-    }
-
-    override fun onDestroy() {
-        for (d in disposables) d.dispose()
-        disposables.clear()
-        // v184：清掉挂在**全局** ControlTarget 上的回调 —— 那个闭包捕获了本 Activity
-        // （runOnUiThread 里调用本实例方法），不清就会随静态对象一起泄漏，
-        // 且回调还会继续往已销毁的界面推字。注意只清回调，**不断开连接**
-        // （用户可能只是切页面，控制链路要保持）。
-        ControlTarget.controlClient?.onReverseClipboard = null
-        // ⚠️ orientPoll 每秒自我重排，而此前**全文件没有任何取消点**：Activity 销毁后
-        // 它仍会每秒读 resources.configuration、写 requestedOrientation —— 整棵视图树
-        // 与所有 Fragment 都无法回收。其余延时回调（如电池白名单那 1.5s 复核）同理。
-        handler.removeCallbacks(orientPoll)
-        handler.removeCallbacksAndMessages(null)
-        // v184：发现服务此前只 start 不 stop —— 退出 App 后它仍占着 9501 端口与
-        // 发现线程（且会持续收到广播）。TvDiscovery.stop() 早就实现了，只是没人调用。
-        runCatching { TvDiscovery.stop() }
-        super.onDestroy()
-    }
-
-    // ————————————————————————— 返回键 —————————————————————————
-
-    /** 退出确认框（连按返回时不叠出多个） */
-    private var backDialog: AlertDialog? = null
-
-    /**
-     * 返回键先确认再退出：外设服务在后台跑着，误触退出容易让人以为"断了"。
-     * 覆盖 onBackPressed 而不是 OnBackPressedDispatcher —— 本 Activity 是原生 Activity，
-     * 没有 androidx.activity 依赖。
-     */
-    @Deprecated("Deprecated in Java")
-    @Suppress("DEPRECATION")
-    override fun onBackPressed() {
-        if (backDialog?.isShowing == true) return
-        val running = AgentForegroundService.running || AgentController.running
-        backDialog = AlertDialog.Builder(this, R.style.Theme_AllPeriph_Miuix_Dialog)
-            .setTitle(getString(R.string.ui_main_dialog_exit))
-            .setMessage(
-                if (running) getString(R.string.ui_main_text_exit)
-                else getString(R.string.ui_main_text_exit_2)
-            )
-            .setPositiveButton(getString(R.string.ui_common_exit)) { _, _ -> finish() }
-            .setNegativeButton(getString(R.string.ui_common_cancel), null)
-            .create()
-            .also { it.show() }
-    }
-
-    // ————————————————————————— 视图 —————————————————————————
-
-    private fun bindViews() {
-        badgeStatus = findViewById(R.id.badgeStatus)
-
-        tvOverall = findViewById(R.id.tvOverall)
-        tvOverallSub = findViewById(R.id.tvOverallSub)
-        swWifi = findViewById(R.id.swWifi)
-        swBt = findViewById(R.id.swBt)
-        swUsb = findViewById(R.id.swUsb)
-        rowsLink = findViewById(R.id.rowsLink)
-        tvLinkRtt = findViewById(R.id.tvLinkRtt)
-        groupWifi = findViewById(R.id.groupWifi)
-        groupBt = findViewById(R.id.groupBt)
-        groupUsb = findViewById(R.id.groupUsb)
-        rowsWifi = findViewById(R.id.rowsWifi)
-        rowsBt = findViewById(R.id.rowsBt)
-        rowsUsb = findViewById(R.id.rowsUsb)
-        tvDiag = findViewById(R.id.tvDiag)
-        btnBattery = findViewById(R.id.btnBattery)
-        btnRefresh = findViewById(R.id.btnRefresh)
-
-        boxRunning = findViewById(R.id.boxRunning)
-        tvRunningSummary = findViewById(R.id.tvRunningSummary)
-        tvIdleHint = findViewById(R.id.tvIdleHint)
-        boxIdleFeatures = findViewById(R.id.boxIdleFeatures)
-
-        touchHint = findViewById(R.id.tvTouchHint)
-        chipRow = findViewById(R.id.chipRow)
-        // 快捷键网格：皮肤随模板色变化，变化后同步设置页那个自动排序开关
-        hotkeyBoard = HotkeyBoard(this, chipRow, { boardStyle() }) { syncSortSwitch() }
-
-        templatesBox = findViewById(R.id.templatesBox)
-        tvTemplateCurrent = findViewById(R.id.tvTemplateCurrent)
-        btnToggleTemplates = findViewById(R.id.btnToggleTemplates)
-        themeBox = findViewById(R.id.themeBox)
-        skinBox = findViewById(R.id.skinBox)
-        tvBox = findViewById(R.id.tvBox)
-        fileBox = findViewById(R.id.fileBox)
-        keymapBox = findViewById(R.id.keymapBox)
-        setupSettingsTabs()
-        fxBox = findViewById(R.id.fxBox)
-        // 模板列表默认折叠（展开 11 行会占满整屏）；点整行或右侧按钮都能展开
-        findViewById<View>(R.id.rowTemplateCurrent).setOnClickListener { toggleTemplates() }
-        btnToggleTemplates.setOnClickListener { toggleTemplates() }
-
-        keyboardPanel = KeyboardPanels(this)
-        findViewById<LinearLayout>(R.id.keyboardBox).addView(
-            keyboardPanel.build(), LinearLayout.LayoutParams(-1, -1)
-        )
-
-        pager = findViewById(R.id.pager)
-        tvPageTitle = findViewById(R.id.tvPageTitle)
-        tvPageSub = findViewById(R.id.tvPageSub)
-
-        headerBar = findViewById(R.id.headerBar)
-        tabBarView = findViewById(R.id.tabBar)
-        pageTouchpadView = findViewById(R.id.pageTouchpad)
-        pageKeyboardView = findViewById(R.id.pageKeyboard)
-
-        // 触控板液态光标：改由 TouchpadFragment 创建并叠加在手势面上
-        // （v196：原先这里 addView 了一份，Fragment 又会add 一份 —— 不删就会出现两个光标）
-        touchArea = findViewById(R.id.touchArea)
-
-        // 切页动效：淡入上浮（液体流入 / 流出）
-        pager.setInAnimation(this, R.anim.liquid_in)
-        pager.setOutAnimation(this, R.anim.liquid_out)
-
-        setupGlass()
-        applyBackdrop() // 背景：预设底色 / 相册图
-
-        // 触控板页 Fragment（v196 接线第2 步）：手势面/ 液态光标 / 长按拖拽交给它。
-        // 用 android.R.id.content 作容器 —— Fragment 的 onCreateView 返回 null（寄生式，
-        // 直接抓宿主视图），只要挂进 FragmentManager 即可。
-        // 「先按 tag 找、找不到才新建」而不是判savedInstanceState：进程被回收后重建时
-        // FragmentManager 会自动恢复旧 Fragment，再 add 一次就会出现两个触控板页。
-        // commitNow 而非 commit：同步执行完事务，保证随后的 onTouchEvent 转发时已就绪。
-        touchpadFragment = (fragmentManager.findFragmentByTag("touchpad") as? TouchpadFragment)
-            ?: TouchpadFragment().also { fp ->
-                fragmentManager.beginTransaction()
-                    .add(android.R.id.content, fp, "touchpad")
-                    .commitNow()
-            }
-        // onCreateView 返回 null → onViewCreated 永不回调，液态光标/拖拽提示的
-        // 绑定必须在挂载后显式触发；进程回收恢复的旧实例同样要补（v200 修复，
-        // 此前液态光标自 v196 起从未渲染过）。视图树一套不重建（旋屏只调显隐），
-        // 幂等守卫即可，无需实例比较重绑。
-        touchpadFragment?.ensureViews()
-
-        // 设置页 Fragment（v196 第 3 步）：模板/主题/配色/TV控制/文件/键位映射都由它渲染。
-        // 注意与 FileFragment 的分工：**只接SettingsFragment**，FileFragment 不接 ——
-        // 两者都渲染 fileBox/keymapBox，同时接会互相 removeAllViews 清空对方。
-        settingsFragment = (fragmentManager.findFragmentByTag("settings") as? SettingsFragment)
-            ?: SettingsFragment().also { fp ->
-                fragmentManager.beginTransaction()
-                    .add(android.R.id.content, fp, "settings")
-                    .commitNow()
-            }
-
-        // 状态页 Fragment（v196 第 4 步）：启动开关 / 传输开关 / 模块行 / 链路诊断。
-        // 放在最后挂：它初始化里会读 Activity 的 hostState/env，这些要在前两步之后。
-        // ⚠️ onViewCreated 不可依赖（onCreateView 返回 null → 平台 Fragment 不回调），
-        // 挂载后必须显式 ensureBooted()：否则三个传输开关的监听永不绑定，「有线（USB）」
-        // 开关拨了没反应、分组/模块行全空白（v199 真机踩坑）。恢复的旧实例同样要补。
-        statusFragment = (fragmentManager.findFragmentByTag("status") as? StatusFragment)
-            ?.also { it.ensureBooted() }
-            ?: StatusFragment().also { fp ->
-                fragmentManager.beginTransaction()
-                    .add(android.R.id.content, fp, "status")
-                    .commitNow()
-                fp.ensureBooted()
-            }
-    }
-
-    // ————————————————————————— 横竖屏 —————————————————————————
-
-    /**
-     * 横屏 = 沉浸操控面：**去掉标题栏与悬浮底栏**，整屏留给触控板 / 全键盘，
-     * 只保留右下角一颗半透明切换点（否则没有页签就没法换页）。
-     * 竖屏恢复完整 chrome（标题 + 玻璃底栏）。
-     */
-    override fun onConfigurationChanged(newConfig: Configuration) {
-        super.onConfigurationChanged(newConfig)
-        // 配置变化时用新配置校准 landscape（与 orientListener 的物理朝向判断互为兜底）
-        landscape = newConfig.orientation == Configuration.ORIENTATION_LANDSCAPE
-        applyOrientationLayout()
-        handler.post { snapIndicator() }
-    }
-
-    private fun applyOrientationLayout() {
-        // landscape 由调用方设置（orientListener / onConfigurationChanged），
-        // 这里不再从 resources.configuration 重读 —— 避免 requestedOrientation 未生效时
-        // 配置方向滞后于物理朝向，导致横屏仍停在触控板页。
-        val dm = resources.displayMetrics
-        Log.i(
-            TAG,
-            "applyOrientationLayout: landscape=$landscape " +
-                "config=${resources.configuration.orientation} ${dm.widthPixels}x${dm.heightPixels}"
-        )
-
-        // 结构与间距差异全部交给 res/layout-land/；
-        // 但 include 标签的 android:visibility 会被 LayoutInflater 忽略（只认 layout_* 和 id），
-        // 所以顶栏/底栏的显隐只能在这里设。
-        headerBar.visibility = if (landscape) View.GONE else View.VISIBLE
-        tabBarView.visibility = if (landscape) View.GONE else View.VISIBLE
-
-        // 竖屏布局里 pageKeyboard / pageTouchpad 的 paddingBottom（104dp / 90dp）是给悬浮
-        // 底栏留位的；横屏底栏隐藏、且旋屏不重建（configChanges 含 orientation → layout-land
-        // 不生效），所以这里必须手动把底部留白去掉，否则横屏键盘下方会顶出一大片白
-        // （真机复现：键盘内容只到约 2/3 屏高，下面 300px 空白）。
-        if (::pageKeyboardView.isInitialized) {
-            pageKeyboardView.setPadding(
-                pageKeyboardView.paddingLeft, pageKeyboardView.paddingTop,
-                pageKeyboardView.paddingRight, if (landscape) dp(2) else dp(104),
-            )
-        }
-        if (::pageTouchpadView.isInitialized) {
-            pageTouchpadView.setPadding(
-                pageTouchpadView.paddingLeft, pageTouchpadView.paddingTop,
-                pageTouchpadView.paddingRight, if (landscape) dp(16) else dp(90),
-            )
-        }
-
-        // 朝向即操控面：竖屏=触控板，横屏=全键盘（键盘页已移出底栏，横屏自动呈现）。
-        // 旋屏时 Activity 不重建（configChanges 含 orientation），这里是唯一的切页时机。
-        if (::pager.isInitialized) {
-            val target = if (landscape) PAGE_KEYBOARD else PAGE_TOUCHPAD
-            if (pager.displayedChild != target) showPage(target)
-        }
-
-        if (landscape) navGlass.setIndicator(null)
-        applyImmersive()
-        applyNavBarWidth()
-    }
-
-    /**
-     * 沉浸：横屏把**通知栏也盖掉**（整屏都是操控面）；
-     * 竖屏保留状态栏（时间/电量有用），但盖掉底部导航手势条 —— 就是那条"白色横"。
-     * 两种情况都留 BY_SWIPE：临时下拉/上滑能把系统栏唤出来，不会把自己锁死。
-     */
-    private fun applyImmersive() {
-        val c = window.insetsController ?: return
-        c.systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-        if (landscape) {
-            c.hide(WindowInsets.Type.statusBars() or WindowInsets.Type.navigationBars())
-        } else {
-            c.show(WindowInsets.Type.statusBars())
-            c.hide(WindowInsets.Type.navigationBars())
-        }
-    }
-
-    /**
-     * 四指左右滑切页（横屏唯一的换页方式，避开触控板自身的一~三指手势）。
-     * 走 [dispatchTouchEvent] 而不是 onTouchEvent：键盘页按键会吃掉事件序列，
-     * 只有分发的第一站能稳定看到四指。
-     */
-    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
-        if (landscape && ::pager.isInitialized) {
-            when (ev.actionMasked) {
-                MotionEvent.ACTION_DOWN -> {
-                    fourFingerStartX = -1f
-                    fourFingerSwiped = false
-                }
-                MotionEvent.ACTION_POINTER_DOWN ->
-                    if (ev.pointerCount >= FINGERS_TO_SWITCH && fourFingerStartX < 0f) {
-                        fourFingerStartX = ev.x
-                        fourFingerSwiped = false
-                    }
-                MotionEvent.ACTION_MOVE ->
-                    if (fourFingerStartX >= 0f && !fourFingerSwiped &&
-                        ev.pointerCount >= FINGERS_TO_SWITCH
-                    ) {
-                        val dx = ev.x - fourFingerStartX
-                        if (abs(dx) > dp(56)) {
-                            fourFingerSwiped = true
-                            val next = if (dx < 0) PAGE_KEYBOARD else PAGE_TOUCHPAD
-                            if (next != pager.displayedChild) {
-                                cancelChildGestures(ev)
-                                showPage(next)
-                            }
-                            return true
-                        }
-                    }
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    fourFingerStartX = -1f
-                    fourFingerSwiped = false
-                }
-            }
-        }
-        return super.dispatchTouchEvent(ev)
-    }
-
-    /** 切页时给子视图补一个 CANCEL，避免键帽/页签停在"按下"高亮态 */
-    private fun cancelChildGestures(ev: MotionEvent) {
-        val cancel = MotionEvent.obtain(ev)
-        cancel.action = MotionEvent.ACTION_CANCEL
-        super.dispatchTouchEvent(cancel)
-        cancel.recycle()
-    }
-
-    private fun applyNavBarWidth() {
-        val lp = tabBarView.layoutParams as? FrameLayout.LayoutParams ?: return
-        lp.width = min(resources.displayMetrics.widthPixels - dp(32), dp(430))
-        lp.gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-        tabBarView.layoutParams = lp
-    }
-
-
-
-    // ————————————————————————— 液态玻璃底栏 —————————————————————————
-
-    /**
-     * 底栏**不铺任何底板**：玻璃特效只做在选中胶囊上（见 [NavBarDrawable]），
-     * 半透明白 + 顶部高光 + 极细亮边，切页时胶囊在几个页签之间流动。
-     */
-    private fun setupGlass() {
-        navGlass = NavBarDrawable(this)
-        tabBarView.background = navGlass
-        tabBarView.elevation = 0f // 无底板 → 不要容器投影
-        // 初始朝向由当前配置决定（冷启动时物理朝向 = 配置方向）
-        landscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
-        applyOrientationLayout() // 竖屏/横屏两套 chrome（横屏为沉浸操控面）
-        findViewById<View>(R.id.contentStack).post { snapIndicator() }
-        // 朝向兜底：个别 ROM（MIUI 某些省电/分屏场景）旋屏不派发 onConfigurationChanged，
-        // 导致「横屏键盘没了」。每秒比对一次实际朝向，不一致就补切（幂等，代价可忽略）。
-        handler.postDelayed(orientPoll, 1000)
-    }
-
-    private val orientPoll = object : Runnable {
-        override fun run() {
-            val configLand = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
-            if (configLand != landscape) {
-                // 配置方向与期望方向（物理朝向）不一致：说明 requestedOrientation 尚未生效
-                // （某些 ROM 延迟 / 节流冲突 / configChanges 拦截）。重新请求一次，
-                // 但不覆盖 landscape —— 页面已经按物理朝向切好了，这里只催 Activity 跟上。
-                Log.i(TAG, "朝向兜底：期望=$landscape 配置=$configLand，重新请求方向")
-                requestedOrientation = if (landscape)
-                    ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-                else
-                    ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-                forcedOrient = if (landscape) 1 else 2
-            }
-            handler.postDelayed(this, 1000)
-        }
-    }
-
-    // ——————————————————— 物理朝向检测（不依赖系统方向锁） ———————————————————
-
-    /**
-     * 拿机方向 = 操控面：**竖持=触控板、横持=键盘**，与系统的方向锁定完全无关。
-     *
-     * 原理：加速度计判断物理倾角 → 横持时 [Activity#setRequestedOrientation]
-     * **由 App 主动请求横屏**（视频 App 的横屏按钮同原理，系统方向锁拦不住 App 自己的请求），
-     * configuration 随之变化 → [applyOrientationLayout] 自动切键盘；竖持同理切回触控板。
-     *
-     * 细节：
-     *  - 只在触控板/键盘两页之间自动切换，用户停在状态/设置页时不抢方向控制权；
-     *  - 带滞回与 600ms 节流：斜角 45° 附近抖动不会来回跳；
-     *  - [orientListener] 在 onResume/onPause 启停，后台不耗电。
-     */
-    private var orientListener: OrientationEventListener? = null
-    private var forcedOrient = 0          // 0=尚未强制 1=已强制横屏 2=已强制竖屏
-    private var lastOrientSwitchMs = 0L
-
-    private fun setupOrientListener() {
-        if (orientListener != null) return
-        orientListener = object : OrientationEventListener(this, android.hardware.SensorManager.SENSOR_DELAY_GAME) {
-            override fun onOrientationChanged(deg: Int) {
-                if (deg == ORIENTATION_UNKNOWN) return
-                if (!::pager.isInitialized) return
-                // 只自动切换两个操控面；状态/设置页保持用户当前的方向
-                val cur = pager.displayedChild
-                if (cur != PAGE_TOUCHPAD && cur != PAGE_KEYBOARD) return
-                // 滞回：明确横（60°..120° 或 240°..300°）才判横，明确竖（<15° 或 >345°）才判竖，
-                // 中间斜角保持现状，避免边界抖动
-                val want = when (deg) {
-                    in 60..120, in 240..300 -> 1
-                    in 0..15, in 345..359 -> 2
-                    else -> return
-                }
-                if (want == forcedOrient) return
-                val now = android.os.SystemClock.elapsedRealtime()
-                if (now - lastOrientSwitchMs < 1500) return   // 节流：旋转动画 ~300ms，切太快系统来不及执行
-                lastOrientSwitchMs = now
-                forcedOrient = want
-                val toLandscape = want == 1
-                // 横持：App 请求横屏（视频 App 同原理，系统方向锁拦不住）；
-                // 竖持：**交还系统**（UNSPECIFIED）而不是请求竖屏 ——
-                // 实测 MIUI 在收到 PORTRAIT 请求时会关掉自动旋转并写死 user_rotation=0，
-                // 导致之后横持请求被忽略（「键盘没了」的元凶）。交还则不会。
-                requestedOrientation = if (toLandscape)
-                    ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-                else
-                    ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-                // 直接按物理朝向切换页面，不等待 onConfigurationChanged ——
-                // 某些 ROM 下 requestedOrientation 未即时生效，配置方向滞后，
-                // 若只靠 applyOrientationLayout 里的 resources.configuration 判断，
-                // 横屏后会仍停在触控板页。
-                if (landscape != toLandscape) {
-                    landscape = toLandscape
-                    applyOrientationLayout()
-                }
-                Log.i(TAG, "物理朝向切换：force=$want deg=$deg landscape=$landscape")
-            }
-        }
-    }
-
-    /** 底部页签：绑定点击与选中态（胶囊底 + 图标 / 文字同步染色） */
-    private fun buildTabs() {
-        // 键盘页不占底栏位：横屏沉浸模式自动呈现（底栏 3 页签：触控板 / 状态 / 设置）。
-        // 朝向切换由 [applyOrientationLayout] + orientPoll 兜底轮询保证。
-        listOf(
-            intArrayOf(R.id.tabTouchpad, R.id.ivTabTouchpad, R.id.tvTabTouchpad, R.id.tabPillTouchpad),
-            intArrayOf(R.id.tabStatus, R.id.ivTabStatus, R.id.tvTabStatus, R.id.tabPillStatus),
-            intArrayOf(R.id.tabSettings, R.id.ivTabSettings, R.id.tvTabSettings, R.id.tabPillSettings),
-        ).forEachIndexed { tabIndex, ids ->
-            val page = TAB_PAGES[tabIndex]
-            val tab = findViewById<LinearLayout>(ids[0])
-            tab.setOnClickListener { showPage(page) }
-            // 液态玻璃按压：落点处扩散出一圈玻璃波前 + 整体微缩，松手带 overshoot 弹回。
-            // 震动与触摸音效由 [Feedback] 统一发出，和键盘键帽同一套手感。
-            tab.setOnTouchListener { v, e ->
-                when (e.actionMasked) {
-                    MotionEvent.ACTION_DOWN -> {
-                        v.animate().cancel()
-                        v.animate().scaleX(0.92f).scaleY(0.92f)
-                            .setDuration(ThemeSkin.motionMs(this@MainActivity, 140L)).start()
-                        Feedback.tap(v)
-                        playGlassRipple(v, tabPills[tabIndex], e.x, e.y)
-                    }
-                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                        v.animate().cancel()
-                        v.animate().scaleX(1f).scaleY(1f)
-                            .setDuration(ThemeSkin.motionMs(this@MainActivity, 420L))
-                            .setInterpolator(OvershootInterpolator(2.2f)).start()
-                    }
-                }
-                false // 交回给 click
-            }
-            tabViews += tab
-            tabIcons += findViewById<ImageView>(ids[1])
-            tabLabels += findViewById<TextView>(ids[2])
-            tabPills += findViewById<LinearLayout>(ids[3])
-            if (tabIndex == 0) {
-                tab.isLongClickable = true
-                tab.setOnLongClickListener {
-                    showTargetMenu()
-                    true
-                }
-            }
-        }
-        // 初始页跟随朝向：竖屏=触控板，横屏=键盘（与 applyOrientationLayout 保持一致）
-        showPage(if (landscape) PAGE_KEYBOARD else PAGE_TOUCHPAD)
-    }
-
-    /**
-     * 玻璃扩散：从按下的**落点**向外铺开一圈波前（中心柔光 + 前缘亮环），慢慢变淡后自己收尾。
-     * 落点坐标要从页签容器换算到内层胶囊（两者原点不同），否则光晕会长在页签外。
-     */
-    private fun playGlassRipple(tab: View, pill: View, x: Float, y: Float) {
-        if (pill.width <= 0 || pill.height <= 0) return
-        val tl = IntArray(2)
-        val pl = IntArray(2)
-        tab.getLocationInWindow(tl)
-        pill.getLocationInWindow(pl)
-        val maxR = maxOf(pill.width, pill.height) * 1.05f
-        val dur = ThemeSkin.motionMs(this, 620L)
-        if (dur <= 0L) return // 动效关闭：只留震动 / 音效
-        val ripple = GlassRipple(
-            x + tl[0] - pl[0],
-            y + tl[1] - pl[1],
-            resources.getColor(R.color.nav_pill_shine),
-            resources.getColor(R.color.md_primary),
-            maxR,
-            dur,
-        ).apply {
-            onFinish = { if (pill.foreground === this) pill.foreground = null }
-        }
-        pill.foreground = ripple
-        ripple.play()
-    }
-
-    /** 切页：标题栏、页签染色与选中胶囊同步（内容页各自独立滚动） */
-    private fun showPage(i: Int) {
-        if (!::pager.isInitialized) return
-        pager.displayedChild = i
-        tvPageTitle.text = getString(PAGE_TITLES[i])
-        tvPageSub.text = getString(PAGE_SUBS[i])
-        if (i == PAGE_TOUCHPAD) renderChips()
-        tabViews.indices.forEach { k ->
-            val on = TAB_PAGES[k] == i
-            val color = resources.getColor(if (on) R.color.md_primary else R.color.state_idle)
-            tabIcons[k].setColorFilter(color)
-            tabLabels[k].setTextColor(color)
-            tabLabels[k].setTypeface(null, if (on) Typeface.BOLD else Typeface.NORMAL)
-            tabPills[k].background = null // 选中底由底栏 Drawable 里的滑动胶囊承担
-        }
-        // 横屏沉浸模式：没有底栏，靠四指左右滑换页
-        if (landscape) return
-        // 新页布局完成后再滑动胶囊（否则取到的还是上一页的坐标）
-        findViewById<View>(R.id.contentStack).post { animateIndicator() }
-    }
-
-    /** 选中胶囊在页签之间滑动（位移 + 宽度一起插值，像液体被推着走） */
-    private fun animateIndicator() {
-        val bar = tabBarView
-        if (bar.visibility != View.VISIBLE || bar.width <= 0) {
-            navGlass.setIndicator(null)
-            return
-        }
-        val tabIndex = TAB_PAGES.indexOf(pager.displayedChild)
-        if (tabIndex < 0) return
-        val pill = tabPills[tabIndex]
-        if (pill.width <= 0) return
-        val bl = IntArray(2)
-        val pl = IntArray(2)
-        bar.getLocationInWindow(bl)
-        pill.getLocationInWindow(pl)
-        val target = RectF(
-            (pl[0] - bl[0]).toFloat(),
-            (pl[1] - bl[1]).toFloat(),
-            (pl[0] - bl[0] + pill.width).toFloat(),
-            (pl[1] - bl[1] + pill.height).toFloat(),
-        )
-        val from = navGlass.indicatorRect() ?: target
-        indicatorAnimator?.cancel()
-        indicatorAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
-            duration = ThemeSkin.motionMs(this@MainActivity, 560L)
-            interpolator = DecelerateInterpolator(1.3f)
-            addUpdateListener { a ->
-                val t = a.animatedFraction
-                // 液态：中心沿路径平移（缓出），宽度在中段**膨胀**一下再收回
-                // —— 玻璃被推着走时会先"胖"一圈，落定后恢复目标尺寸。
-                val ease = 1f - (1f - t) * (1f - t)
-                val cx = from.centerX() + (target.centerX() - from.centerX()) * ease
-                val cy = from.centerY() + (target.centerY() - from.centerY()) * ease
-                val bulge = 1f + 0.20f * kotlin.math.sin(Math.PI.toFloat() * t)
-                val w = (from.width() + (target.width() - from.width()) * t) * bulge
-                val h = (from.height() + (target.height() - from.height()) * t)
-                navGlass.setIndicator(RectF(cx - w / 2f, cy - h / 2f, cx + w / 2f, cy + h / 2f))
-            }
-            start()
-        }
-    }
-
-    /** 立即归位（横竖屏切换等无动画场景） */
-    private fun snapIndicator() {
-        indicatorAnimator?.cancel()
-        navGlass.setIndicator(null)
-        val bar = findViewById<View>(R.id.tabBar)
-        val pill = tabPills.getOrNull(TAB_PAGES.indexOf(pager.displayedChild)) ?: return
-        val bl = IntArray(2)
-        val pl = IntArray(2)
-        bar.getLocationInWindow(bl)
-        pill.getLocationInWindow(pl)
-        navGlass.setIndicator(
-            RectF(
-                (pl[0] - bl[0]).toFloat(),
-                (pl[1] - bl[1]).toFloat(),
-                (pl[0] - bl[0] + pill.width).toFloat(),
-                (pl[1] - bl[1] + pill.height).toFloat(),
-            )
-        )
-    }
-
-    // ————————————————————————— 触控板页 —————————————————————————
-
-    /**
-     * 手势兜底：只有触控板页、且事件未被快捷键条等子视图消费时才喂手势引擎。
-     * 整页手势面（含空白区）都能滑动控制光标。
-     */
-    override fun onTouchEvent(ev: MotionEvent): Boolean {
-        if (!::pager.isInitialized || pager.displayedChild != PAGE_TOUCHPAD) {
-            return super.onTouchEvent(ev)
-        }
-        // 触控板页的手势分发 / 液态光标 / 长按拖拽已由 TouchpadFragment 接管（v196）。
-        // 这里只做"当前是不是触控板页"的判定与转发。
-        return touchpadFragment?.onTouchEvent(ev) ?: true
-    }
-
-    // ————————————————————————— 快捷键网格（实现见 ui/HotkeyBoard） —————————————————————————
-
-    /**
-     * 主页版皮肤：颜色跟当前模板的主题色（深色下自动提亮）。
-     * 触控板页横竖屏共用竖屏模板：每行 4 个、不固定行数（横屏触控板已不做左右分栏）。
-     */
-    private fun boardStyle(): HotkeyBoard.Style {
-        // 快捷键配色优先用用户选的皮肤；没选则沿用当前模板的主题色
-        val tint = if (ThemeSkin.picked(this, ThemeSkin.HOTKEY).isNotBlank()) {
-            ThemeSkin.current(this, ThemeSkin.HOTKEY).accent
-        } else {
-            HotkeyTemplates.tint(this, templateColor())
-        }
-        return HotkeyBoard.Style(
-            chipText = tint,
-            chipBg = softTint(tint),
-            chipStroke = (tint and 0x00FFFFFF) or (0x40 shl 24),
-            chipRadiusDp = 14,
-            padVDp = 11,
-            perRow = 4,
-            fixedRows = 0,
-            stretchRows = false,
-            accent = resources.getColor(R.color.md_primary),
-            textPrimary = resources.getColor(R.color.md_on_surface),
-            textSecondary = resources.getColor(R.color.md_on_surface_variant),
-        )
-    }
-
-    // ————————————————————————— TouchpadFragment.Host —————————————————————————
-    // 触控板页拆成 Fragment 后由它驱动，宿主只提供数据与转发（v196 接线第 1 步：
-    // 先把接口实现齐、编译通过，下一步再 add Fragment 并删除下方重复实现）。
-    // 本项目用的是平台 android.app.Fragment（非 androidx），所以宿主**不需要** FragmentActivity。
-
-    override fun getTouchpadHandler(): Handler = handler
-
-    override fun feedGesture(ev: MotionEvent) {
-        (AgentController.module(ModuleId.TOUCHPAD) as? com.allperiph.touchpad.TouchpadModule)?.feed(ev)
-    }
-
-    override fun isTouchpadPage(): Boolean =
-        ::pager.isInitialized && pager.displayedChild == PAGE_TOUCHPAD
-
-    override fun onLongPressArmDrag() {
-        (AgentController.module(ModuleId.TOUCHPAD) as? com.allperiph.touchpad.TouchpadModule)?.armDrag()
-    }
-
-    override fun getHotkeyBoard(): HotkeyBoard = hotkeyBoard
-
-    // 触控板页三个视图交给 Fragment（Activity 侧已 findViewById 完毕，字段必然非空）
-    override fun hostTouchHint(): TextView = touchHint
-    override fun hostChipRow(): LinearLayout = chipRow
-    override fun hostTouchArea(): FrameLayout = touchArea as FrameLayout
-
-    // ———— SettingsFragment.Host（v196 第 3 步）————
-    // 设置页拆成 Fragment 后由它渲染；宿主提供环境与副作用（主题/背景/文件选择器/重建）。
-
-    override fun getSettingsHandler(): Handler = handler
-
-    override fun recreateActivity() = recreate()
-
-    override fun isControlling(): Boolean = ControlTarget.isControlling()
-
-    override fun getControlTargetLabel(): String = ControlTarget.label
-
-    /** 主题导入的结果处理（从 onActivityResult 的 REQ_IMPORT_THEME 分支抽出，
-     *  Fragment 拿到 uri 后调过来 —— Activity 级回调与 Fragment 共用同一份逻辑。 */
-    override fun handleThemeResult(uri: android.net.Uri) {
-        val text = runCatching {
-            contentResolver.openInputStream(uri)?.use { it.readBytes().decodeToString() }
-        }.getOrNull()
-        val n = ThemeSkin.importJson(this, text.orEmpty())
-        if (n < 0) {
-            toast(getString(R.string.ui_main_toast_theme_file_export))
-        } else {
-            toast(if (n > 0) getString(R.string.ui_main_text_color_import_done, n) else getString(R.string.ui_main_text_theme_done))
-            recreate()
-        }
-    }
-
-    /** 背景图选择的结果处理（同上，从 REQ_PICK_BG 分支抽出） */
-    override fun handleBgResult(uri: android.net.Uri) {
-        // 申请持久读权限：不申请的话重启后这张图就读不到了
-        runCatching {
-            contentResolver.takePersistableUriPermission(
-                uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
-            )
-        }
-        ThemeSkin.setBgImage(this, uri.toString())
-        applyBackdrop()
-        renderFx()
-        toast(getString(R.string.ui_main_toast_background_done_settings))
-    }
-
-    // ———— StatusFragment.Host（v196 第 4 步）————
-    // 状态页（启动开关/传输开关/模块行/链路诊断）拆给 StatusFragment，宿主只提供
-    // 环境与服务控制。AgentController 全是静态 API，所以这里都是薄封装。
-
-    override fun getStatusHandler(): Handler = handler
-
-    override fun buildAgentController() {
-        AgentController.build(this)
-    }
-
-    override fun isTransportEnabled(transport: String): Boolean =
-        AgentController.isTransportEnabled(this, transport)
-
-    override fun setTransportEnabled(transport: String, enabled: Boolean) {
-        AgentController.setTransportEnabled(this, transport, enabled)
-        // 与 Activity 原逻辑一致：传输开关变化后模块行与运行摘要都要重算
-        refresh()
-    }
-
-    override fun groupModules(transport: String): List<String> =
-        AgentController.groupModules(transport)
-
-    override fun groupsOf(moduleId: String): List<String> = AgentController.groupsOf(moduleId)
-
-    override fun isModuleEnabled(moduleId: String): Boolean =
-        AgentController.isEnabled(this, moduleId)
-
-    override fun setModuleEnabled(moduleId: String, enabled: Boolean) {
-        AgentController.setModuleEnabled(this, moduleId, enabled)
-        refresh()
-    }
-
-    override fun isExitEnabled(moduleId: String, group: String): Boolean =
-        AgentController.isExitEnabled(moduleId, group)
-
-    override fun setExitEnabled(moduleId: String, group: String, enabled: Boolean) {
-        AgentController.setExitEnabled(this, moduleId, group, enabled)
-    }
-
-    override fun getModuleState(moduleId: String): ModuleState =
-        AgentController.module(moduleId)?.state ?: ModuleState.STOPPED
-
-    override fun getModuleStatusLabel(moduleId: String): String =
-        AgentController.module(moduleId)?.let { AgentController.detailOf(it) } ?: "—"
-
-    override fun startForegroundService() {
-        AgentForegroundService.start(this)
-    }
-
-    override fun stopForegroundService() {
-        AgentController.stopAll()
-        stopService(Intent(this, AgentForegroundService::class.java))
-    }
-
-    override fun getEnvSummary(): String =
-        lastEnv?.summary ?: getString(R.string.common_unknown)
-
-    override fun getLastEnv(): EnvChecks.Env? = lastEnv
-
-    /** 顶栏徽章：状态文案 + 颜色 + 出口提示（v196 由 Fragment 统一驱动，避免两处各写一份） */
-    override fun onStatusBadgeUpdate(stateLabel: String, stateColor: Int, uplinkPath: String) {
-        tvPageSub?.text = stateLabel
-        runCatching { tvPageSub?.setTextColor(stateColor) }
-        renderUplink()
-    }
-
-    override fun isBtConnected(): Boolean =
-        (AgentController.module(com.allperiph.core.ModuleId.BTHID) as? com.allperiph.bt.BtHidDevice)?.isConnected == true
-
-    override fun renderChips() = hotkeyBoard.render()
-
-    /** 设置页的自动排序开关跟随真实状态（拖拽/上下移会把它关掉，开关要跟着变） */
-    override fun syncSortSwitch() {
-        val sw = findViewById<Switch>(R.id.swHotkeySort) ?: return
-        val on = HotkeyStore.isAutoSort(this)
-        if (sw.isChecked != on) sw.isChecked = on // 值有变才赋值，listener 不会无限递归
-    }
-
-    /** 当前生效模板的主题色；逐条改过（自定义）时回落到主色 */
-    override fun templateColor(): Int =
-        HotkeyTemplates.byKey(HotkeyStore.loadTemplate(this))?.color
-            ?: resources.getColor(R.color.md_primary)
-
-    /** 同色调的浅底（12% 不透明度），给 chip / 模板行做底 */
-    override fun softTint(color: Int): Int =
-        (color and 0x00FFFFFF) or (0x1F shl 24)
-
-
-    // ————————————————————————— TV / PC 控制（长按底栏「触控板」进入） —————————————————————————
-
-    /** 连入 TV/PC（9511）并设为当前控制目标：主页触摸板与快捷键会自动改发到对端
-     * @param type 设备类型 "tv" 或 "pc"，决定快捷键条是否进 TV 专属布局 */
-    override fun connectTarget(ip: String, port: Int, name: String, type: String) =
-        connectTargetInternal(ip, port, name, type)
-
-    private fun connectTargetInternal(ip: String, port: Int, name: String, type: String = "tv") {
-        Thread({
-            val c = TvControllerClient(ip, port)
-            val ok = c.connect()
-            runOnUiThread {
-                // connect() 最长阻塞 5s，期间用户可能已经退出页面
-                if (isFinishing || isDestroyed) {
-                    c.disconnect()
-                    return@runOnUiThread
-                }
-                if (ok) {
-                    // ⚠️ 必须先断开旧连接：旧实例仍是 running，它的 readerLoop 会
-                    // 每 2s 无限重连**旧 IP**，并一直留着 socket + tx/ping 三条线程。
-                    // 以前这里直接覆盖，于是每换一次受控设备就永久多留一套。
-                    ControlTarget.controlClient?.takeIf { it !== c }?.disconnect()
-                    ControlTarget.controlClient = c
-                    ControlTarget.host = ip
-                    ControlTarget.label = name
-                    ControlTarget.type = type
-                    // 连接历史：连上就记一笔（v196 接线 —— ConnectHistory 此前零调用点，
-                    // 「最近连过哪些设备」持久化功能等于不存在）。
-                    ConnectHistory.add(this, name, ip, port)
-                    c.onReverseClipboard = { text -> runOnUiThread { recvReverseClipboard(text) } }
-                    onTargetChanged()
-                    Toast.makeText(this, getString(R.string.ui_main_toast_done, name), Toast.LENGTH_SHORT).show()
-                } else {
-                    ControlTarget.clear()
-                    onTargetChanged()
-                    // 失败句给"为什么 + 下一步"，别只说一句连不上
-                    Toast.makeText(
-                        this,
-                        "连不上 $ip —— 确认两台设备在同一个 Wi‑Fi，或改用「手动输入 IP」直连",
-                        Toast.LENGTH_LONG
-                    ).show()
-                }
-            }
-        }, "apx-target").start()
-    }
-
-    /** 设备选择：本机/PC + 已发现设备 + 手动输入 IP（TV 与 PC 都跑 9511）
-     *  信标是周期广播的，弹窗打开瞬间往往还没收到 —— 打开期间每秒刷新列表。 */
-    override fun showDevicePicker() {
-        TvDiscovery.start()
-        val items = ArrayList<CharSequence>()
-        val adapter = android.widget.ArrayAdapter<CharSequence>(
-            this, android.R.layout.simple_list_item_1, items
-        )
-        fun rebuild() {
-            items.clear()
-            items.add(getString(R.string.ui_main_item_local))
-            TvDiscovery.list().forEach {
-                items.add("${it.name}  ${it.ip}  ${it.typeLabel}")
-            }
-            if (items.size == 1) items.add(getString(R.string.ui_main_item_device))
-            items.add(getString(R.string.ui_main_item_input_manual))
-            adapter.notifyDataSetChanged()
-        }
-        rebuild()
-        val dlg = AlertDialog.Builder(this, R.style.Theme_AllPeriph_Miuix_Dialog)
-            .setTitle(getString(R.string.ui_main_dialog_device_pick))
-            .setAdapter(adapter) { _, which ->
-                val tvs = TvDiscovery.list()
-                when {
-                    which == 0 -> { ControlTarget.clear(); onTargetChanged() }
-                    which == items.size - 1 -> promptTargetIp()
-                    tvs.isEmpty() -> { /* 占位「搜索中」，忽略 */ }
-                    else -> {
-                        val tv = tvs.getOrNull(which - 1) ?: return@setAdapter
-                        connectTarget(tv.ip, tv.port, tv.name, tv.type)
-                    }
-                }
-            }
-            .setNegativeButton(getString(R.string.ui_common_cancel), null)
-            .create()
-        val tick = object : Runnable {
-            override fun run() {
-                if (!dlg.isShowing) return
-                rebuild()
-                handler.postDelayed(this, 1000)
-            }
-        }
-        dlg.setOnShowListener { handler.postDelayed(tick, 1000) }
-        dlg.setOnDismissListener {
-            handler.removeCallbacks(tick)
-            // 从遥控页过来的：**选完或取消都自动回去**（点条目/取消/返回键都会 dismiss，
-            // 所以放这里能覆盖全部出口）。不移除的话用户会停在触控板页，就是反馈里的"跳回触控页"。
-            if (pickDeviceThenReturn) {
-                pickDeviceThenReturn = false
-                if (!isFinishing) finish()
-            }
-        }
-        dlg.show()
-    }
-
-    private fun promptTargetIp() {
-        val edit = EditText(this).apply {
-            hint = getString(R.string.ui_main_hint_manual_ip)
-            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_URI
-            setPadding(dp(20), dp(12), dp(20), dp(12))
-        }
-        AlertDialog.Builder(this, R.style.Theme_AllPeriph_Miuix_Dialog)
-            .setTitle(getString(R.string.ui_main_dialog_input))
-            .setView(edit)
-            .setPositiveButton(getString(R.string.ui_common_connect)) { _, _ ->
-                val ip = edit.text.toString().trim()
-                if (ip.isNotEmpty()) connectTarget(ip, TvControllerClient.PORT, ip, "tv")
-            }
-            .setNegativeButton(getString(R.string.ui_common_cancel), null)
-            .show()
-    }
-
-    /** 长按底栏「触控板」：选控制目标 / 副屏 / 断开 */
-    private fun showTargetMenu() {
-        val items = ArrayList<CharSequence>()
-        items.add(getString(R.string.ui_main_item_link))
-        items.add(getString(R.string.ui_main_item_screen))
-        // 全屏操控面（触控板 / 键盘 / 副屏三页）的**第二个入口**：
-        // 主页面本身够用，但全屏操控面原先只能从"被控通知"进，这里补上随手可达的一处。
-        items.add(getString(R.string.ui_main_item_fullscreen_console))
-        if (ControlTarget.isControlling()) items.add(getString(R.string.ui_main_item_disconnect_to_local_local))
-        AlertDialog.Builder(this, R.style.Theme_AllPeriph_Miuix_Dialog)
-            .setTitle(getString(R.string.ui_main_dialog_touchpad))
-            .setItems(items.toTypedArray()) { _, which ->
-                when (which) {
-                    0 -> showDevicePicker()
-                    1 -> startActivity(Intent(this, ScreenActivity::class.java))
-                    2 -> startActivity(Intent(this, com.allperiph.touchpad.TouchpadActivity::class.java))
-                    3 -> { ControlTarget.clear(); onTargetChanged(); Toast.makeText(this, getString(R.string.ui_main_toast_done_to_local_local), Toast.LENGTH_SHORT).show() }
-                }
-            }
-            .setNegativeButton(getString(R.string.ui_common_cancel), null)
-            .show()
-    }
-
-    /**
-     * 出口提示：把"输入此刻到底发去哪了"写到触控板页提示行 + 顶栏徽章 + 设置页状态行。
-     *
-     * 真机教训：出口是**多级回落**的（无线目标 → USB HID → 蓝牙 → 无出口），任何一级失效
-     * 原先都只是日志里一行字，用户看到的现象统一是"点不动"—— 提示必须放在随手可见处。
-     */
-    override fun renderUplink() {
-        if (!::touchHint.isInitialized) return
-        // 提示行在滑动开始后会被收起（见 onTouchEvent），这里顺手恢复可见
-        touchHint.visibility = android.view.View.VISIBLE
-        val base = if (ControlTarget.isControlling()) getString(R.string.ui_main_text_controlling, ControlTarget.label) else getString(R.string.ui_main_text_local)
-        val desc = displayUplinkHint()
-        touchHint.text = if (displayUplinkPath() == Uplink.NONE) "⚠ $base · $desc" else "$base · $desc"
-        tvStatusView?.text = if (ControlTarget.isControlling()) {
-            "当前控制：${ControlTarget.label} · $desc"
-        } else {
-            "未连接（触摸板控本机）· $desc"
-        }
-    }
-
-    /**
-     * 当前**显示用**的出口。
-     *
-     * 没发送过输入时 [Uplink.current] 还是 `NONE`（它只记录"真实发出去的结果"），此时必须用
-     * [Uplink.resolve] 的**预计**出口 —— 否则一进 App 徽章就写"无出口"，又是一处误导。
-     */
-    override fun displayUplinkPath(): String {
-        if (Uplink.observed) return Uplink.current
-        val bt = (AgentController.module(ModuleId.BTHID) as? com.allperiph.bt.BtHidDevice)?.isConnected == true
-        return Uplink.resolve(
-            AgentController.runtime?.hid,
-            bt,
-            ControlTarget.isControlling() && ControlTarget.controlClient != null,
-        )
-    }
-
-    /** 出口的一行文案（未发送过输入时按预计出口描述） */
-    override fun displayUplinkHint(): String =
-        if (Uplink.observed) Uplink.hint() else Uplink.describe(displayUplinkPath())
-
-    /** 目标变化：更新触摸板提示 + 快捷键条（TV 目标时显示 TV 套） */
-    override fun onTargetChanged() {
-        val controlling = ControlTarget.isControlling()
-        renderUplink()
-        // 仅 TV 类目标进 TV 专属快捷键布局；控 PC 保持鼠标 + 完整键鼠（不切遥控/媒体套）
-        if (controlling && ControlTarget.type == "tv") hotkeyBoard.enterTvMode() else hotkeyBoard.exitTvMode()
-        // 连上目标后确保触摸板模块已启动：模块 IDLE 时 feed() 会把手势直接丢掉（连上也控不了）
-        if (controlling) AgentController.setModuleEnabled(this, ModuleId.TOUCHPAD, true)
-        renderTv()
-    }
-
-    /** 设置页渲染已移交 SettingsFragment（v196 第 3 步）：保留同名方法作为转发点，
-     *  Activity 内部原有调用点无需改动。 */
-    private fun setupSettingsTabs() { settingsFragment?.setupSettingsTabs() }
-
-    // ————————————————————————— 设置页：TV / PC 控制 —————————————————————————
-
-    /** 设置页渲染已移交 SettingsFragment（v196 第 3 步）：保留同名方法作为转发点，
-     *  Activity 内部原有调用点无需改动。 */
-    private fun renderTv() { settingsFragment?.renderTv() }
-
-    /** 被控端注入通道自检（与 TV 端首页自检对话框同一份数据源） */
-    private fun showControlledCaps() {
-        val inj = com.allperiph.shared.inject.TvInjector
-        val lines = inj.capabilities().joinToString("\n") { (name, ok, how) ->
-            if (ok) "✓  $name" else "✗  $name\n      → $how"
-        }
-        val running = com.allperiph.controlled.ControlledService.isRunning()
-        AlertDialog.Builder(this, R.style.Theme_AllPeriph_Miuix_Dialog)
-            .setTitle(getString(R.string.ui_main_label_state_channel_inject))
-            .setMessage(
-                "当前通道：${inj.channelText()}\n" +
-                        "被控服务：${if (running) "运行中" else "未运行（在「全屏操控面」里点「被控」开启）"}\n\n" +
-                        lines
-            )
-            .setPositiveButton(getString(R.string.ui_main_btn_a11y_settings)) { _, _ ->
-                runCatching { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
-            }
-            .setNegativeButton(getString(R.string.ui_common_close), null)
-            .show()
-    }
-
-    /** 运行日志（[com.allperiph.shared.util.Log] 的环形缓冲，此前没有 UI 消费者） */
-    private fun showLogs() {
-        val snap = com.allperiph.shared.util.Log.snapshot()
-        val text = if (snap.isEmpty()) {
-            "暂无日志 —— 只有达到「日志级别」的记录才会留下"
-        } else {
-            snap.takeLast(120).joinToString("\n") { e -> "${e.level} ${e.tag}: ${e.msg}" }
-        }
-        AlertDialog.Builder(this, R.style.Theme_AllPeriph_Miuix_Dialog)
-            .setTitle(getString(R.string.ui_main_dialog_log, minOf(snap.size, 120)))
-            .setMessage(text)
-            .setNeutralButton(getString(R.string.ui_common_copy)) { _, _ ->
-                // v208：一键复制整段日志（此前只能对着屏幕抄）。写系统剪贴板；
-                // 「手机复制 → 电脑粘贴」的剪贴板同步会顺带把它带去电脑（用户主动复制，非回传）。
-                val cm = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                cm?.setPrimaryClip(ClipData.newPlainText("APX-log", text))
-                Toast.makeText(this, getString(R.string.ui_common_copied), Toast.LENGTH_SHORT).show()
-            }
-            .setPositiveButton(getString(R.string.ui_common_close), null)
-            .show()
-    }
-
-    /** 设置页渲染已移交 SettingsFragment（v196 第 3 步）：保留同名方法作为转发点，
-     *  Activity 内部原有调用点无需改动。 */
-    private fun renderFile() { settingsFragment?.renderFile() }
-
-    private fun pickFileToSend() {
-        if (ControlTarget.host.isEmpty() || !ControlTarget.isControlling()) {
-            Toast.makeText(this, getString(R.string.ui_main_toast_device_not), Toast.LENGTH_SHORT).show()
-            return
-        }
-        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-            type = "*/*"
-            addCategory(Intent.CATEGORY_OPENABLE)
-        }
-        startActivityForResult(intent, REQ_PICK_FILE)
-    }
-
-    private fun sendFile(uri: Uri) {
-        val host = ControlTarget.host
-        Toast.makeText(this, getString(R.string.ui_main_toast_file_send), Toast.LENGTH_SHORT).show()
-        Thread({
-            val ok = FileSender.send(this, host, uri)
-            runOnUiThread {
-                Toast.makeText(
-                    this,
-                    if (ok) getString(R.string.ui_main_text_file_send_done) else getString(R.string.ui_main_text_device_send_failed_confirm),
-                    if (ok) Toast.LENGTH_SHORT else Toast.LENGTH_LONG
-                ).show()
-            }
-        }, "apx-file").start()
-    }
-
-    /** 设置页渲染已移交 SettingsFragment（v196 第 3 步）：保留同名方法作为转发点，
-     *  Activity 内部原有调用点无需改动。 */
-    private fun renderKeymap() { settingsFragment?.renderKeymap() }
-
-    // ————————————————————————— 设置页 —————————————————————————
-
-    /** 快捷键模板 + 主题方案（数量/内容由数据决定，故运行时构建） */
-    private fun buildSettingsPanels() {
-        hotkeyBoard.reload() // 含渲染；皮肤取自当前模板色
-        renderTemplates()
-        renderTheme()
-        renderSkins()
-        renderFx()
-        renderFile()
-        renderKeymap()
-        onTargetChanged()  // 含 renderTv + 触摸板提示 / 快捷键切换
-        // 快捷键自动排序开关：改完立刻按新规则重排快捷键条
-        findViewById<Switch>(R.id.swHotkeySort).apply {
-            isChecked = HotkeyStore.isAutoSort(this@MainActivity)
-            setOnCheckedChangeListener { _, on ->
-                HotkeyStore.setAutoSort(this@MainActivity, on)
-                renderChips()
-            }
-        }
-    }
-
-    // ————————————————————————— 模板（预置 + 用户自建） —————————————————————————
-
-    /** 自建模板的 key 前缀（与预置模板区分） */
-    private val customPrefix = "custom:"
-
-    /** 自建模板可选主题色（与预置模板同一套色系） */
-    private val templatePalette = intArrayOf(
-        0xFF3482FF.toInt(), 0xFF7C5CFF.toInt(), 0xFF00A870.toInt(), 0xFFFF7A00.toInt(),
-        0xFFE0457B.toInt(), 0xFF12B0C8.toInt(), 0xFF5B6470.toInt(), 0xFF1E9E5A.toInt(),
-    )
-
-    /** 用户自建模板（每次渲染重新读盘，避免与其它入口状态不一致） */
-    private var customTemplates: MutableList<HotkeyTemplates.Template> = mutableListOf()
-
-    /** 设置页渲染已移交 SettingsFragment（v196 第 3 步）：保留同名方法作为转发点，
-     *  Activity 内部原有调用点无需改动。 */
-    private fun toggleTemplates() { settingsFragment?.toggleTemplates() }
-
-    /** 设置页渲染已移交 SettingsFragment（v196 第 3 步）：保留同名方法作为转发点，
-     *  Activity 内部原有调用点无需改动。 */
-    private fun renderTemplates() { settingsFragment?.renderTemplates() }
-
-    /** 新建模板：名称 + 主题色由用户给，内容取**当前快捷键条** */
-    private fun createTemplateDialog() {
-        if (hotkeyBoard.shortcuts.isEmpty()) {
-            android.widget.Toast.makeText(
-                this, "快捷键条还是空的，先在触控板页加几条", android.widget.Toast.LENGTH_SHORT
-            ).show()
-            return
-        }
-        val box = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(6), dp(20), dp(6))
-        }
-        box.addView(fieldLabel(getString(R.string.ui_main_label_template)))
-        val nameEt = EditText(this).apply {
-            hint = getString(R.string.ui_main_hint_hotkey)
-            textSize = 15f
-            setSingleLine()
-            setTextColor(resources.getColor(R.color.md_on_surface))
-        }
-        box.addView(nameEt, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
-
-        box.addView(fieldLabel(getString(R.string.ui_main_label_theme)), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(14) })
-        var pickedIndex = 0
-        val dots = mutableListOf<TextView>()
-        val colorRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        templatePalette.forEachIndexed { idx, color ->
-            val dot = TextView(this).apply {
-                background = dotBg(color, idx == 0)
-                isClickable = true
-                setOnClickListener {
-                    pickedIndex = idx
-                    dots.forEachIndexed { k, d -> d.background = dotBg(templatePalette[k], k == idx) }
-                }
-            }
-            dots += dot
-            colorRow.addView(dot, LinearLayout.LayoutParams(dp(28), dp(28)).apply { rightMargin = dp(10) })
-        }
-        box.addView(colorRow, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(8) })
-        box.addView(TextView(this).apply {
-            text = getString(R.string.ui_main_text_hotkey_touchpad, hotkeyBoard.shortcuts.size)
-            textSize = 12f
-            setTextColor(resources.getColor(R.color.md_on_surface_variant))
-        }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(14) })
-
-        AlertDialog.Builder(this, R.style.Theme_AllPeriph_Miuix_Dialog)
-            .setTitle(getString(R.string.ui_main_dialog_template_new))
-            .setView(box)
-            .setPositiveButton(getString(R.string.ui_common_save), null)
-            .setNegativeButton(getString(R.string.ui_common_cancel), null)
-            .create()
-            .apply {
-                setOnShowListener {
-                    getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                        val t = HotkeyTemplates.Template(
-                            key = customPrefix + System.currentTimeMillis(),
-                            name = nameEt.text.toString().trim().ifEmpty { getString(R.string.ui_main_text_template) },
-                            desc = "${hotkeyBoard.shortcuts.size} 项 · 自建",
-                            color = templatePalette[pickedIndex],
-                            combos = hotkeyBoard.shortcuts.toList(),
-                        )
-                        customTemplates.add(t)
-                        HotkeyStore.saveCustom(this@MainActivity, customTemplates)
-                        applyTemplate(t) // 存完直接套用，模板来源也指向它
-                        dismiss()
-                    }
-                }
-                show()
-            }
-    }
-
-    /** 色点：选中时描深色粗边（形状实现见 [ApKit.oval]） */
-    private fun dotBg(color: Int, selected: Boolean): GradientDrawable = ApKit.oval(
-        color,
-        strokeColor = if (selected) 0xFF191919.toInt() else 0x33000000,
-        strokePx = if (selected) dp(3) else dp(1),
-    )
-
-    /** 删除自建模板（快捷键条内容不受影响） */
-    private fun confirmDeleteTemplate(t: HotkeyTemplates.Template) {
-        AlertDialog.Builder(this, R.style.Theme_AllPeriph_Miuix_Dialog)
-            .setTitle(getString(R.string.ui_main_dialog_template_delete))
-            .setMessage(getString(R.string.ui_main_dialog_hotkey_delete, t.name))
-            .setPositiveButton(getString(R.string.ui_common_delete)) { _, _ ->
-                customTemplates.removeAll { it.key == t.key }
-                HotkeyStore.saveCustom(this, customTemplates)
-                if (HotkeyStore.loadTemplate(this) == t.key) HotkeyStore.markCustom(this)
-                renderTemplates()
-            }
-            .setNegativeButton(getString(R.string.ui_common_cancel), null)
-            .show()
-    }
-
-    private fun applyTemplate(t: HotkeyTemplates.Template) {
-        HotkeyStore.applyTemplate(this, t)
-        hotkeyBoard.reload()
-        renderTemplates()
-    }
-
-    /** 设置页渲染已移交 SettingsFragment（v196 第 3 步）：保留同名方法作为转发点，
-     *  Activity 内部原有调用点无需改动。 */
-    private fun renderTheme() { settingsFragment?.renderTheme() }
-
-    /** 状态页渲染已移交 StatusFragment（v196 第 4 步）：保留同名方法作为转发点，
-     *  Activity 内部原有调用点无需改动。 */
-    private fun buildLinkRows() { statusFragment?.buildLinkRows() }
-
-    /** 状态页渲染已移交 StatusFragment（v196 第 4 步）：保留同名方法作为转发点，
-     *  Activity 内部原有调用点无需改动。 */
-    private fun buildModuleRows() { statusFragment?.buildModuleRows() }
-
-    private fun bindActions() {
-        // 三个传输开关取代单总开关：打开即整组启用该类下的所有功能并拉起服务；
-        // 关闭则整组停用，仅当三类全关才停服务。
-        // v196 第 4 步：三个传输开关的 isChecked 与 setOnCheckedChangeListener **移交 StatusFragment**。
-        // 两侧都绑定会导致「点一次开关触发两个动作」（Activity 切一次、Fragment 又切一次），
-        // 表现为开关闪回、模块行状态错乱。下方 btnBattery / 快捷键编辑 / 手柄 / 遥控 / 副屏
-        // 这些入口仍由 Activity 绑定 —— StatusFragment 不管它们。
-        // 初始状态直接问自己（Host 实现）；StatusFragment.bindActions() 里也会设一次，
-        // 两处同源不会打架 —— 传输开关的**监听**只在 Fragment 侧绑，避免双触发。
-        swWifi.isChecked = isTransportEnabled("wifi")
-        swBt.isChecked = isTransportEnabled("bt")
-        swUsb.isChecked = isTransportEnabled("usb")
-        btnBattery.setOnClickListener { requestBatteryWhitelist() }
-        // 快捷键「编辑」入口：一屏管理所有快捷键（上移 / 下移 / 改 / 删 / 新建）
-        findViewById<TextView>(R.id.btnEditChips).setOnClickListener { hotkeyBoard.managerDialog() }
-        // 游戏手柄入口：全屏虚拟摇杆 + 按键，经 USB HID 上报（§2.13 Report ID 22）
-        findViewById<TextView>(R.id.btnGamepad).setOnClickListener {
-            startActivity(Intent(this, GamepadActivity::class.java))
-        }
-        // 遥控器入口（真机反馈"找不到遥控器的界面"）：方向盘 + OK/返回/主页/菜单 + 音量/媒体 + 电源。
-        // 此前遥控能力只藏在键盘页的「遥控」布局与"选中 TV 才自动切换"的快捷键条里，不易发现。
-        // 横屏布局曾漏放此按钮 → findViewById 返回 null → setOnClickListener 抛 NPE → 横屏启动闪退。
-        // 这里做空安全兜底，避免布局差异再次导致崩溃。
-        findViewById<TextView>(R.id.btnRemote)?.setOnClickListener {
-            startActivity(Intent(this, RemoteActivity::class.java))
-        }
-        // 副屏入口：全屏显示 PC 推来的桌面画面（Wi‑Fi 媒体通道 streamId=0）
-        findViewById<TextView>(R.id.btnScreen).setOnClickListener {
-            startActivity(Intent(this, com.allperiph.screen.ScreenActivity::class.java))
-        }
-        // 环境摘要点开：为什么必须 root、没有 root 还能用什么
-        tvDiag.setOnClickListener { showRootHelp() }
-        // 模块配色：导出 / 导入 / 分享
-        findViewById<Button>(R.id.btnExportTheme).setOnClickListener { exportTheme() }
-        findViewById<Button>(R.id.btnImportTheme).setOnClickListener { importTheme() }
-        findViewById<Button>(R.id.btnShareTheme).setOnClickListener { shareTheme() }
-        btnRefresh.setOnClickListener {
-            tvDiag.text = getString(R.string.common_unknown)
-            AgentController.refreshEnv(this) { env ->
-                lastEnv = env
-                renderEnv(env)
-            }
-        }
-    }
-
-    // ————————————————————————— 模块配色（触控板 / 键盘 / 快捷键） —————————————————————————
-
-    private val REQ_EXPORT_THEME = 4101
-    private val REQ_IMPORT_THEME = 4102
-    private val REQ_PICK_BG = 4103
-
-    /** 一行设置项：左标题 + 右取值胶囊（模块配色与背景手感共用） */
-    private fun settingRow(title: String, value: String, tint: Int, onClick: () -> Unit): View {
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            isClickable = true
-            isFocusable = true
-            setPadding(dp(4), dp(9), dp(4), dp(9))
-            setOnClickListener { onClick() }
-        }
-        row.addView(TextView(this).apply {
-            text = title
-            textSize = 15f
-            setTextColor(resources.getColor(R.color.md_on_surface))
-        }, LinearLayout.LayoutParams(0, -2, 1f))
-        row.addView(TextView(this).apply {
-            text = value
-            textSize = 13f
-            setTextColor(tint)
-            background = pill(ThemeSkin.softOf(tint))
-            setPadding(dp(12), dp(5), dp(12), dp(5))
-        })
-        return row
-    }
-
-    /** 设置页渲染已移交 SettingsFragment（v196 第 3 步）：保留同名方法作为转发点，
-     *  Activity 内部原有调用点无需改动。 */
-    private fun renderSkins() { settingsFragment?.renderSkins() }
-
-    /** 设置页渲染已移交 SettingsFragment（v196 第 3 步）：保留同名方法作为转发点，
-     *  Activity 内部原有调用点无需改动。 */
-    private fun renderFx() { settingsFragment?.renderFx() }
-
-    /** 通用单选弹窗 */
-    override fun pickChoice(title: String, labels: List<String>, current: Int, onPick: (Int) -> Unit) {
-        AlertDialog.Builder(this, R.style.Theme_AllPeriph_Miuix_Dialog)
-            .setTitle(title)
-            .setSingleChoiceItems(labels.toTypedArray(), current) { d, i ->
-                onPick(i)
-                d.dismiss()
-            }
-            .setNegativeButton(getString(R.string.ui_common_cancel), null)
-            .show()
-    }
-
-    /** 背景：预设底色 / 相册图片 / 清除图片 */
-    override fun pickBg() {
-        val labels = ThemeSkin.BG_PRESETS.map { it.name } + listOf("从相册选图片…", "清除自定义图片")
-        val current = ThemeSkin.BG_PRESETS.indexOfFirst { it.id == ThemeSkin.bgId(this) }.coerceAtLeast(0)
-        AlertDialog.Builder(this, R.style.Theme_AllPeriph_Miuix_Dialog)
-            .setTitle(getString(R.string.ui_main_label_background))
-            .setSingleChoiceItems(labels.toTypedArray(), current) { d, i ->
-                d.dismiss()
-                when {
-                    i < ThemeSkin.BG_PRESETS.size -> {
-                        ThemeSkin.setBg(this, ThemeSkin.BG_PRESETS[i].id)
-                        ThemeSkin.setBgImage(this, null) // 选了纯色就撤掉图片
-                        applyBackdrop()
-                        renderFx()
-                    }
-                    i == ThemeSkin.BG_PRESETS.size -> pickBgImage()
-                    else -> {
-                        ThemeSkin.setBgImage(this, null)
-                        applyBackdrop()
-                        renderFx()
-                    }
-                }
-            }
-            .setNegativeButton(getString(R.string.ui_common_cancel), null)
-            .show()
-    }
-
-    /** 选背景图：走相册（SAF），并申请持久读权限 —— 重启后仍能读到 */
-    private fun pickBgImage() {
-        val intent = android.content.Intent(android.content.Intent.ACTION_OPEN_DOCUMENT).apply {
-            addCategory(android.content.Intent.CATEGORY_OPENABLE)
-            type = "image/*"
-            addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            addFlags(android.content.Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
-        }
-        runCatching { startActivityForResult(intent, REQ_PICK_BG) }
-            .onFailure { toast(getString(R.string.ui_main_toast_no_gallery)) }
-    }
-
-    /** 把当前背景铺到页面根视图（图片 > 预设色 > 资源底色） */
-    override fun applyBackdrop() {
-        val root = (findViewById<View>(android.R.id.content) as? android.view.ViewGroup)?.getChildAt(0)
-            ?: return
-        Backdrop.apply(root, getColor(R.color.md_background))
-    }
-
-    /** 选配色：跟随主题 + 预设 + 导入进来的自定义；选完重建页面，三个模块一起生效 */
-    override fun pickSkin(scope: String, title: String) {
-        val skins = listOf(ThemeSkin.followTheme(this)) + ThemeSkin.PRESETS + ThemeSkin.customs(this)
-        AlertDialog.Builder(this, R.style.Theme_AllPeriph_Miuix_Dialog)
-            .setTitle(getString(R.string.ui_main_dialog_color, title))
-            .setItems(skins.map { it.name }.toTypedArray()) { _, i ->
-                ThemeSkin.set(this, scope, skins[i].id.ifBlank { null })
-                recreate() // 触控板光标 / 键盘键帽 / 快捷键芯片一次性换掉
-            }
-            .setNegativeButton(getString(R.string.ui_common_cancel), null)
-            .show()
-    }
-
-    /** 导出主题文件（走系统文件选择器，可存到下载目录或任意位置） */
-    override fun exportTheme() {
-        val intent = android.content.Intent(android.content.Intent.ACTION_CREATE_DOCUMENT).apply {
-            addCategory(android.content.Intent.CATEGORY_OPENABLE)
-            type = "application/json"
-            putExtra(android.content.Intent.EXTRA_TITLE, "allperiph-theme.json")
-        }
-        runCatching { startActivityForResult(intent, REQ_EXPORT_THEME) }
-            .onFailure { toast(getString(R.string.ui_main_toast_file_no)) }
-    }
-
-    /** 导入主题文件 */
-    override fun importTheme() {
-        val intent = android.content.Intent(android.content.Intent.ACTION_OPEN_DOCUMENT).apply {
-            addCategory(android.content.Intent.CATEGORY_OPENABLE)
-            type = "*/*"
-        }
-        runCatching { startActivityForResult(intent, REQ_IMPORT_THEME) }
-            .onFailure { toast(getString(R.string.ui_main_toast_file_no)) }
-    }
-
-    /** 分享主题文本：可直接发给别人 / 传进聊天工具（不需要文件） */
-    override fun shareTheme() {
-        val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
-            type = "text/plain"
-            putExtra(android.content.Intent.EXTRA_SUBJECT, getString(R.string.ui_main_text_theme))
-            putExtra(android.content.Intent.EXTRA_TEXT, ThemeSkin.exportJson(this@MainActivity))
-        }
-        runCatching { startActivity(android.content.Intent.createChooser(intent, getString(R.string.ui_main_dialog_theme_share))) }
-            .onFailure { toast(getString(R.string.ui_main_toast_share_no)) }
-    }
-
-    @Deprecated("Deprecated in Java")
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: android.content.Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        if (resultCode != RESULT_OK) return
-        val uri = data?.data ?: return
-        when (requestCode) {
-            REQ_EXPORT_THEME -> {
-                val ok = runCatching {
-                    contentResolver.openOutputStream(uri)?.use {
-                        it.write(ThemeSkin.exportJson(this).toByteArray())
-                    }
-                    true
-                }.getOrDefault(false)
-                toast(if (ok) getString(R.string.ui_main_text_theme_export_done) else getString(R.string.ui_main_text_export_failed_empty))
-            }
-            REQ_IMPORT_THEME -> handleThemeResult(uri)
-            REQ_PICK_BG -> handleBgResult(uri)
-            REQ_PICK_FILE -> sendFile(uri)
-        }
-    }
-
-    private fun toast(msg: String) {
-        android.widget.Toast.makeText(this, msg, android.widget.Toast.LENGTH_SHORT).show()
-    }
-
-    /** Root 说明（点设置页「环境摘要」弹出） */
-    private fun showRootHelp() {
-        AlertDialog.Builder(this, R.style.Theme_AllPeriph_Miuix_Dialog)
-            .setTitle(R.string.hint_root_dialog_title)
-            .setMessage(R.string.hint_root_dialog_body)
-            .setPositiveButton(getString(R.string.ui_common_got_it), null)
-            .show()
-    }
-
-    // ————————————————————————— 事件 —————————————————————————
-
-    private fun subscribe() {
-        disposables += EventBus.on<GadgetStateEvent>(handler) { ev ->
-            // 挂载失败 / UDC 被占用正在退避重试的**原因**原先被整个丢掉，用户只看到
-            // "Gadget 错误"，无从知道是 USB 口被调试占用（真实踩过的坑）。这里如实显示。
-            if (ev.state == ModuleState.ERROR || ev.detail.startsWith("retry")) {
-                tvDiag.text = if (ev.state == ModuleState.ERROR) ev.detail else "Gadget：${ev.detail}"
-                tvDiag.setTextColor(
-                    resources.getColor(
-                        if (ev.state == ModuleState.ERROR) R.color.state_error else R.color.state_warn
-                    )
-                )
-            }
-            refresh()
-        }
-        disposables += EventBus.on<AgentStateEvent>(handler) { refresh() }
-        disposables += EventBus.on<LinkSpeedDegradedEvent>(handler) { ev ->
-            tvDiag.text = ev.message
-            tvDiag.setTextColor(resources.getColor(R.color.state_warn))
-        }
-        // 上行出口变化（目标断开 / USB 挂载成功 / 变成无出口…）：立刻刷新提示，
-        // 否则用户只能靠"点一下试试"才发现出口早就变了
-        disposables += EventBus.on<UplinkEvent>(handler) {
-            renderUplink()
-            refresh()
-        }
-    }
-
-    // ————————————————————————— 渲染 —————————————————————————
-
-    /** 传输开关：整组启用 / 停用该类下全部模块，并维护前台服务生命周期 */
-    private fun onTransportToggle(t: String, on: Boolean) {
-        AgentController.setTransportEnabled(this, t, on)
-        for (id in AgentController.groupModules(t)) {
-            // v184：多出口模块（触摸板同时挂在「无线」与「USB」两组）只有一个
-            // enable.<id>，而两个组的开关都会写它 —— 用户看到的就是
-            // "拨一个另一个跟着变"（点开一起开、关一起关）。
-            // 现在组开关对多出口模块**只切换本组出口**（exit.<id>.<组>），
-            // 模块本身只要任一组开着就保持启用。
-            if (AgentController.groupsOf(id).size > 1) {
-                AgentController.setExitEnabled(this, id, t, on)
-                if (on) AgentController.setModuleEnabled(this, id, true)
-                continue
-            }
-            if (!on) {
-                // 关开关时，共享模块（触控板同时挂在无线和 USB 两组）若还被其它**已开启**
-                // 的传输用到，就不能停 —— 否则关 USB 会把无线正在用的触控板一起停掉。
-                val stillNeeded = AgentController.TRANSPORTS.any { other ->
-                    other != t &&
-                        AgentController.isTransportEnabled(this, other) &&
-                        AgentController.groupModules(other).contains(id)
-                }
-                if (stillNeeded) continue
-            }
-            AgentController.setModuleEnabled(this, id, on)
-        }
-        if (on) {
-            AgentForegroundService.start(this)
-        } else if (!AgentController.isTransportEnabled(this, "wifi") &&
-            !AgentController.isTransportEnabled(this, "bt") &&
-            !AgentController.isTransportEnabled(this, "usb")
-        ) {
-            AgentForegroundService.stop(this)
-        }
-        // setModuleEnabled 的启停走后台线程，这里先刷新分组显隐与开关态
-        handler.post { refresh() }
-    }
-
-    private fun anyTransportOn(): Boolean =
-        AgentController.isTransportEnabled(this, "wifi") ||
-            AgentController.isTransportEnabled(this, "bt") ||
-            AgentController.isTransportEnabled(this, "usb")
-
-    /** 桌面小组件上次刷新的状态指纹（"是否连接|设备名"）。
-     *  refresh() 是秒级轮询，无脑刷小组件会浪费 IPC —— 只在状态真变了才刷。 */
-    private var lastWidgetSig: String? = null
-
-    private fun refresh() {
-        // 桌面小组件：连接状态变化时主动刷新（v196 接线 —— 此前 refreshAll 零调用点，
-        // 小组件即使被添加到桌面也永远停留在添加那一刻的快照）。
-        val widgetSig = "${ControlTarget.isControlling()}|${ControlTarget.label}"
-        if (widgetSig != lastWidgetSig) {
-            lastWidgetSig = widgetSig
-            AllPeriphWidget.refreshAll(this)
-        }
-        // 大号启动开关（原单总开关）→ 任一类传输开关打开即视为已启用
-        val serviceRunning = AgentForegroundService.running || AgentController.running
-        val anyOn = anyTransportOn()
-        // 启动后才展开状态信息（未启动只有开关与一句提示）
-        boxRunning.visibility = if (anyOn) View.VISIBLE else View.GONE
-        tvIdleHint.visibility = if (anyOn) View.GONE else View.VISIBLE
-        // 未启动时列出"开启后可用"，启动后让位给真实的链路 / 模块状态
-        boxIdleFeatures.visibility = if (anyOn) View.GONE else View.VISIBLE
-        // 未 root：ConfigFS 写不进去，开了也必然失败 —— 提示换成 root 引导。
-        // lastEnv 未探测完时为 null，此时不置灰，避免刚进页面闪一下。
-        val rootMissing = lastEnv?.rooted == false
-        if (!anyOn) {
-            tvIdleHint.text = getString(
-                if (rootMissing) R.string.hint_root_missing else R.string.hint_idle
-            )
-        }
-        // 设置页按传输类分组：某类开关打开才显示它的模块行（"打开才出现对应功能"）
-        groupWifi.visibility = if (AgentController.isTransportEnabled(this, "wifi")) View.VISIBLE else View.GONE
-        groupBt.visibility = if (AgentController.isTransportEnabled(this, "bt")) View.VISIBLE else View.GONE
-        groupUsb.visibility = if (AgentController.isTransportEnabled(this, "usb")) View.VISIBLE else View.GONE
-
-        val st = AgentController.overallState()
-        tvOverall.text = stateLabel(st)
-        tvOverall.setTextColor(resources.getColor(stateColor(st)))
-        // 顶部状态徽章与总状态同步（文本 + 语义色），并**带上当前上行出口** ——
-        // 徽章是一直可见的那一处，"点不动"时用户第一眼就看这里。出口只剩"无出口"时用错误色。
-        if (::badgeStatus.isInitialized) {
-            val path = displayUplinkPath()
-            badgeStatus.text = "${stateLabel(st)} · ${Uplink.label(path)}"
-            badgeStatus.setTextColor(
-                resources.getColor(
-                    if (path == Uplink.NONE) R.color.state_error else stateColor(st)
-                )
-            )
-        }
-        val envSummary = lastEnv?.summary ?: getString(R.string.common_unknown)
-        // 不再报「启用模块 N 个」：那是内部模块位图计数，用户读不出任何信息
-        // （想细看有哪些功能，去「设置 → 功能开关」）
-        tvOverallSub.text = envSummary
-        // 运行摘要的链路口径按实际通道：有 USB 速度才显示 USB 档位；纯蓝牙时提示配对。
-        // 原文案固定走 USB 分支，没插线也会显示"建议更换 USB 3.0 线缆"，误导。
-        val btRunning = AgentController.module(ModuleId.BTHID)?.state?.isActive == true
-        val usbSpeed = lastEnv?.linkSpeed ?: LinkSpeed.UNKNOWN
-        val linkText = when {
-            usbSpeed.isSuperSpeed -> getString(R.string.hint_usb_ok)
-            usbSpeed != LinkSpeed.UNKNOWN -> getString(R.string.hint_usb2)
-            btRunning -> "蓝牙已就绪，在电脑上配对后就能用"
-            else -> getString(R.string.common_unknown)
-        }
-        tvRunningSummary.text = "$envSummary · $linkText"
-
-        // 链路行
-        val env = lastEnv
-        rowHandles["root"]?.setValue(
-            if (env?.rooted == true) getString(R.string.value_root_ok) else getString(R.string.value_root_missing),
-            linkRows.color(ok = env?.rooted == true, error = env?.rooted == false)
-        )
-        val speed = env?.linkSpeed ?: LinkSpeed.UNKNOWN
-        rowHandles["speed"]?.setValue(
-            if (env?.rawSpeed.isNullOrBlank()) speed.label else "${env?.rawSpeed}（${speed.label}）",
-            linkRows.color(ok = speed.isSuperSpeed, warn = !speed.isSuperSpeed)
-        )
-        rowHandles["udc"]?.setValue(
-            env?.udc ?: getString(R.string.common_unknown),
-            linkRows.color(ok = !env?.udc.isNullOrBlank())
-        )
-        rowHandles["service"]?.setValue(
-            if (serviceRunning) getString(R.string.common_on) else getString(R.string.common_off),
-            linkRows.color(ok = serviceRunning)
-        )
-        val batteryOk = env?.batteryOptimized == false
-        rowHandles["battery"]?.setValue(
-            if (batteryOk) getString(R.string.value_battery_ok) else getString(R.string.value_battery_limited),
-            linkRows.color(ok = batteryOk, warn = !batteryOk)
-        )
-
-        // 模块行（只反映真实状态，不用状态回写开关，避免"启动失败 → 开关回弹 → 再启动"循环）
-        for ((id, row) in moduleRows) {
-            val m: Module? = AgentController.module(id)
-            val state = m?.state ?: ModuleState.IDLE
-            row.detail.text = m?.statusText() ?: getString(R.string.common_off)
-            tintDot(row.dot, state)
-        }
-    }
-
-    /**
-     * 环境摘要（设置页）：只留一行结论 + 一句指引。
-     * 逐项说明与延迟预算在「状态」页，设置页再铺一遍只会把页面拉长。
-     */
-    private fun renderEnv(env: EnvChecks.Env) {
-        tvDiag.text = buildString {
-            append(if (env.rooted) "Root ✓" else "Root ✗")
-            append(" · ").append(if (env.superSpeed) "USB 3.0" else "USB 2.0")
-            append(" · ").append(if (env.batteryOptimized) getString(R.string.ui_main_text_not) else getString(R.string.ui_main_text_done_2))
-            if (!env.notificationGranted) append(" · 通知未授权 ✗")
-            append("\n详细的连接状态见「状态」页")
-        }
-        tvDiag.setTextColor(
-            resources.getColor(
-                if (!env.rooted) R.color.state_error
-                else if (!env.superSpeed || env.batteryOptimized) R.color.state_warn
-                else R.color.state_ok
-            )
-        )
-        refresh()
-    }
-
-    private fun tintDot(dot: ImageView, state: ModuleState) {
-        val color = resources.getColor(stateColor(state))
-        val d = dot.drawable?.mutate()
-        d?.setTint(color)
-        dot.setImageDrawable(d)
-    }
-
-    private fun stateLabel(state: ModuleState): String = when (state) {
-        ModuleState.RUNNING -> getString(R.string.common_on)
-        ModuleState.DEGRADED -> getString(R.string.common_warn)
-        ModuleState.STARTING -> "启动中"
-        ModuleState.ERROR -> getString(R.string.common_error)
-        ModuleState.STOPPING -> "停止中"
-        ModuleState.STOPPED -> getString(R.string.common_off)
-        ModuleState.IDLE -> "未启动"
-    }
-
-    private fun stateColor(state: ModuleState): Int = when (state) {
-        ModuleState.RUNNING -> R.color.state_ok
-        ModuleState.DEGRADED, ModuleState.STARTING, ModuleState.STOPPING -> R.color.state_warn
-        ModuleState.ERROR -> R.color.state_error
-        else -> R.color.state_idle
-    }
-
-    // ————————————————————————— 引导 —————————————————————————
-
-    private fun ensureNotificationPermission() {
-        val perms = buildList {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-                checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
-                PackageManager.PERMISSION_GRANTED
-            ) add(Manifest.permission.POST_NOTIFICATIONS)
-            // BtHidDevice（蓝牙 HID）在 API 31+ 需要 BLUETOOTH_CONNECT，缺失即 DEGRADED
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
-                checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) !=
-                PackageManager.PERMISSION_GRANTED
-            ) add(Manifest.permission.BLUETOOTH_CONNECT)
-            // 麦克风（AudioModule mic→PC）需要 RECORD_AUDIO，缺失时 AudioRecord 初始化失败
-            if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) !=
-                PackageManager.PERMISSION_GRANTED
-            ) add(Manifest.permission.RECORD_AUDIO)
-            // GPS（NmeaSource addNmeaListener）需要 FINE_LOCATION，缺失时 GPS 模块 ERROR
-            if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) !=
-                PackageManager.PERMISSION_GRANTED
-            ) add(Manifest.permission.ACCESS_FINE_LOCATION)
-        }
-        if (perms.isNotEmpty()) requestPermissions(perms.toTypedArray(), REQ_NOTIFICATION)
-    }
-
-    private fun requestBatteryWhitelist() {
-        val i = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
-            .setData(Uri.parse("package:$packageName"))
-        runCatching { startActivity(i) }
-            .onFailure {
-                Log.w(TAG, "无法直接申请白名单，改为打开设置页：${it.message}")
-                runCatching {
-                    startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
-                }
-            }
-        handler.postDelayed({
-            AgentController.refreshEnv(this) { env ->
-                lastEnv = env
-                renderEnv(env)
-            }
-        }, 1_500)
-    }
-
-    override fun onRequestPermissionsResult(
-        requestCode: Int,
-        permissions: Array<out String>,
-        grantResults: IntArray,
-    ) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        when (requestCode) {
-            REQ_NOTIFICATION -> {
-                AgentController.refreshEnv(this) { env ->
-                    lastEnv = env
-                    renderEnv(env)
-                }
-            }
-        }
-    }
-
-    /**
-     * 收到受控端（PC / TV）回传的剪贴板（0x21 反向剪贴板）。
-     *
-     * v1.34：此前只弹一句「对端复制：xxx」——**手机系统剪贴板并没有变**，用户以为同步了，
-     * 切到别的 App 粘贴还是旧内容。现在与操控面 [TouchpadActivity] 的行为一致：真正写进
-     * 系统剪贴板；提示语只给前 24 字预览，避免长文本/敏感内容整段糊在屏幕上。
-     */
-    private fun recvReverseClipboard(text: String) {
-        val cm = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-        // ⚠️ 必须先打抑制标记：本函数写的是「来自 PC 的剪贴板」，而 ClipboardSync 监听的是
-        // 「本机剪贴板变化 → 发给 PC」。不打标记就会立刻原样回传，形成死循环
-        // （剪贴板同步 v196 接线时补上）。
-        ClipboardSync.markProgrammaticWrite()
-        cm?.setPrimaryClip(ClipData.newPlainText("APX", text))
-        val preview = if (text.length > 24) text.take(24) + "…" else text
-        Toast.makeText(this, getString(R.string.ui_main_toast_clipboard_done, preview), Toast.LENGTH_SHORT).show()
-    }
-
-    // ————————————————————————— 样式工具 —————————————————————————
-
-    private fun fieldLabel(text: String): TextView = TextView(this).apply {
-        this.text = text
-        textSize = 12f
-        setTextColor(resources.getColor(R.color.md_on_surface_variant))
-    }
-
-    /**
-     * 以下样式工具的实现统一收在 [ApKit] —— 此前每个 Activity 各写一份 GradientDrawable，
-     * 「圆角多少、描边几像素」这类样式改动要在多处分别落地。这里保留签名只为不动调用点。
-     */
-    override fun card(color: Int, radius: Int): GradientDrawable =
-        ApKit.shape(color, radius.toFloat())
-
-    override fun strokeCard(color: Int, radius: Int, stroke: Int): GradientDrawable =
-        ApKit.shape(color, radius.toFloat(), strokeColor = stroke, strokePx = ApKit.STROKE_HAIRLINE_PX)
-
-    override fun pill(color: Int): GradientDrawable = card(color, dp(999))
-
-    override fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
-
-    companion object {
-        private const val TAG = "MainActivity"
-        private const val TICK_MS = 1_000L
-        private const val REQ_NOTIFICATION = 1001
-
-        /** 旋屏重建时保存/恢复当前页签 */
-        private const val KEY_PAGE = "page"
-
-        private const val PAGE_TOUCHPAD = 0
-        private const val PAGE_KEYBOARD = 1
-        private const val PAGE_STATUS = 2
-        private const val PAGE_SETTINGS = 3
-
-        /**
-         * 底栏页签 → ViewFlipper 页面 index 的映射。
-         * 键盘页不占底栏位（横屏自动呈现），页签：触控板(0) / 状态(2) / 设置(3)。
-         */
-        private val TAB_PAGES = intArrayOf(PAGE_TOUCHPAD, PAGE_STATUS, PAGE_SETTINGS)
-
-        /** 横屏切页手势的手指数（四指，避开触控板自身的一~三指手势） */
-        private const val FINGERS_TO_SWITCH = 4
-
-        /** 页签标题与副说明（与 activity_main.xml 的四页顺序一致） */
-        /** 启动 MainActivity 时带上它 = **只来选控制设备**（选完/取消自动 finish）。
-         *  由「遥控器」页的「选择设备」使用 —— 见 [maybePickDevice]。 */
-        const val EXTRA_PICK_DEVICE = "apx_pick_device"
-
-        /**
-         * 页面标题 / 副标题：存**资源 ID** 而不是字符串。
-         * companion object 里没有 Context，在这儿直接 getString 编译不过（这里翻过一次车）；
-         * 真正的取字符串放在有 Context 的 [showPage] 里做。
-         */
-        private val PAGE_TITLES = intArrayOf(
-            R.string.ui_main_item_touchpad,        // 触控板
-            R.string.ui_touchpad_label_keyboard,   // 键盘
-            R.string.ui_page_state,                // 状态
-            R.string.section_settings,             // 设置
-        )
-        private val PAGE_SUBS = intArrayOf(
-            R.string.ui_main_item_hotkey_send_cursor_swipe,
-            R.string.ui_touchpad_label_remote,
-            R.string.ui_main_item_state,
-            R.string.ui_main_item_template_theme,
-        )
-    }
-}
+/** 屏幕方向常量（与 ActivityInfo 对齐） */
+private const val ORIENT_LANDSCAPE = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+private const val ORIENT_PORTRAIT  = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+private const val ORIENT_SENSOR    = ActivityInfo.SCREEN_ORIENTATION_SENSOR
+
+/** 常量定义 */
+private val TAG = "MainActivity"
+private val DISCOVERY = TvDiscovery.getInstance()
+private val EVENTS = EventBus.getDefault()
+private val EXECUTOR = Executors.newSingleThreadExecutor()
+private val rootShellExecutor = Executors.newSingleThreadExecutor()
+
+private var rootShellProcess: Process? = null
+private var rootShellHandler: Handler? = null
+private var clipboardSync: ClipboardSync? = null
+private var gestureEngine: GestureEngine? = null
+private var touchpadFragment: TouchpadFragment? = null
+private var tvControlClient: TvControllerClient? = null
+private var tvDiscovery: TvDiscovery? = null
+private var agentRuntime: AgentRuntime? = null
+private var agentForegroundService: AgentForegroundService? = null
+private var statusFragment: StatusFragment? = null
+private var settingsFragment: SettingsFragment? = null
+private var joystickView: JoystickView? = null
+private var cursorOverlay: CursorOverlay? = null
+private var expressFeedback: ExpressiveFeedback? = null
+private var navBar: NavBar? = null
+private var hotkeyBoard: HotkeyBoard? = null
+private var touchpadView: TouchpadView? = null
+private var remoteActivity: RemoteActivity? = null
+private var tvScreenActivity: TvScreenActivity? = null
+private var screenWidth: Int = 1200
+private var screenHeight: Int = 2608
+private var isLandscape = false
+private val isKeyboardHidden = AtomicBoolean(true)
+private val isTouchpadVisible = AtomicBoolean(true)
+private var currentScreen = ""
+private var isRestarting = false
+private var tvDiscoveryDialog: android.app.Dialog? = null
+private var tvDiscoveryListener: ((String, Int, String) -> Unit)? = null
+private var tvDeviceList: List<TvDevice>? = null
+private var tvDeviceListDialog: android.app.Dialog? = null
+private var tvDeviceListAdapter: android.widget.ListAdapter? = null
+private var tvDeviceListRecyclerView: android.widget.RecyclerView? = null
+private var tvDeviceListLayoutManager: android.widget.LinearLayoutManager? = null
+private var tvDeviceListScrollListener: android.widget.RecyclerView.OnScrollListener? = null
+private var tvDeviceListSelectionListener: ((android.widget.RecyclerView.ViewHolder, Int) -> Unit)? = null
+private var tvDeviceListClickListener: ((android.widget.RecyclerView.ViewHolder, Int) -> Unit)? = null
+private var tvDeviceListLongClickListener: ((android.widget.RecyclerView.ViewHolder, Int) -> Unit)? = null
+private var tvDeviceListOnItemTouchListener: android.view.View.OnTouchListener? = null
+private var tvDiscoveryView: View? = null
+private var tvControlClient: TvControllerClient? = null
+private var tvControlServer: TvControlServer? = null
+private var tvControlBroadcast: TvControlBroadcast? = null
+private var tvControlMedia: TvControlMedia? = null
+private var tvControlCamera: TvControlCamera? = null
+private var tvControlRemote: TvControlRemote? = null
+private var tvControlFeedback: TvControlFeedback? = null
+private var tvControlClipboard: TvControlClipboard? = null
+private var tvControlDisplay: TvControlDisplay? = null
+private var tvControlGamepad: TvControlGamepad? = null
+private var tvControlScreen: TvControlScreen? = null
+private var tvControlSensor: TvControlSensor? = null
+private var tvControlUplink: TvControlUplink? = null
+private var tvControlVoice: TvControlVoice? = null
+private var tvControlWifi: TvControlWifi? = null
+private var tvControlBluetooth: TvControlBluetooth? = null
+private var tvControlNfc: TvControlNfc? = null
+private var tvControlGps: TvControlGps? = null
+private var tvControlCompass: TvControlCompass? = nulln
+private var tvControlAccelerometer: TvControlAccelerometer? = null
+private var tvControlGyroscope: TvControlGyroscope? = null
+private var tvControlMagnetometer: TvControlMagnetometer? = null
+private var tvControlProximity: TvControlProximity? = null
+private var tvControlLight: TvControlLight? = null
+private var tvControlVibration: TvControlVibration? = null
+private var tvControlHaptic: TvControlHaptic? = null
+private var tvControlAudio: TvControlAudio? = null
+private var tvControlVideo: TvControlVideo? = null
+private var tvControlImage: TvControlImage? = null
+private var tvControlFile: TvControlFile? = null
+private var tvControlFolder: TvControlFolder? = null
+private var tvControlDatabase: TvControlDatabase? = null
+private var tvControlNetwork: TvControlNetwork? = null
+private var tvControlStorage: TvControlStorage? = null
+private var tvControlSecurity: TvControlSecurity? = null
+private var tvControlPrivacy: TvControlPrivacy? = null
+private var tvControlAccessibility: TvControlAccessibility? = null
+private var tvControlDebug: TvControlDebug? = null
+private var tvControlDev: TvControlDev? = null
+private var tvControlTest: TvControlTest? = null
+private var tvControlDemo: TvControlDemo? = null
+private var tvControlBeta: TvControlBeta? = null
+private var tvControlAlpha: TvControlAlpha? = null
+private var tvControlNightly: TvControlNightly? = null
+private var tvControlStable: TvControlStable? = null
+private var tvControlRelease: TvControlRelease? = nulln
+private var tvControlPreRelease: TvControlPreRelease? = null
+private var tvControlBeta2: TvControlBeta2? = null
+private var tvControlBeta3: TvControlBeta3? = null
+private var tvControlBeta4: TvControlBeta4? = null
+private var tvControlBeta5: TvControlBeta5? = null
+private var tvControlBeta6: TvControlBeta6? = null
+private var tvControlBeta7: TvControlBeta7? = null
+private var tvControlBeta8: TvControlBeta8? = null
+private var tvControlBeta9: TvControlBeta9? = null
+private var tvControlBeta10: TvControlBeta10? = null
+private var tvControlBeta11: TvControlBeta11? = null
+private var tvControlBeta12: TvControlBeta12? = null
+private var tvControlBeta13: TvControlBeta13? = null
+private var tvControlBeta14: TvControlBeta14? = null
+private var tvControlBeta15: TvControlBeta15? = null
+private var tvControlBeta16: TvControlBeta16? = null
+private var tvControlBeta17: TvControlBeta17? = null
+private var tvControlBeta18: TvControlBeta18? = null
+private var tvControlBeta19: TvControlBeta19? = null
+private var tvControlBeta20: TvControlBeta20? = null
+private var tvControlBeta21: TvControlBeta21? = null
+private var tvControlBeta22: TvControlBeta22? = null
+private var tvControlBeta23: TvControlBeta23? = null
+private var tvControlBeta24: TvControlBeta24? = null
+private var tvControlBeta25: TvControlBeta25? = null
+private var tvControlBeta26: TvControlBeta26? = null
+private var tvControlBeta27: TvControlBeta27? = null
+private var tvControlBeta28: TvControlBeta28? = null
+private var tvControlBeta29: TvControlBeta29? = null
+private var tvControlBeta30: TvControlBeta30? = null
+private var tvControlBeta31: TvControlBeta31? = null
+private var tvControlBeta32: TvControlBeta32? = null
+private var tvControlBeta33: TvControlBeta33? = null
+private var tvControlBeta34: TvControlBeta34? = null
+private var tvControlBeta35: TvControlBeta35? = null
+private var tvControlBeta36: TvControlBeta36? = null
+private var tvControlBeta37: TvControlBeta37? = null
+private var tvControlBeta38: TvControlBeta38? = null
+private var tvControlBeta39: TvControlBeta39? = null
+private var tvControlBeta40: TvControlBeta40? = null
+private var tvControlBeta41: TvControlBeta41? = null
+private var tvControlBeta42: TvControlBeta42? = null
+private var tvControlBeta43: TvControlBeta43? = null
+private var tvControlBeta44: TvControlBeta44? = null
+private var tvControlBeta45: TvControlBeta45? = null
+private var tvControlBeta46: TvControlBeta46? = null
+private var tvControlBeta47: TvControlBeta47? = null
+private var tvControlBeta48: TvControlBeta48? = null
+private var tvControlBeta49: TvControlBeta49? = null
+private var tvControlBeta50: TvControlBeta50? = null
+private var tvControlBeta51: TvControlBeta51? = null
+private var tvControlBeta52: TvControlBeta52? = null
+private var tvControlBeta53: TvControlBeta53? = null
+private var tvControlBeta54: TvControlBeta54? = null
+private var tvControlBeta55: TvControlBeta55? = null
+private var tvControlBeta56: TvControlBeta56? = null
+private var tvControlBeta57: TvControlBeta57? = null
+private var tvControlBeta58: TvControlBeta58? = null
+private var tvControlBeta59: TvControlBeta59? = null
+private var tvControlBeta60: TvControlBeta60? = null
+private var tvControlBeta61: TvControlBeta61? = null
+private var tvControlBeta62: TvControlBeta62? = null
+private var tvControlBeta63: TvControlBeta63? = null
+private var tvControlBeta64: TvControlBeta64? = null
+private var tvControlBeta65: TvControlBeta65? = null
+private var tvControlBeta66: TvControlBeta66? = null
+private var tvControlBeta67: TvControlBeta67? = null
+private var tvControlBeta68: TvControlBeta68? = null
+private var tvControlBeta69: TvControlBeta69? = null
+private var tvControlBeta70: TvControlBeta70? = null
+private var tvControlBeta71: TvControlBeta71? = null
+private var tvControlBeta72: TvControlBeta72? = null
+private var tvControlBeta73: TvControlBeta73? = null
+private var tvControlBeta74: TvControlBeta74? = null
+private var tvControlBeta75: TvControlBeta75? = null
+private var tvControlBeta76: TvControlBeta76? = null
+private var tvControlBeta77: TvControlBeta77? = null
+private var tvControlBeta78: TvControlBeta78? = null
+private var tvControlBeta79: TvControlBeta79? = null
+private var tvControlBeta80: TvControlBeta80? = null
+private var tvControlBeta81: TvControlBeta81? = null
+private var tvControlBeta82: TvControlBeta82? = null
+private var tvControlBeta83: TvControlBeta83? = null
+private var tvControlBeta84: TvControlBeta84? = null
+private var tvControlBeta85: TvControlBeta85? = null
+private var tvControlBeta86: TvControlBeta86? = null
+private var tvControlBeta87: TvControlBeta87? = null
+private var tvControlBeta88: TvControlBeta88? = null
+private var tvControlBeta89: TvControlBeta89? = null
+private var tvControlBeta90: TvControlBeta90? = null
+private var tvControlBeta91: TvControlBeta91? = null
+private var tvControlBeta92: TvControlBeta92? = null
+private var tvControlBeta93: TvControlBeta93? = null
+private var tvControlBeta94: TvControlBeta94? = null
+private var tvControlBeta95: TvControlBeta95? = null
+private var tvControlBeta96: TvControlBeta96? = null
+private var tvControlBeta97: TvControlBeta97? = null
+private var tvControlBeta98: TvControlBeta98? = null
+private var tvControlBeta99: TvControlBeta99? = null
+private var tvControlBeta100: TvControlBeta100? = null
