@@ -13,6 +13,11 @@
 #include <thread>
 #include <vector>
 
+#if defined(__APPLE__)
+// macOS 系统声音采集（CoreAudio Process Tap）：ObjC/CATapDescription 细节在 .mm
+#include "apxpc/media/audio_capture_mac.h"
+#endif
+
 #if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -114,6 +119,10 @@ std::string endpointName(IMMDevice* dev) {
 // 线程模型：start() 在调用线程建好 COM 对象并 Start()，随后起一条采集线程跑
 // captureLoop()。**采集线程绝不碰 mu_**（计数器全是 atomic）—— 这样 stop() 就能
 // 在持锁状态下安全 join，不会出现"持锁等线程、线程等锁"的死锁。
+//
+// macOS 线程模型（mac-speaker）：无 cpp 采集线程 —— CoreAudio IOProc（HAL 线程）
+// 直接以 sink 回调推块到 appendAndSend；该路径**同样不碰 mu_**（staging 由单一
+// IOProc 线程独占，计数器 atomic），stop() 持锁即可安全停（IOProc 停净后才清 staging）。
 // ============================================================================
 struct AudioCapture::Impl {
     std::mutex mu;                 // 只保护 start/stop 与 device/deviceId/error/rate/channels
@@ -134,6 +143,10 @@ struct AudioCapture::Impl {
     uint32_t frameBytes = 0;
     std::thread thread;
 
+    // —— 跨平台：攒片 + 峰值 + 发送（Win captureLoop 与 macOS IOProc sink 共用）——
+    std::vector<uint8_t> staging; // 待发送累积（凑满 frameBytes 才发）
+    void appendAndSend(const uint8_t* p, size_t bytes);
+
 #if defined(_WIN32)
     HANDLE evt = nullptr;
     IAudioClient* client = nullptr;
@@ -147,12 +160,10 @@ struct AudioCapture::Impl {
     double srcPos = 0.0;          // 重采样读位置（以源采样帧计，跨块保留小数部分）
     std::vector<float> stage;     // 源速率下的立体声 float 中间量
     std::vector<uint8_t> conv;    // 转换后的 s16 字节
-    std::vector<uint8_t> staging; // 待发送累积（凑满 frameBytes 才发）
 
     void captureLoop();
     void handleBlock(const uint8_t* data, uint32_t frames, bool silent);
     void convertBlock(const uint8_t* data, uint32_t frames);
-    void appendAndSend(const uint8_t* p, size_t bytes);
 #endif
 };
 
@@ -207,6 +218,8 @@ std::vector<AudioDeviceInfo> AudioCapture::listRenderDevices() {
                      });
     return out;
 #else
+    // macOS：Process Tap 采的是**全局进程组混音**，不挂具体播放端点 —— 无可选列表
+    // （面板下拉为空 → 传空 deviceId → 恒默认语义，自洽）。Linux：未实现。
     return {};
 #endif
 }
@@ -231,7 +244,7 @@ std::string AudioCapture::defaultRenderDeviceId() {
     if (ownCom) CoUninitialize();
     return id;
 #else
-    return {};
+    return {};   // macOS：tap 无设备概念
 #endif
 }
 
@@ -254,6 +267,8 @@ std::string AudioCapture::defaultRenderDeviceName() {
     safeRelease(en);
     if (ownCom) CoUninitialize();
     return name;
+#elif defined(__APPLE__)
+    return "系统混音（CoreAudio Tap）";   // 未开采集时也能显示“将会采什么”
 #else
     return {};
 #endif
@@ -365,6 +380,11 @@ void AudioCapture::Impl::convertBlock(const uint8_t* data, uint32_t frames) {
     appendAndSend(conv.data(), conv.size());
 }
 
+#endif  // _WIN32
+
+// ------------------------------------------------------- 攒片 + 峰值 + 发送（跨平台）----
+// Win captureLoop（或 macOS IOProc sink）以单一生产者线程调用；staging 独占，
+// 计数器全 atomic —— status() 从另一线程读也安全。
 void AudioCapture::Impl::appendAndSend(const uint8_t* p, size_t bytes) {
     if (!p || bytes == 0 || frameBytes == 0) return;
     staging.insert(staging.end(), p, p + bytes);
@@ -389,7 +409,6 @@ void AudioCapture::Impl::appendAndSend(const uint8_t* p, size_t bytes) {
         staging.erase(staging.begin(), staging.begin() + frameBytes);
     }
 }
-#endif  // _WIN32
 
 // ------------------------------------------------------------------ 启停 ----
 
@@ -418,9 +437,12 @@ void AudioCapture::stop() {
         CloseHandle(impl_->evt);
         impl_->evt = nullptr;
     }
-    impl_->staging.clear();
-    impl_->peak.store(0.0);
+#elif defined(__APPLE__)
+    // 幂等；AudioDeviceStop 返回后 IOProc 不再触发 → 下方清 staging 安全
+    mac_capture::stop();
 #endif
+    impl_->staging.clear();   // Win：原在 Release 之后（顺序不变）；mac：IOProc 停净后
+    impl_->peak.store(0.0);
     if (wasRunning) APX_LOGI("音箱采集已停止");
 }
 
@@ -443,9 +465,43 @@ bool AudioCapture::start(MediaSession* session, const AudioCaptureOptions& opt, 
     if (!session->status().connected) return fail("媒体连接未建立（先让面板连上手机）");
     if (opt.frameMs == 0 || opt.frameMs > 100) return fail("分片时长非法（应为 1–100 ms）");
 
-#if !defined(_WIN32)
-    return fail("系统声音采集目前仅实现 Windows");
-#else
+#if defined(__APPLE__)
+    // —— macOS：CoreAudio Process Tap（14.2+）。建 tap/聚合设备/IOProc 的全部细节
+    //    在 audio_capture_mac.mm；版本门与权限文案由那里返回后经 fail() 透传。——
+    impl_->session = session;
+    impl_->frameBytes = static_cast<uint32_t>(kAudioBytesPerMs) * opt.frameMs;
+    impl_->error.clear();
+    impl_->device.clear();
+    impl_->deviceId.clear();
+    // 全局进程组 tap 与具体播放端点无关 —— 恒“跟随”语义（无可钉的设备），
+    // deviceId 恒空与 listRenderDevices 返回空表自洽（面板下拉为空 → 传空 → 此处）。
+    impl_->followingDefault = true;
+    impl_->framesSent.store(0);
+    impl_->bytesSent.store(0);
+    impl_->dropped.store(0);
+    impl_->peak.store(0.0);
+    impl_->staging.clear();
+
+    std::string errMac;
+    std::string devName;
+    // 无捕获 lambda → 纯函数指针（PcmSink）；ctx = Impl，回调在 IOProc 线程走 appendAndSend。
+    // lambda 定义在成员函数内 —— Impl 虽为 private，成员作用域内命名合法（同 Win 的
+    // 成员函数访问路径，非自由函数）。
+    const bool ok = mac_capture::start(
+        [](void* ctx, const uint8_t* p, size_t n) {
+            static_cast<Impl*>(ctx)->appendAndSend(p, n);
+        },
+        impl_.get(), &errMac, &devName);
+    if (!ok) return fail(errMac);
+    impl_->device = devName;
+    impl_->rate = kAudioSampleRate;
+    impl_->channels = kAudioChannels;
+    impl_->running.store(true);
+    // 无 cpp 采集线程：数据由 IOProc 直推（单生产者）；Impl::thread 保持未启动，
+    // stop() 的通用 join 对未 joinable 线程自然跳过。
+    APX_LOGI("音箱采集已启动：{}（全局混音，每片 {}ms）", impl_->device, opt.frameMs);
+    return true;
+#elif defined(_WIN32)
     const HRESULT hrInit = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     const bool ownCom = SUCCEEDED(hrInit);   // RPC_E_CHANGED_MODE 时继续用当前套间
 
@@ -598,6 +654,8 @@ bool AudioCapture::start(MediaSession* session, const AudioCaptureOptions& opt, 
              impl_->channels, opt.frameMs, impl_->needConvert ? "，含格式转换" : "",
              impl_->followingDefault ? "，跟随系统默认" : "");
     return true;
+#else
+    return fail("系统声音采集在 Linux 上暂未实现（Windows=WASAPI loopback、macOS=CoreAudio Tap 14.2+）");
 #endif
 }
 
