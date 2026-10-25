@@ -222,6 +222,17 @@ class TouchpadModule : Module {
     private var ptrPanAcc = 0f
     private var ptrButtons = 0
 
+    // 批N：USB 背压合并——被拒帧的位移/滚轮/按钮/媒体键累积到下帧或 16ms 补发（pointer 幂等不丢位置）
+    private var pdDx = 0
+    private var pdDy = 0
+    private var pdWheel = 0
+    private var pdPan = 0
+    private var pdConsumer = 0
+    private var pdButtons = -1
+    private var lastSentButtons = 0
+    @Volatile private var retryScheduled = false
+    @Volatile private var retryMiss = 0
+
     /**
      * 物理触摸板（BT 指针设备）的相对位移/按键/滚轮直通：由 PhysKeyBridge
      * 在 dispatchGenericMotionEvent 里喂入，直接走 [dispatch] 三出口（与手势同链路）。
@@ -282,6 +293,36 @@ class TouchpadModule : Module {
      * 控制帧上行，对端用 SendInput / evdev 注入。没有任何出口时记为 [Uplink.NONE] 并在界面显示
      * 「出口：无（输入会被丢弃：…）」—— 不再像旧实现那样只打一行 `Log.v` 把输入丢进黑洞。
      */
+    /** 批N：USB 背压补发——16ms 后携带积压重试；连续 miss>64（≈1s）放弃防空转 */
+    private fun scheduleUsbRetry() {
+        if (retryScheduled) return
+        retryScheduled = true
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+            retryScheduled = false
+            val ctx = ctxRef ?: return@postDelayed
+            val has = pdDx != 0 || pdDy != 0 || pdWheel != 0 || pdPan != 0 || pdConsumer != 0 || pdButtons >= 0
+            if (!has) { retryMiss = 0; return@postDelayed }
+            if (retryMiss > 64) {
+                pdDx = 0; pdDy = 0; pdWheel = 0; pdPan = 0; pdConsumer = 0; pdButtons = -1
+                retryMiss = 0
+                Log.w(TAG, "USB 背压持续被拒，积压已放弃（host 长期未取报告）")
+                return@postDelayed
+            }
+            retryMiss++
+            val btns = if (pdButtons >= 0) pdButtons else lastSentButtons
+            val ok = if (pdConsumer != 0) {
+                ctx.hid.sendInputReport(byteArrayOf(0x04, pdConsumer.toByte(), (pdConsumer shr 8).toByte(), 0))
+            } else {
+                ctx.hid.sendInputReport(byteArrayOf(0x02, btns.toByte(), pdDx.toByte(), pdDy.toByte(), pdWheel.toByte(), pdPan.toByte()))
+            }
+            if (ok) {
+                pdDx = 0; pdDy = 0; pdWheel = 0; pdPan = 0; pdConsumer = 0; pdButtons = -1
+                retryMiss = 0
+                lastSentButtons = btns
+            } else scheduleUsbRetry()
+        }, 16)
+    }
+
     private fun dispatch(ctx: ModuleContext, f: TouchpadFrame) {
         val bt = ctx.module(ModuleId.BTHID) as? com.allperiph.bt.BtHidDevice
         val wirelessReady = com.allperiph.wireless.ControlTarget.isControlling() &&
@@ -309,20 +350,36 @@ class TouchpadModule : Module {
                 }
             }
             Uplink.USB -> {
-                val ok = if (f.consumer != 0) {
+                // 批N：背压合并——失败帧位移/滚轮/按钮/媒体键并入下帧；溢出保留
+                val rawX = f.dx + pdDx; val rawY = f.dy + pdDy
+                val rawW = f.wheel + pdWheel; val rawP = f.pan + pdPan
+                val dx = rawX.coerceIn(-127, 127); val dy = rawY.coerceIn(-127, 127)
+                val wh = rawW.coerceIn(-127, 127); val pn = rawP.coerceIn(-127, 127)
+                val cons = if (f.consumer != 0) f.consumer else pdConsumer
+                val btns = if (pdButtons >= 0) pdButtons else f.buttons
+                val ok = if (cons != 0) {
                     ctx.hid.sendInputReport(
-                        byteArrayOf(0x04, f.consumer.toByte(), (f.consumer shr 8).toByte(), 0)
+                        byteArrayOf(0x04, cons.toByte(), (cons shr 8).toByte(), 0)
                     )
                 } else {
                     ctx.hid.sendInputReport(
-                        byteArrayOf(0x02, f.buttons.toByte(), f.dx.toByte(), f.dy.toByte(), f.wheel.toByte(), f.pan.toByte())
+                        byteArrayOf(0x02, btns.toByte(), dx.toByte(), dy.toByte(), wh.toByte(), pn.toByte())
                     )
                 }
-                if (ok) Uplink.set(path)
-                else {
+                if (ok) {
+                    pdDx = 0; pdDy = 0; pdWheel = 0; pdPan = 0; pdConsumer = 0; pdButtons = -1
+                    retryMiss = 0
+                    lastSentButtons = btns
+                    Uplink.set(path)
+                } else {
+                    pdDx = rawX - dx; pdDy = rawY - dy
+                    pdWheel = rawW - wh; pdPan = rawP - pn
+                    if (cons != 0) pdConsumer = cons
+                    pdButtons = btns
                     val why = "USB HID 写入被拒（主机未取走上一报告或节点异常）"
                     if (Uplink.reason != why) Log.w(TAG, why)
                     Uplink.set(path, why)
+                    scheduleUsbRetry()
                 }
             }
             Uplink.BLUETOOTH -> {
