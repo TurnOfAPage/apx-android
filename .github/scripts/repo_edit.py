@@ -1,56 +1,56 @@
 #!/usr/bin/env python3
 """repo-edit：大文件锚点替换编辑器。
 
-本批（批 L · 诊断日志包）：为实体键盘/触摸板问题抓日志（issue 实测 1/2/6 号问题）。
-  - forward 包装：每键打 keyCode/action/usage/mod/EditText焦点/结果（区分放行①/消费③/转发⑤）
-  - forwardPointer 包装：source/action/坐标/双指轴 v·h/焦点/结果（定位双指无效与点击路径）
-  - motion Wrapper：isPointer/handled（定位 source 判定放行）
-  - 全部 android.util.Log（release 必出）；诊断期每事件一行，下版移除
-  - CHANGELOG 注明
+本批（批 M · 悬浮球实体化）：解决「太小/像一个点/深浅看不清」。
+  - bg_floating_ball：35% 黑半透明 → 95% 白实底 + 20% 黑描边（深浅背景都醒目）
+  - view_floating_ball：48dp → 56dp（触控目标更好点）；中心 ● 白字 → 深色（白底上可见）
+  - 注释同步；CHANGELOG 补条
 
 两阶段：①按期望次数全量校验；②全过才写盘。
 """
 import sys
 
 EDITS = [
-    ("android/app/src/main/java/com/allperiph/ui/PhysKeyBridge.kt", [
-        # 1. 键盘转发包装
-        ("""    private fun forward(event: KeyEvent): Boolean {
+    ("android/app/src/main/res/drawable/bg_floating_ball.xml", [
+        ("""    <solid android:color="#59000000" />
+    <stroke
+        android:width="1dp"
+        android:color="#66FFFFFF" />
 """,
-         """    private fun forward(event: KeyEvent): Boolean {
-        val ret = forwardImpl(event)
-        android.util.Log.d("ApxBridge", "KEY kc=${event.keyCode} act=${event.action} rep=${event.repeatCount} usage=${usageOf(event.keyCode)} mod=${modBit(event.keyCode)} etFocus=${act.currentFocus is EditText} ret=$ret")
-        return ret
-    }
-
-    private fun forwardImpl(event: KeyEvent): Boolean {
+         """    <solid android:color="#F2FFFFFF" />
+    <stroke
+        android:width="1dp"
+        android:color="#33000000" />
 """, 1),
-        # 2. 指针转发包装（双指轴与位置）
-        ("""    private fun forwardPointer(event: MotionEvent): Boolean {
+    ]),
+    ("android/app/src/main/res/layout/view_floating_ball.xml", [
+        ("""<!-- 悬浮球：48dp 半透明圆球（反馈#7） -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="48dp"
+    android:layout_height="48dp"
+    android:background="@drawable/bg_floating_ball"
 """,
-         """    private fun forwardPointer(event: MotionEvent): Boolean {
-        val ret = forwardPointerImpl(event)
-        android.util.Log.d("ApxBridge", "PTR src=${event.source} act=${event.actionMasked} x=${event.x} y=${event.y} v=${event.getAxisValue(android.view.MotionEvent.AXIS_VSCROLL)} h=${event.getAxisValue(android.view.MotionEvent.AXIS_HSCROLL)} etFocus=${act.currentFocus is EditText} ret=$ret")
-        return ret
-    }
-
-    private fun forwardPointerImpl(event: MotionEvent): Boolean {
+         """<!-- 悬浮球：56dp 白实底圆球（反馈#7 + 实测改版） -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="56dp"
+    android:layout_height="56dp"
+    android:background="@drawable/bg_floating_ball"
 """, 1),
-        # 3. motion Wrapper：source 判定打点（批F 改过的体）
-        ("""            if (isPointer) applyCursorLock(handled)
-            return if (handled) true else delegate.dispatchGenericMotionEvent(event)
+        ("""                android:text="●"
+                android:textSize="14sp"
+                android:textColor="#FFFFFFFF" />
 """,
-         """            if (isPointer) applyCursorLock(handled)
-            android.util.Log.d("ApxBridge", "MOTION isPointer=$isPointer handled=$handled src=${event.source} act=${event.actionMasked}")
-            return if (handled) true else delegate.dispatchGenericMotionEvent(event)
+         """                android:text="●"
+                android:textSize="16sp"
+                android:textColor="#CC000000" />
 """, 1),
     ]),
     ("docs/CHANGELOG.md", [
-        ("  校准）——修深色下黑字看不清；悬浮球字体问题随球体样式批一并修\n",
-         """  校准）——修深色下黑字看不清；悬浮球字体问题随球体样式批一并修
-- **诊断日志包（批 L · 临时，下版移除）**：键盘/指针/motion 三入口逐事件打点
-  （keyCode/usage/mod、source/action/双指轴、焦点与分支结果）——用于定位实体键盘
+        ("  （keyCode/usage/mod、source/action/双指轴、焦点与分支结果）——用于定位实体键盘\n  功能键、双指手势、触控板点击误触三类实测问题（logcat tag=ApxBridge）\n",
+         """  （keyCode/usage/mod、source/action/双指轴、焦点与分支结果）——用于定位实体键盘
   功能键、双指手势、触控板点击误触三类实测问题（logcat tag=ApxBridge）
+- **悬浮球实体化（批 M）**：球体 35% 黑半透明 → 95% 白实底 + 描边（深浅背景都醒目），
+  48dp→56dp（触控目标更好点），中心点改深色；修实测「太小/像一个点」
 """, 1),
     ]),
 ]
