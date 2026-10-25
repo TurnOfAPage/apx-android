@@ -1,5 +1,6 @@
 package com.allperiph.localsend
 
+import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -15,7 +16,6 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.provider.MediaStore
-import androidx.core.app.NotificationCompat
 import org.json.JSONObject
 import java.io.File
 import java.io.OutputStream
@@ -34,6 +34,7 @@ import java.util.concurrent.ConcurrentHashMap
  *  - 收到他人 announce → HTTP POST register 应答（对端加入本机列表）
  *  - 本地 HTTP server 服务 info/register/prepare/upload/cancel；文件落系统 Download/LocalSend/
  *  - HTTP 端口 53317 被占时回退 53318/53319，announce 携带实际监听端口
+ *  - 通知用原生 Notification.Builder（app 模块无 androidx.core 依赖）
  */
 class LocalSendService : Service() {
 
@@ -93,7 +94,7 @@ class LocalSendService : Service() {
 
     private fun startAll() {
         running = true
-        val n = NotificationCompat.Builder(this, CHAN_ID)
+        val n = Notification.Builder(this, CHAN_ID)
             .setSmallIcon(android.R.drawable.stat_sys_download)
             .setContentTitle("LocalSend 互传")
             .setContentText("等待局域网设备发送文件…")
@@ -309,7 +310,7 @@ class LocalSendService : Service() {
         try {
             val nm = getSystemService(NotificationManager::class.java)
             val pending = PendingIntent.getActivity(this, 0, Intent(), PendingIntent.FLAG_IMMUTABLE)
-            val n = NotificationCompat.Builder(this, CHAN_ID)
+            val n = Notification.Builder(this, CHAN_ID)
                 .setSmallIcon(android.R.drawable.stat_sys_download_done)
                 .setContentTitle(title).setContentText(text)
                 .setContentIntent(pending).setAutoCancel(true).build()
