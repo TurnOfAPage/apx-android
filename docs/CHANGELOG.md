@@ -95,6 +95,10 @@
   （公开仓库匿名可读，logs API 要 admin 权限），并上传 build-log-android artifact；
   repo-edit 推完提交后自动 `workflow_dispatch` 点一次 Build —— GITHUB_TOKEN 推的提交
   不触发 push 工作流，此前云端编辑的代码没人编译（批 S-1 错误即由此漏出）
+- **CI 步骤抗抖动（tooling · run#589 实测）**：`sdkmanager` 偶发下载损坏
+  （`Error reading Zip content from a SeekableByteChannel`）时退出码 1 会把整个 android job
+  判失败、后续步骤全跳过（只差一个包却让整轮白跑）。改为每个包独立重试 3 次，
+  最后以**目录存在性**判定（ubuntu-latest 镜像自带大部分组件，装不上≠用不了）
 - **全能外设输入法（批 S · issue 实测失焦输入）**：新增 InputMethodService
   （ApxImeService）——切到本输入法后物理键盘在任意界面打字全量转发到电脑
   （forwardFromIme 跳过本地输入态放行），没连电脑自然降级为手机打字；
