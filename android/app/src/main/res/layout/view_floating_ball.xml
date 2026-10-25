@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 悬浮球：56dp 白实底圆球（反馈#7 + 实测改版） -->
+<!-- 悬浮球：60dp 实底圆球（反馈#7 + 实测改版；issue#44 反馈"太小"放大一档）。
+     配色走 ball_bg / ball_text / ball_stroke 令牌，深浅两套自动切换。 -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="60dp"
     android:layout_height="60dp"
