@@ -446,7 +446,7 @@ class SettingsFragment : Fragment() {
 
     private fun dotBg(color: Int, selected: Boolean): GradientDrawable = ApKit.oval(
         color,
-        strokeColor = if (selected) 0xFF191919.toInt() else 0x33000000,
+        strokeColor = context?.getColor(if (selected) R.color.dot_stroke_selected else R.color.dot_stroke_normal) ?: 0,
         strokePx = if (selected) (host?.dp(3) ?: 0) else (host?.dp(1) ?: 0),
     )
 

@@ -10,11 +10,11 @@
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:layout_gravity="bottom"
-    android:layout_marginStart="16dp"
-    android:layout_marginEnd="16dp"
-    android:layout_marginBottom="6dp"
+    android:layout_marginStart="@dimen/space_16"
+    android:layout_marginEnd="@dimen/space_16"
+    android:layout_marginBottom="@dimen/space_6"
     android:orientation="horizontal"
-    android:padding="6dp">
+    android:padding="@dimen/space_6">
 
     <LinearLayout
         android:id="@+id/tabTouchpad"
@@ -32,10 +32,10 @@
             android:layout_height="wrap_content"
             android:gravity="center"
             android:orientation="vertical"
-            android:paddingStart="18dp"
-            android:paddingTop="6dp"
-            android:paddingEnd="18dp"
-            android:paddingBottom="6dp">
+            android:paddingStart="@dimen/space_16"
+            android:paddingTop="@dimen/space_6"
+            android:paddingEnd="@dimen/space_16"
+            android:paddingBottom="@dimen/space_6">
 
             <ImageView
                 android:id="@+id/ivTabTouchpad"
@@ -49,7 +49,7 @@
                 android:id="@+id/tvTabTouchpad"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:paddingTop="3dp"
+                android:paddingTop="@dimen/space_4"
                 android:text="@string/ui_main_item_touchpad"
                 android:textSize="10sp" />
         </LinearLayout>
@@ -71,10 +71,10 @@
             android:layout_height="wrap_content"
             android:gravity="center"
             android:orientation="vertical"
-            android:paddingStart="18dp"
-            android:paddingTop="6dp"
-            android:paddingEnd="18dp"
-            android:paddingBottom="6dp">
+            android:paddingStart="@dimen/space_16"
+            android:paddingTop="@dimen/space_6"
+            android:paddingEnd="@dimen/space_16"
+            android:paddingBottom="@dimen/space_6">
 
             <ImageView
                 android:id="@+id/ivTabKeyboard"
@@ -88,7 +88,7 @@
                 android:id="@+id/tvTabKeyboard"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:paddingTop="3dp"
+                android:paddingTop="@dimen/space_4"
                 android:text="@string/ui_touchpad_label_keyboard"
                 android:textSize="10sp" />
         </LinearLayout>
@@ -110,10 +110,10 @@
             android:layout_height="wrap_content"
             android:gravity="center"
             android:orientation="vertical"
-            android:paddingStart="18dp"
-            android:paddingTop="6dp"
-            android:paddingEnd="18dp"
-            android:paddingBottom="6dp">
+            android:paddingStart="@dimen/space_16"
+            android:paddingTop="@dimen/space_6"
+            android:paddingEnd="@dimen/space_16"
+            android:paddingBottom="@dimen/space_6">
 
             <ImageView
                 android:id="@+id/ivTabSettings"
@@ -127,7 +127,7 @@
                 android:id="@+id/tvTabSettings"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:paddingTop="3dp"
+                android:paddingTop="@dimen/space_4"
                 android:text="@string/section_settings"
                 android:textSize="10sp" />
         </LinearLayout>

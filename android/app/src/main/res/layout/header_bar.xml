@@ -9,10 +9,10 @@
     android:layout_height="wrap_content"
     android:gravity="center_vertical"
     android:orientation="horizontal"
-    android:paddingStart="20dp"
-    android:paddingEnd="20dp"
-    android:paddingTop="14dp"
-    android:paddingBottom="10dp">
+    android:paddingStart="@dimen/space_20"
+    android:paddingEnd="@dimen/space_20"
+    android:paddingTop="@dimen/space_12"
+    android:paddingBottom="@dimen/space_8">
 
     <LinearLayout
         android:layout_width="0dp"
@@ -36,7 +36,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:ellipsize="end"
-            android:paddingTop="4dp"
+            android:paddingTop="@dimen/space_4"
             android:singleLine="true"
             android:textAppearance="@style/APTextCaption" />
     </LinearLayout>
@@ -54,7 +54,7 @@
         style="@style/APTextButton"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginStart="12dp"
+        android:layout_marginStart="@dimen/space_12"
         android:text="@string/ui_main_btn_orient_lock"
         android:contentDescription="@string/ui_main_cd_orient_lock" />
 
@@ -64,7 +64,7 @@
         style="@style/APTextButton"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginStart="12dp"
+        android:layout_marginStart="@dimen/space_12"
         android:text="@string/ui_main_btn_settings_entry"
         android:contentDescription="@string/ui_main_btn_settings_entry" />
 </LinearLayout>

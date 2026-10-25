@@ -40,10 +40,10 @@
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
                 android:orientation="horizontal"
-                android:paddingStart="16dp"
-                android:paddingTop="8dp"
-                android:paddingEnd="16dp"
-                android:paddingBottom="16dp">
+                android:paddingStart="@dimen/space_16"
+                android:paddingTop="@dimen/space_8"
+                android:paddingEnd="@dimen/space_16"
+                android:paddingBottom="@dimen/space_16">
 
                 <!-- 左栏（weight=2）：上=文件/剪贴板/屏幕/手柄/遥控 一行，下=手势面撑满 -->
                 <LinearLayout
@@ -58,10 +58,10 @@
                         android:layout_height="wrap_content"
                         android:gravity="center_vertical"
                         android:orientation="horizontal"
-                        android:paddingStart="4dp"
-                        android:paddingTop="2dp"
-                        android:paddingEnd="4dp"
-                        android:paddingBottom="4dp">
+                        android:paddingStart="@dimen/space_4"
+                        android:paddingTop="@dimen/space_2"
+                        android:paddingEnd="@dimen/space_4"
+                        android:paddingBottom="@dimen/space_4">
 
                         <TextView
                             android:id="@+id/btnFileSend"
@@ -76,7 +76,7 @@
                             style="@style/APTextButton"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:layout_marginStart="16dp"
+                            android:layout_marginStart="@dimen/space_16"
                             android:text="@string/ui_touchpad_text_clipboard"
                             android:contentDescription="@string/ui_touchpad_text_clipboard" />
 
@@ -85,7 +85,7 @@
                             style="@style/APTextButton"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:layout_marginStart="16dp"
+                            android:layout_marginStart="@dimen/space_16"
                             android:text="@string/notify_action_screen"
                             android:contentDescription="@string/lay_main_cd_screen_open" />
 
@@ -94,7 +94,7 @@
                             style="@style/APTextButton"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:layout_marginStart="16dp"
+                            android:layout_marginStart="@dimen/space_16"
                             android:text="@string/lay_main_text_gamepad"
                             android:contentDescription="@string/lay_main_cd_gamepad_open" />
 
@@ -103,7 +103,7 @@
                             style="@style/APTextButton"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:layout_marginStart="16dp"
+                            android:layout_marginStart="@dimen/space_16"
                             android:text="@string/ui_remote_text_remote"
                             android:contentDescription="@string/lay_main_cd_remote_open" />
                     </LinearLayout>
@@ -130,8 +130,8 @@
                 <View
                     android:layout_width="1dp"
                     android:layout_height="match_parent"
-                    android:layout_marginStart="8dp"
-                    android:layout_marginEnd="8dp"
+                    android:layout_marginStart="@dimen/space_8"
+                    android:layout_marginEnd="@dimen/space_8"
                     android:background="?android:attr/listDivider" />
 
                 <!-- 右栏（weight=1）：快捷键（标题 + 编辑 + 网格，通栏可滚） -->
@@ -147,10 +147,10 @@
                         android:layout_height="wrap_content"
                         android:gravity="center_vertical"
                         android:orientation="horizontal"
-                        android:paddingStart="4dp"
-                        android:paddingTop="8dp"
-                        android:paddingEnd="4dp"
-                        android:paddingBottom="4dp">
+                        android:paddingStart="@dimen/space_4"
+                        android:paddingTop="@dimen/space_8"
+                        android:paddingEnd="@dimen/space_4"
+                        android:paddingBottom="@dimen/space_4">
 
                         <TextView
                             android:layout_width="0dp"
@@ -189,7 +189,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
                 android:orientation="vertical"
-                android:padding="2dp">
+                android:padding="@dimen/space_2">
 
                 <LinearLayout
                     android:id="@+id/keyboardBox"
@@ -219,22 +219,22 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_gravity="top|end"
-        android:layout_marginTop="12dp"
-        android:layout_marginEnd="12dp"
+        android:layout_marginTop="@dimen/space_12"
+        android:layout_marginEnd="@dimen/space_12"
         android:background="@drawable/bg_card"
         android:gravity="center_vertical"
         android:orientation="horizontal"
-        android:padding="4dp"
+        android:padding="@dimen/space_4"
         android:visibility="gone">
 
         <TextView
             android:id="@+id/btnLandTouchpad"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:paddingStart="10dp"
-            android:paddingEnd="6dp"
-            android:paddingTop="6dp"
-            android:paddingBottom="6dp"
+            android:paddingStart="@dimen/space_8"
+            android:paddingEnd="@dimen/space_6"
+            android:paddingTop="@dimen/space_6"
+            android:paddingBottom="@dimen/space_6"
             android:text="@string/ui_main_item_touchpad"
             android:textColor="@color/md_on_surface"
             android:textSize="13sp" />
@@ -243,10 +243,10 @@
             android:id="@+id/btnLandKeyboard"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:paddingStart="6dp"
-            android:paddingEnd="6dp"
-            android:paddingTop="6dp"
-            android:paddingBottom="6dp"
+            android:paddingStart="@dimen/space_6"
+            android:paddingEnd="@dimen/space_6"
+            android:paddingTop="@dimen/space_6"
+            android:paddingBottom="@dimen/space_6"
             android:text="@string/ui_touchpad_label_keyboard"
             android:textColor="@color/md_on_surface"
             android:textSize="13sp" />
@@ -255,10 +255,10 @@
             android:id="@+id/btnLandLock"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:paddingStart="6dp"
-            android:paddingEnd="6dp"
-            android:paddingTop="6dp"
-            android:paddingBottom="6dp"
+            android:paddingStart="@dimen/space_6"
+            android:paddingEnd="@dimen/space_6"
+            android:paddingTop="@dimen/space_6"
+            android:paddingBottom="@dimen/space_6"
             android:text="@string/ui_main_btn_orient_lock"
             android:textColor="@color/md_on_surface"
             android:textSize="13sp" />
@@ -267,10 +267,10 @@
             android:id="@+id/btnLandSettings"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:paddingStart="6dp"
-            android:paddingEnd="10dp"
-            android:paddingTop="6dp"
-            android:paddingBottom="6dp"
+            android:paddingStart="@dimen/space_6"
+            android:paddingEnd="@dimen/space_8"
+            android:paddingTop="@dimen/space_6"
+            android:paddingBottom="@dimen/space_6"
             android:text="@string/ui_main_btn_settings_entry"
             android:textColor="@color/md_on_surface"
             android:textSize="13sp" />
@@ -283,14 +283,14 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_gravity="top|end"
-        android:layout_marginTop="10dp"
-        android:layout_marginEnd="16dp"
+        android:layout_marginTop="@dimen/space_8"
+        android:layout_marginEnd="@dimen/space_16"
         android:background="@drawable/bg_card"
         android:elevation="4dp"
-        android:paddingStart="14dp"
-        android:paddingEnd="14dp"
-        android:paddingTop="8dp"
-        android:paddingBottom="8dp"
+        android:paddingStart="@dimen/space_12"
+        android:paddingEnd="@dimen/space_12"
+        android:paddingTop="@dimen/space_8"
+        android:paddingBottom="@dimen/space_8"
         android:text="@string/ui_main_btn_settings_entry"
         android:visibility="gone" />
 </FrameLayout>

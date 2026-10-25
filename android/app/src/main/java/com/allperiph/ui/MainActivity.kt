@@ -1569,7 +1569,7 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
     /** 色点：选中时描深色粗边（形状实现见 [ApKit.oval]） */
     private fun dotBg(color: Int, selected: Boolean): GradientDrawable = ApKit.oval(
         color,
-        strokeColor = if (selected) 0xFF191919.toInt() else 0x33000000,
+        strokeColor = getColor(if (selected) R.color.dot_stroke_selected else R.color.dot_stroke_normal),
         strokePx = if (selected) dp(3) else dp(1),
     )
 

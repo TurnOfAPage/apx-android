@@ -5,7 +5,7 @@
     android:layout_height="match_parent"
     android:orientation="horizontal"
     android:gravity="center_vertical"
-    android:padding="12dp"
+    android:padding="@dimen/space_12"
     android:background="@color/widget_bg">
 
     <!-- 连接状态指示灯 -->
@@ -13,7 +13,7 @@
         android:id="@+id/widget_status_dot"
         android:layout_width="10dp"
         android:layout_height="10dp"
-        android:layout_marginEnd="8dp"
+        android:layout_marginEnd="@dimen/space_8"
         android:background="@color/widget_dot" />
 
     <LinearLayout
@@ -40,7 +40,7 @@
             android:text="—"
             android:textColor="@color/widget_text"
             android:textSize="11sp"
-            android:layout_marginTop="2dp" />
+            android:layout_marginTop="@dimen/space_2" />
 
     </LinearLayout>
 

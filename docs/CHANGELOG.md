@@ -104,6 +104,15 @@
   同时把构建失败的错误上报从 check-runs API 改成 **workflow command**（`::error::`）：
   原实现先用 gh api 查 check-run id 再 POST，实测在 job 进行中返回 404、annotation 一直没写上去；
   workflow command 由 GitHub 自动收集成 annotation，不需要任何 token 权限
+- **间距令牌化（issue#42「排版混乱」）**：布局 padding/margin 此前 14 种取值，收敛为
+  `values/dimens.xml` 的 8 级梯度（space_2/4/6/8/12/16/20/24），归一化 28 处（10→8、14→12、
+  18→16、3→4，均不超过 2dp 且以减小为主）；给悬浮底栏留的底部空白此前三页分别是
+  90/104/96dp（注释还写着 88），合并为语义 token `inset_bottom_nav`
+- **Kotlin 侧色值令牌化**：被控输入面板 7 色、`md_error`（删除/失败红，深色镜下提亮）、
+  色点选中描边（深色下改亮描边）、桌面小组件 3 色、磁贴与 OK 按钮 —— 全部进色板；
+  并修掉两处作用域错误（widget 的形参是 `ctx` 不是 `context`；`dotBg` 里没有 `act`）
+- **关卡升级**：新增「布局 dp 字面量间距」硬规则；中文文案存量改**棘轮**
+  （基数 536，涨则 `::warning::`），并修正统计范围只算 main 源码
 - **Kotlin 侧 UI 文案入资源**：对话框标题与按钮（快捷键管理 / 自定义键盘布局 / 删除文件 /
   恢复默认…）、字段标签、EditText hint、Toast 提示、被控输入面板说明、快捷设置磁贴标签
   共 55 处从硬编码中文改为 `strings.xml` 资源（按钮词复用既有 `ui_common_*`，百分号按

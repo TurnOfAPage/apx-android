@@ -378,6 +378,8 @@ TV/PC 控制 · 诊断 · 文件 · 自检/日志/悬浮球</string>
     <string name="ui_common_restore_default">恢复默认</string>
     <string name="ui_common_send">发送</string>
     <string name="common_device">设备</string>
+    <string name="common_unknown_device">未知设备</string>
+    <string name="lay_widget_connected">已连接</string>
 
     <!-- 快捷设置磁贴（用户可见的系统级入口） -->
     <string name="ui_tile_label_on">%1$s·已连接</string>

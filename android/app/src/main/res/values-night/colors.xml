@@ -47,6 +47,13 @@
     <color name="miuix_accent_soft">@color/md_primary_container</color>
     <color name="miuix_danger">@color/state_error</color>
 
+    <!-- 语义红：深色底下要提亮，否则白卡换深卡后 #B3261E 对比不足 -->
+    <color name="md_error">#FFF2B8B5</color>
+
+    <!-- 色点描边：深色底下改用亮描边（原来固定深色，深色主题里看不出选中环） -->
+    <color name="dot_stroke_selected">#FFEDEDED</color>
+    <color name="dot_stroke_normal">#33FFFFFF</color>
+
     <!-- 悬浮球：深色下换成深底白点，跟其余页面同一套令牌 -->
     <color name="ball_bg">#F21C1C1E</color>
     <color name="ball_text">#FFEDEDED</color>

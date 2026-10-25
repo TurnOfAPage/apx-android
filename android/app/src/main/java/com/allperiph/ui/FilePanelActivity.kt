@@ -189,7 +189,7 @@ class FilePanelActivity : Activity() {
             text = getString(R.string.ui_common_delete)
             textSize = 14f
             setTypeface(null, Typeface.BOLD)
-            setTextColor(Color.parseColor("#B3261E"))
+            setTextColor(getColor(R.color.md_error))
             setPadding(dp(14f), 0, 0, 0)
             setOnClickListener { confirmDelete(f) }
         })
@@ -309,7 +309,7 @@ class FilePanelActivity : Activity() {
     private fun status(text: String, warn: Boolean) {
         statusView.text = text
         statusView.setTextColor(
-            if (warn) Color.parseColor("#B3261E")
+            if (warn) getColor(R.color.md_error)
             else resources.getColor(R.color.md_on_surface_variant)
         )
     }

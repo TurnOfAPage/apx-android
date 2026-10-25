@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  间距梯度（**唯一取值来源**）。issue#42「排版混乱」的根因是 padding/margin 有 14 种取值，
+  这里收敛成 8 级；布局与样式一律引用 token，不再写 dp 字面量。
+
+  梯度含义（沿用 4dp 基准 + 两个既有主导值）：
+    space_2  发丝缝（徽章与文字、勾选与标签）
+    space_4  紧凑内缩（行内元素之间）
+    space_6  小间距（列表行内上下留白，全仓最高频）
+    space_8  常规小间距（行与行之间）
+    space_12 卡片下边距 / 组与组之间
+    space_16 卡片内边距 / 页面左右边距
+    space_20 页面级左右边距（顶栏）
+    space_24 大块留白（空态提示等）
+-->
+<resources>
+    <dimen name="space_2">2dp</dimen>
+    <dimen name="space_4">4dp</dimen>
+    <dimen name="space_6">6dp</dimen>
+    <dimen name="space_8">8dp</dimen>
+    <dimen name="space_12">12dp</dimen>
+    <dimen name="space_16">16dp</dimen>
+    <dimen name="space_20">20dp</dimen>
+    <dimen name="space_24">24dp</dimen>
+
+    <!--
+      给悬浮底栏留的底部空白：触控板页 / 键盘页 / 设置页三处此前分别是 90dp / 104dp / 96dp
+      （注释里还写着 88dp，与实现都不符）。三处用途完全相同，合并为一个语义 token。
+      底栏本体约 6+23+3+14+6=52dp + 6dp 外边距 + 系统手势条，96dp 足够不重叠。
+    -->
+    <dimen name="inset_bottom_nav">96dp</dimen>
+</resources>

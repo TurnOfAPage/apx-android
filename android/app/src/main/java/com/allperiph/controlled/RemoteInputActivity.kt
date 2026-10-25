@@ -101,17 +101,18 @@ class RemoteInputActivity : Activity() {
         val dp = { v: Float -> (v * resources.displayMetrics.density + 0.5f).toInt() }
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.parseColor("#FF1A1A2E"))
+            setBackgroundColor(getColor(R.color.remote_panel_bg))
             setPadding(dp(24f), dp(16f), dp(24f), dp(16f))
         }
         val titleRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        titleRow.addView(TextView(this).apply { text = getString(R.string.ui_remoteinput_title); setTextColor(Color.parseColor("#3482FF")); textSize = 14f })
+        titleRow.addView(TextView(this).apply { text = getString(R.string.ui_remoteinput_title); setTextColor(getColor(R.color.remote_panel_accent)); textSize = 14f })
         titleRow.addView(View(this), LinearLayout.LayoutParams(0, 0, 1f))
-        titleRow.addView(TextView(this).apply { text = getString(R.string.ui_remoteinput_from, sourceDevice); setTextColor(Color.parseColor("#99FFFFFF")); textSize = 13f })
+        titleRow.addView(TextView(this).apply { text = getString(R.string.ui_remoteinput_from, sourceDevice); setTextColor(getColor(R.color.remote_panel_text_dim)); textSize = 13f })
         root.addView(titleRow, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(8f) })
         val input = EditText(this).apply {
-            setTextColor(Color.WHITE); setHintTextColor(Color.parseColor("#66FFFFFF"))
-            hint = hintText.ifEmpty { getString(R.string.ui_remoteinput_hint) }; setBackgroundColor(Color.parseColor("#FF2A2A3E"))
+            setTextColor(getColor(R.color.remote_panel_on));
+            setHintTextColor(getColor(R.color.remote_panel_text_faint))
+            hint = hintText.ifEmpty { getString(R.string.ui_remoteinput_hint) }; setBackgroundColor(getColor(R.color.remote_panel_field))
             setPadding(dp(16f), dp(12f), dp(16f), dp(12f)); textSize = 18f; typeface = Typeface.DEFAULT
             isFocusable = true; isFocusableInTouchMode = true; setSingleLine()
             addTextChangedListener(object : TextWatcher {
@@ -165,10 +166,10 @@ class RemoteInputActivity : Activity() {
         var tpLastX = 0f; var tpLastY = 0f
         var tpDownAt = 0L
         val touchpad = android.widget.FrameLayout(this).apply {
-            setBackgroundColor(Color.parseColor("#FF2A2A3E"))
+            setBackgroundColor(getColor(R.color.remote_panel_field))
             addView(TextView(this@RemoteInputActivity).apply {
                 text = getString(R.string.ui_remoteinput_touchpad)
-                setTextColor(Color.parseColor("#66FFFFFF")); textSize = 12f
+                setTextColor(getColor(R.color.remote_panel_text_faint)); textSize = 12f
                 gravity = Gravity.CENTER
             }, android.widget.FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
         }
@@ -217,9 +218,9 @@ class RemoteInputActivity : Activity() {
         // v184：文字编辑快捷键排 —— 退格/方向/跳转/组合键经特殊键链路直达对端
         //（手机输入框只负责新增文本；对对端已有内容的修改全走这里）
         fun editKey(label: String, mod: Int, vk: Int) = TextView(this).apply {
-            text = label; setTextColor(Color.WHITE); textSize = 13f; gravity = Gravity.CENTER
+            text = label; setTextColor(getColor(R.color.remote_panel_on)); textSize = 13f; gravity = Gravity.CENTER
             setPadding(dp(14f), dp(10f), dp(14f), dp(10f))
-            setBackgroundColor(Color.parseColor("#FF2A2A3E"))
+            setBackgroundColor(getColor(R.color.remote_panel_field))
             isFocusable = true; contentDescription = label
             setOnClickListener { sendSpecial(mod, vk) }
         }
@@ -244,9 +245,9 @@ class RemoteInputActivity : Activity() {
         })
         val btnRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.END }
         btnRow.addView(TextView(this).apply {
-            text = getString(R.string.ui_common_cancel); setTextColor(Color.WHITE); textSize = 14f; typeface = Typeface.DEFAULT_BOLD
+            text = getString(R.string.ui_common_cancel); setTextColor(getColor(R.color.remote_panel_on)); textSize = 14f; typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER; setPadding(dp(24f), dp(10f), dp(24f), dp(10f))
-            setBackgroundColor(Color.parseColor("#FF666666"))
+            setBackgroundColor(getColor(R.color.remote_panel_neutral))
             setOnClickListener {
                 // ★ 0x08（CANCEL）三端接收侧全是空实现（ControlledService / TvServerService
                 //   里都写着 `-> Unit`），光发这一帧不会删掉对端已上屏的字 —— 点「取消」
@@ -259,9 +260,9 @@ class RemoteInputActivity : Activity() {
             }
         }.also { it.layoutParams = LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(12f) } })
         btnRow.addView(TextView(this).apply {
-            text = getString(R.string.ui_common_send); setTextColor(Color.WHITE); textSize = 14f; typeface = Typeface.DEFAULT_BOLD
+            text = getString(R.string.ui_common_send); setTextColor(getColor(R.color.remote_panel_on)); textSize = 14f; typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER; setPadding(dp(24f), dp(10f), dp(24f), dp(10f))
-            setBackgroundColor(Color.parseColor("#3482FF"))
+            setBackgroundColor(getColor(R.color.remote_panel_accent))
             // 发送后**留在面板**（清空输入框接着打下一句）；收起整个面板走「取消」或系统返回。
             // 以前发完就 finish()，想连着打就得重新唤起 —— 手机端反馈“一点发送就跳出界面”。
             //

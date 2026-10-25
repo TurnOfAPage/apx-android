@@ -182,7 +182,7 @@ class RemoteActivity : Activity() {
                 text = "OK"
                 textSize = 20f
                 gravity = Gravity.CENTER
-                setTextColor(0xFFFFFFFF.toInt())
+                setTextColor(getColor(R.color.md_on_primary))
                 typeface = android.graphics.Typeface.DEFAULT_BOLD
                 background = ApKit.oval(getColor(R.color.md_primary))
                 isClickable = true

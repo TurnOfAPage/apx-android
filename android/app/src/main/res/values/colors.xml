@@ -77,6 +77,29 @@
     <color name="screen_scrim">#99000000</color>
     <color name="screen_hint_text">#FFFFFFFF</color>
 
+    <!--
+      被控端输入面板（RemoteInputActivity）：这层是**浮在任意应用之上的深色面板**，
+      刻意固定深色、不随主题翻转（浅色底面板压在别人画面上更刺眼）。
+      此前这些值散在 Kotlin 里用 Color.parseColor 写死，现在集中在此。
+    -->
+    <color name="remote_panel_bg">#FF1A1A2E</color>
+    <color name="remote_panel_field">#FF2A2A3E</color>
+    <color name="remote_panel_accent">#FF3482FF</color>
+    <color name="remote_panel_neutral">#FF666666</color>
+    <color name="remote_panel_on">#FFFFFFFF</color>
+    <color name="remote_panel_text_dim">#99FFFFFF</color>
+    <color name="remote_panel_text_faint">#66FFFFFF</color>
+
+    <!-- 语义红（Material 的 error 红，用于白卡上的「删除」文字与失败态文字） -->
+    <color name="md_error">#FFB3261E</color>
+
+    <!-- 配色方案选择器的色点描边（选中时加粗深描边） -->
+    <color name="dot_stroke_selected">#FF191919</color>
+    <color name="dot_stroke_normal">#33000000</color>
+
+    <!-- 桌面小组件：连接正常时的状态色（与 widget_text/widget_dot 同组） -->
+    <color name="widget_ok">#FF34D399</color>
+
     <!-- 悬浮球（issue#44）：此前是写死的亮色白球，深色下不跟随主题 -->
     <color name="ball_bg">#F2FFFFFF</color>
     <color name="ball_text">#CC000000</color>

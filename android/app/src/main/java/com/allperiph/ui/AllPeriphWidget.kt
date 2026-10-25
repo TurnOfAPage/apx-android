@@ -39,18 +39,19 @@ class AllPeriphWidget : AppWidgetProvider() {
             id: Int,
         ) {
             val connected = ControlTarget.isControlling()
-            val deviceName = ControlTarget.label.ifBlank { "未知设备" }
+            val deviceName = ControlTarget.label.ifBlank { ctx.getString(R.string.common_unknown_device) }
 
             val views = RemoteViews(ctx.packageName, R.layout.widget_all_periph)
 
             // 状态文字
             views.setTextViewText(
                 R.id.widget_status,
-                if (connected) "已连接" else "未连接",
+                if (connected) ctx.getString(R.string.lay_widget_connected)
+                else ctx.getString(R.string.lay_widget_disconnected),
             )
 
             // 状态颜色
-            val statusColor = if (connected) 0xFF34D399.toInt() else 0xFF9BA1AA.toInt()
+            val statusColor = ctx.getColor(if (connected) R.color.widget_ok else R.color.widget_text)
             views.setTextColor(R.id.widget_status, statusColor)
 
             // 设备名
@@ -60,7 +61,7 @@ class AllPeriphWidget : AppWidgetProvider() {
             )
 
             // 状态指示灯颜色
-            val dotColor = if (connected) 0xFF34D399.toInt() else 0xFF6E747C.toInt()
+            val dotColor = ctx.getColor(if (connected) R.color.widget_ok else R.color.widget_dot)
             views.setInt(R.id.widget_status_dot, "setBackgroundColor", dotColor)
 
             mgr.updateAppWidget(id, views)
