@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """repo-edit：大文件锚点替换编辑器。
 
-本批（反馈#3 miuix 排版重排，三处目标，run#5 因三引号内以 `"` 结尾的语法错重发）：
+本批（反馈#3 miuix 排版重排，三处目标）：
   T1 触控板页手势区卡片排版 / T2 设置页快捷键模板列表 / T3 EnvChecks 诊断页对齐间距。
 miuix 依据（compose-miuix-ui/miuix，Card.kt 实读）：CardDefaults.CornerRadius = 16.dp、
 InsideMargin = 0（内容层统一给）、间距落 4dp 栅格。
 
-⚠ 写法约束：凡内容以 `"` 结尾的三引号字符串，必须**再带一个换行**再闭合
-（`"10dp\n"""`）—— 否则 Python 从第一个 `"""` 就闭合 → SyntaxError（run#5 实锤）。
+⚠ 写法约束（run#5 与 run#7 连续实锤）：
+  ① 锚点文本若以双引号收尾，三引号字符串必须**先换一行**再闭合，
+     否则解释器会把紧跟的引号串当闭合（run#5 根因）；
+  ② docstring/字符串正文里**绝不能出现字面的三个连续双引号**，
+     否则 docstring 提前闭合，后续文字变代码（run#7 根因，就是下面这行注释自己踩的）。
 
 两阶段：①按期望次数全量校验，失配一次性报全；②全过才写盘。失配 → 退出非零 → 不提交。
 条目 = (路径, [(old, new, 期望命中次数), ...])；次数 >1 时全量替换。
@@ -93,7 +96,7 @@ EDITS = [
                     android:layout_height="wrap_content"
 """, 2),
     ]),
-    # ————— T1 触控板页手势区：间距归 4dp 栅格（6→8、14→12） —————
+    # ————— T1 触控板手势区：间距归 4dp 栅格（6→8、14→12） —————
     ("android/app/src/main/res/layout/activity_main.xml", [
         ("""                    android:paddingStart="4dp"
                     android:paddingTop="6dp"
