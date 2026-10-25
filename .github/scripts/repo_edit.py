@@ -1,110 +1,140 @@
 #!/usr/bin/env python3
 """repo-edit：大文件锚点替换编辑器。
 
-本批（批 O · 手动导出日志）：设置→关于与维护 新增「导出运行日志」入口。
-  - page_settings：groupAbout 尾部前插 rowExportLog 行（标题+副题+箭头，深色 token）
-  - SettingsFragment：点击 → 自进程 logcat（-t 5000 --pid）+ 设备头 →
-    MediaStore 落 Download/AllPeriph/log_时间戳.txt → Toast 报路径
-  - CHANGELOG 补条
+本批（批 N · USB HID 背压修复，issue#46 日志实锤）：
+  问题：host 未取走上一报告时 sendInputReport 失败，旧实现直接丢帧——
+        实体触摸板位移/双指/按钮大量丢失（日志高频「USB HID 写入被拒」）。
+  方案：
+    - 失败帧合并进 pending（位移/滚轮/按钮/媒体键；溢出保留 ≤127 不丢）
+    - 下一帧发送时自动并入 pending（pointer 幂等）
+    - 失败后 16ms 补发 tick；连续 miss>64（≈1s）放弃清空防 host 长期不取空转
+    - 按钮状态 lastSentButtons 兜底，重试帧不丢点击
+  改动：TouchpadModule 单文件（字段组 + USB 分支 + scheduleUsbRetry + CHANGELOG）
 
 两阶段：①按期望次数全量校验；②全过才写盘。
 """
 import sys
 
-EXPORT_ROW = """        <!-- 手动导出 log.txt（issue 实测建议）：logcat 自进程 → Download/AllPeriph/ -->
-        <LinearLayout
-            android:id="@+id/rowExportLog"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical"
-            android:padding="12dp"
-            android:background="@drawable/bg_card"
-            android:layout_marginBottom="6dp">
+PENDING_FIELDS = """    private var ptrButtons = 0
 
-            <TextView
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="导出运行日志\n一键保存 log.txt 到 Download/AllPeriph（反馈问题时附上）"
-                android:textColor="@color/md_on_surface"
-                android:textSize="14sp" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="›"
-                android:textColor="@color/md_on_surface_variant"
-                android:textSize="18sp" />
-        </LinearLayout>
-
+    // 批N：USB 背压合并——被拒帧的位移/滚轮/按钮/媒体键累积到下帧或 16ms 补发（pointer 幂等不丢位置）
+    private var pdDx = 0
+    private var pdDy = 0
+    private var pdWheel = 0
+    private var pdPan = 0
+    private var pdConsumer = 0
+    private var pdButtons = -1
+    private var lastSentButtons = 0
+    @Volatile private var retryScheduled = false
+    @Volatile private var retryMiss = 0
 """
 
-EXPORT_KOTLIN = """        // 批O：手动导出运行日志（issue 建议）——自进程 logcat → Download/AllPeriph/
-        act.findViewById<android.view.View>(R.id.rowExportLog)?.setOnClickListener { v ->
-            android.widget.Toast.makeText(v.context, "正在收集日志…", android.widget.Toast.LENGTH_SHORT).show()
-            Thread {
-                val msg = try {
-                    val pid = android.os.Process.myPid()
-                    val p = Runtime.getRuntime().exec(arrayOf("logcat", "-d", "-v", "time", "-t", "5000", "--pid=$pid"))
-                    val raw = p.inputStream.bufferedReader().readText()
-                    if (raw.isBlank()) {
-                        "没有可导出的日志内容"
-                    } else {
-                        val stamp = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())
-                        val head = "=== AllPeriph 运行日志导出 ===\n时间: $stamp\n设备: ${android.os.Build.MODEL} / SDK ${android.os.Build.VERSION.SDK_INT}\n说明: 仅含本进程最近 5000 行 logcat\n\n"
-                        val body = head + raw.takeLast(890_000)
-                        val fileName = "log_${System.currentTimeMillis()}.txt"
-                        val values = android.content.ContentValues().apply {
-                            put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, fileName)
-                            put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "text/plain")
-                            put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS + "/AllPeriph")
-                            put(android.provider.MediaStore.MediaColumns.IS_PENDING, 1)
-                        }
-                        val uri = v.context.contentResolver.insert(
-                            android.provider.MediaStore.Downloads.getContentUri(android.provider.MediaStore.VOLUME_EXTERNAL_PRIMARY), values,
-                        ) ?: throw IllegalStateException("insert failed")
-                        v.context.contentResolver.openOutputStream(uri)!!.use { it.write(body.toByteArray(Charsets.UTF_8)) }
-                        val fin = android.content.ContentValues().apply {
-                            put(android.provider.MediaStore.MediaColumns.IS_PENDING, 0)
-                        }
-                        v.context.contentResolver.update(uri, fin, null, null)
-                        "已保存到 Download/AllPeriph/$fileName"
-                    }
-                } catch (e: Throwable) {
-                    "导出失败: ${e.message}"
+USB_BRANCH = """            Uplink.USB -> {
+                // 批N：背压合并——失败帧位移/滚轮/按钮/媒体键并入下帧；溢出保留
+                val rawX = f.dx + pdDx; val rawY = f.dy + pdDy
+                val rawW = f.wheel + pdWheel; val rawP = f.pan + pdPan
+                val dx = rawX.coerceIn(-127, 127); val dy = rawY.coerceIn(-127, 127)
+                val wh = rawW.coerceIn(-127, 127); val pn = rawP.coerceIn(-127, 127)
+                val cons = if (f.consumer != 0) f.consumer else pdConsumer
+                val btns = if (pdButtons >= 0) pdButtons else f.buttons
+                val ok = if (cons != 0) {
+                    ctx.hid.sendInputReport(
+                        byteArrayOf(0x04, cons.toByte(), (cons shr 8).toByte(), 0)
+                    )
+                } else {
+                    ctx.hid.sendInputReport(
+                        byteArrayOf(0x02, btns.toByte(), dx.toByte(), dy.toByte(), wh.toByte(), pn.toByte())
+                    )
                 }
-                android.os.Handler(android.os.Looper.getMainLooper()).post {
-                    android.widget.Toast.makeText(v.context, msg, android.widget.Toast.LENGTH_LONG).show()
+                if (ok) {
+                    pdDx = 0; pdDy = 0; pdWheel = 0; pdPan = 0; pdConsumer = 0; pdButtons = -1
+                    retryMiss = 0
+                    lastSentButtons = btns
+                    Uplink.set(path)
+                } else {
+                    pdDx = rawX - dx; pdDy = rawY - dy
+                    pdWheel = rawW - wh; pdPan = rawP - pn
+                    if (cons != 0) pdConsumer = cons
+                    pdButtons = btns
+                    val why = "USB HID 写入被拒（主机未取走上一报告或节点异常）"
+                    if (Uplink.reason != why) Log.w(TAG, why)
+                    Uplink.set(path, why)
+                    scheduleUsbRetry()
                 }
-            }.apply { isDaemon = true; start() }
-        }
+            }
+"""
+
+RETRY_FN = """    /** 批N：USB 背压补发——16ms 后携带积压重试；连续 miss>64（≈1s）放弃防空转 */
+    private fun scheduleUsbRetry() {
+        if (retryScheduled) return
+        retryScheduled = true
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+            retryScheduled = false
+            val ctx = ctxRef ?: return@postDelayed
+            val has = pdDx != 0 || pdDy != 0 || pdWheel != 0 || pdPan != 0 || pdConsumer != 0 || pdButtons >= 0
+            if (!has) { retryMiss = 0; return@postDelayed }
+            if (retryMiss > 64) {
+                pdDx = 0; pdDy = 0; pdWheel = 0; pdPan = 0; pdConsumer = 0; pdButtons = -1
+                retryMiss = 0
+                Log.w(TAG, "USB 背压持续被拒，积压已放弃（host 长期未取报告）")
+                return@postDelayed
+            }
+            retryMiss++
+            val btns = if (pdButtons >= 0) pdButtons else lastSentButtons
+            val ok = if (pdConsumer != 0) {
+                ctx.hid.sendInputReport(byteArrayOf(0x04, pdConsumer.toByte(), (pdConsumer shr 8).toByte(), 0))
+            } else {
+                ctx.hid.sendInputReport(byteArrayOf(0x02, btns.toByte(), pdDx.toByte(), pdDy.toByte(), pdWheel.toByte(), pdPan.toByte()))
+            }
+            if (ok) {
+                pdDx = 0; pdDy = 0; pdWheel = 0; pdPan = 0; pdConsumer = 0; pdButtons = -1
+                retryMiss = 0
+                lastSentButtons = btns
+            } else scheduleUsbRetry()
+        }, 16)
+    }
+
 """
 
 EDITS = [
-    ("android/app/src/main/res/layout/page_settings.xml", [
-        ("        </LinearLayout><!-- /groupAbout -->\n",
-         EXPORT_ROW + """        </LinearLayout><!-- /groupAbout -->
+    ("android/app/src/main/java/com/allperiph/touchpad/TouchpadModule.kt", [
+        # 1. pending 字段组（声明行唯一）
+        ("""    private var ptrButtons = 0
+""",
+         PENDING_FIELDS, 1),
+        # 2. USB 分支整体替换（背压合并 + 溢出保留 + 补发调度）
+        ("""            Uplink.USB -> {
+                val ok = if (f.consumer != 0) {
+                    ctx.hid.sendInputReport(
+                        byteArrayOf(0x04, f.consumer.toByte(), (f.consumer shr 8).toByte(), 0)
+                    )
+                } else {
+                    ctx.hid.sendInputReport(
+                        byteArrayOf(0x02, f.buttons.toByte(), f.dx.toByte(), f.dy.toByte(), f.wheel.toByte(), f.pan.toByte())
+                    )
+                }
+                if (ok) Uplink.set(path)
+                else {
+                    val why = "USB HID 写入被拒（主机未取走上一报告或节点异常）"
+                    if (Uplink.reason != why) Log.w(TAG, why)
+                    Uplink.set(path, why)
+                }
+            }
+""",
+         USB_BRANCH, 1),
+        # 3. scheduleUsbRetry 插在 dispatch 定义前
+        ("""    private fun dispatch(ctx: ModuleContext, f: TouchpadFrame) {
+""",
+         RETRY_FN + """    private fun dispatch(ctx: ModuleContext, f: TouchpadFrame) {
 """, 1),
     ]),
-    ("android/app/src/main/java/com/allperiph/ui/SettingsFragment.kt", [
-        ("""        // 批H：点行主体 → 发送页（与 Switch 开关互不干扰）
-        act.findViewById<android.view.View>(R.id.rowLocalSend)?.setOnClickListener { v ->
-            v.context.startActivity(android.content.Intent(v.context, com.allperiph.localsend.SendActivity::class.java))
-        }
-""",
-         """        // 批H：点行主体 → 发送页（与 Switch 开关互不干扰）
-        act.findViewById<android.view.View>(R.id.rowLocalSend)?.setOnClickListener { v ->
-            v.context.startActivity(android.content.Intent(v.context, com.allperiph.localsend.SendActivity::class.java))
-        }
-""" + EXPORT_KOTLIN, 1),
-    ]),
     ("docs/CHANGELOG.md", [
-        ("  功能键、双指手势、触控板点击误触三类实测问题（logcat tag=ApxBridge）\n",
-         """  功能键、双指手势、触控板点击误触三类实测问题（logcat tag=ApxBridge）
-- **手动导出日志（批 O · issue 建议）**：设置→关于与维护 新增「导出运行日志」，
-  一键把本进程最近 5000 行 logcat + 设备头存为 Download/AllPeriph/log_时间戳.txt，
-  反馈问题随 issue 附上即可，免接线 logcat
+        ("  反馈问题随 issue 附上即可，免接线 logcat\n",
+         """  反馈问题随 issue 附上即可，免接线 logcat
+- **USB HID 背压修复（批 N · issue#46 日志实锤）**：host 未取走上一报告时旧实现
+  直接丢帧（日志高频「写入被拒」）——现失败帧合并进 pending（位移/滚轮/按钮/媒体键，
+  溢出保留），下帧自动并入 + 16ms 补发重试，连续 1s 被拒才放弃；实体触摸板位移、
+  双指滚动、点击不再因背压丢失
 """, 1),
     ]),
 ]
