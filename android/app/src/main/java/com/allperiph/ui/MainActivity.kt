@@ -512,11 +512,11 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
 
             // 横屏下状态/设置页左右限宽居中：两页复用竖屏整宽块，宽屏拉满后卡片行过长、
             // 视线要横跨整屏。留白随屏宽自适应（窄屏不强切）。子项顺序 = 页常量：
-            // 0 触控板 1 键盘 2 状态 3 设置（两套 activity_main.xml 的 ViewFlipper 顺序）。
+            // 0 触控板 1 键盘 2 设置（状态页已并入设置，反馈#10；横屏限宽只作用于设置页）。
             val sidePad = if (landscape) {
                 ((resources.displayMetrics.widthPixels - dp(680)).coerceAtLeast(0)) / 2
             } else 0
-            for (i in PAGE_STATUS..PAGE_SETTINGS) {
+            for (i in PAGE_SETTINGS..PAGE_SETTINGS) {
                 val child = pager.getChildAt(i) ?: continue
                 val lp = child.layoutParams as? android.widget.FrameLayout.LayoutParams ?: continue
                 if (lp.marginStart != sidePad) {
@@ -574,9 +574,9 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
                         val dx = ev.x - fourFingerStartX
                         if (abs(dx) > dp(56)) {
                             fourFingerSwiped = true
-                            // 横屏无底栏，四指是唯一换页方式：按页序循环（触控板→键盘→状态→设置）
+                            // 横屏四指循环换页（触控板→键盘→设置；状态页已并入设置，反馈#10）
                             val order = intArrayOf(
-                                PAGE_TOUCHPAD, PAGE_KEYBOARD, PAGE_STATUS, PAGE_SETTINGS,
+                                PAGE_TOUCHPAD, PAGE_KEYBOARD, PAGE_SETTINGS,
                             )
                             val cur = order.indexOf(pager.displayedChild).coerceAtLeast(0)
                             val next = if (dx < 0) {
@@ -885,9 +885,9 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
         ripple.play()
     }
 
-    /** 页 → 底栏页签下标（状态页并入设置 tab，高亮归并到「设置」；未映射返回 -1） */
+    /** 页 → 底栏页签下标（未映射返回 -1；状态页已并入设置，反馈#10） */
     private fun tabIndexFor(page: Int): Int =
-        TAB_PAGES.indexOf(if (page == PAGE_STATUS) PAGE_SETTINGS else page)
+        TAB_PAGES.indexOf(page)
 
     /** 切页：标题栏、页签染色与选中胶囊同步（内容页各自独立滚动） */
     private fun showPage(i: Int) {
@@ -905,21 +905,7 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
             tabLabels[k].setTypeface(null, if (on) Typeface.BOLD else Typeface.NORMAL)
             tabPills[k].background = null // 选中底由底栏 Drawable 里的滑动胶囊承担
         }
-        // 状态/设置 页内分页：顶栏分段（竖屏 header 可见；横屏靠四指循环互切）
-        val onSeg = i == PAGE_STATUS || i == PAGE_SETTINGS
-        findViewById<View>(R.id.segPages)?.visibility = if (onSeg) View.VISIBLE else View.GONE
-        if (onSeg) {
-            val cOn = resources.getColor(R.color.md_primary)
-            val cOff = resources.getColor(R.color.state_idle)
-            findViewById<TextView>(R.id.segGoStatus)?.apply {
-                setTextColor(if (i == PAGE_STATUS) cOn else cOff)
-                setTypeface(null, if (i == PAGE_STATUS) Typeface.BOLD else Typeface.NORMAL)
-            }
-            findViewById<TextView>(R.id.segGoSettings)?.apply {
-                setTextColor(if (i == PAGE_SETTINGS) cOn else cOff)
-                setTypeface(null, if (i == PAGE_SETTINGS) Typeface.BOLD else Typeface.NORMAL)
-            }
-        }
+        // 状态已并入设置页（反馈#10）：顶栏「状态↔设置」分段及其着色一并移除
         updateSettingsEntry()
         // 反馈#9：横屏底栏常驻 → 不再提前返回，选中胶囊也跟着滑（四指滑切页保留，只是不再唯一）
         // 新页布局完成后再滑动胶囊（否则取到的还是上一页的坐标）
@@ -1675,15 +1661,7 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
                 else PAGE_SETTINGS
             )
         }
-        // 状态 ↔ 设置 页内分页（状态页已并入设置 tab，两页经顶栏分段互切）
-        findViewById<TextView>(R.id.segGoStatus)?.setOnClickListener {
-            Feedback.tap(it)
-            showPage(PAGE_STATUS)
-        }
-        findViewById<TextView>(R.id.segGoSettings)?.setOnClickListener {
-            Feedback.tap(it)
-            showPage(PAGE_SETTINGS)
-        }
+        // 状态已并入设置页（反馈#10）：分段控件与点击绑定移除（视图已在 header_bar 删除）
         findViewById<Button>(R.id.btnExportTheme).setOnClickListener { exportTheme() }
         findViewById<Button>(R.id.btnImportTheme).setOnClickListener { importTheme() }
         findViewById<Button>(R.id.btnShareTheme).setOnClickListener { shareTheme() }
@@ -2227,12 +2205,12 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
 
         private const val PAGE_TOUCHPAD = 0
         private const val PAGE_KEYBOARD = 1
-        private const val PAGE_STATUS = 2
-        private const val PAGE_SETTINGS = 3
+        // 状态页已并入设置页（反馈#10）：设置成为第 3 个也是最后一个孩子
+        private const val PAGE_SETTINGS = 2
 
         /**
          * 底栏页签 → ViewFlipper 页面 index 的映射。
-         * 页签：触控板(0) / 键盘(1) / 设置(3)；状态页(2) 并入设置 tab（tabIndexFor 归并高亮）。
+         * 页签：触控板(0) / 键盘(1) / 设置(2)。
          */
         private val TAB_PAGES = intArrayOf(PAGE_TOUCHPAD, PAGE_KEYBOARD, PAGE_SETTINGS)
 
@@ -2252,13 +2230,11 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
         private val PAGE_TITLES = intArrayOf(
             R.string.ui_main_item_touchpad,        // 触控板
             R.string.ui_touchpad_label_keyboard,   // 键盘
-            R.string.ui_page_state,                // 状态
             R.string.section_settings,             // 设置
         )
         private val PAGE_SUBS = intArrayOf(
             R.string.ui_main_item_hotkey_send_cursor_swipe,
             R.string.ui_touchpad_label_remote,
-            R.string.ui_main_item_state,
             R.string.ui_main_item_template_theme,
         )
     }

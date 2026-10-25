@@ -198,12 +198,7 @@
                     android:orientation="vertical" />
             </LinearLayout>
 
-            <!-- ③ 状态页 / ④ 设置页（复用块） -->
-            <include
-                layout="@layout/page_status"
-                android:layout_width="match_parent"
-                android:layout_height="match_parent" />
-
+            <!-- ④ 设置页（状态页已并入设置顶，反馈#10） -->
             <include
                 layout="@layout/page_settings"
                 android:layout_width="match_parent"

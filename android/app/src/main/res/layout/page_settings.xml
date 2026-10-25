@@ -22,6 +22,13 @@
         android:orientation="vertical"
         android:paddingTop="4dp">
 
+        <!-- 状态块（原状态页并入设置页顶，反馈#10）：总开关 / 传输开关 / 链路诊断 /
+             运行摘要。根节点已由 ScrollView 改为 LinearLayout 平铺，滚动交给本页外层。 -->
+        <include
+            layout="@layout/page_status"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content" />
+
         <!-- 设置页分段：点顶部切换，避免一屏滚太长 -->
         <LinearLayout
             android:id="@+id/tabSettingsBar"

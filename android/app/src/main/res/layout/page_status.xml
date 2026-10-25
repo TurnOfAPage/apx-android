@@ -1,17 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  状态页（复用块）：大号启动开关；**启动后**才展开运行摘要 / 链路诊断 / 延迟预算。
-  竖屏底部留 96dp 给悬浮底栏；横屏（layout-land）由外层覆盖为 16dp。
+  状态块（已并入设置页顶，反馈#10）：根节点改 LinearLayout 平铺，滚动交给设置页外层
+  ScrollView；左右/底部留白由设置页统一提供（本块不再自带 padding）。
 -->
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/pageStatus"
     android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:clipToPadding="false"
-    android:fillViewport="true"
-    android:paddingStart="16dp"
-    android:paddingEnd="16dp"
-    android:paddingBottom="96dp">
+    android:layout_height="wrap_content"
+    android:orientation="vertical">
 
     <LinearLayout
         android:layout_width="match_parent"
@@ -320,4 +316,4 @@
             </LinearLayout>
         </LinearLayout>
     </LinearLayout>
-</ScrollView>
+</LinearLayout>
