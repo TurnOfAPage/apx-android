@@ -78,7 +78,7 @@ internal class PhysKeyBridge(private val act: Activity) {
     /** @return true = 已转发/已消费；false = 放行给手机本地 */
     private fun forward(event: KeyEvent): Boolean {
         val ret = forwardImpl(event)
-        android.util.Log.d("ApxBridge", "KEY kc=${event.keyCode} act=${event.action} rep=${event.repeatCount} usage=${usageOf(event.keyCode)} mod=${modBit(event.keyCode)} etFocus=${act.currentFocus is EditText} ret=$ret")
+        android.util.Log.d("ApxBridge", "KEY kc=${event.keyCode} act=${event.action} rep=${event.repeatCount} usage=${usageOf(event.keyCode)} etFocus=${act.currentFocus is EditText} ret=$ret")
         return ret
     }
 
