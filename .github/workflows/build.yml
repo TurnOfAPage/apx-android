@@ -116,6 +116,42 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
+      # 原生符号自检（真机教训）：只 enable CXX 的 CMake 工程会静默跳过 .c 源文件，
+      # 编译链接与 CI 全绿、运行期才报 "No implementation found ... UinputGamepad"，
+      # 虚拟手柄/摇杆静默不可用。所以构建后必须验**产物**，别信"编译通过"。
+      - name: Verify native JNI symbols in APKs
+        run: |
+          python3 - <<'PY'
+          import sys, zipfile
+          WANT = {
+              "app/build/outputs/apk/release/app-release.apk": (
+                  "lib/arm64-v8a/libapx.so",
+                  ["Java_com_allperiph_shared_input_UinputGamepad_openGamepad",
+                   "Java_com_allperiph_shared_input_UinputGamepad_sendAxis",
+                   "Java_com_allperiph_shared_input_UinputGamepad_sendButton",
+                   "Java_com_allperiph_shared_input_UinputGamepad_closeGamepad",
+                   "Java_com_allperiph_core_ApxNative_nativeInit"],
+              ),
+              "tv/build/outputs/apk/release/tv-release.apk": (
+                  "lib/arm64-v8a/libapxtv.so",
+                  ["Java_com_allperiph_shared_input_UinputGamepad_openGamepad"],
+              ),
+          }
+          bad = []
+          for apk, (so, syms) in WANT.items():
+              z = zipfile.ZipFile(apk)
+              data = z.read(so)
+              for s in syms:
+                  ok = s.encode() in data
+                  print(("OK   " if ok else "MISS ") + apk + " :: " + so + " :: " + s)
+                  if not ok:
+                      bad.append(apk + " :: " + so + " 缺 " + s)
+          if bad:
+              print("========== 原生符号自检失败 ==========")
+              print("\n".join(bad))
+              sys.exit(1)
+          PY
+
       - name: Protocol unit tests
         run: ./gradlew :app:testReleaseUnitTest --no-daemon --stacktrace 2>&1 | tail -50
 

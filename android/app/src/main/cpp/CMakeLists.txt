@@ -3,7 +3,15 @@
 # 产出 libapx.so（target 名必须为 apx，对应 Kotlin 侧 System.loadLibrary("apx")）。
 # 复用 /shared 协议库，Kotlin 侧不手写任何字节序或 HID 描述符魔数。
 cmake_minimum_required(VERSION 3.22.0)
-project(apx_jni LANGUAGES CXX)
+
+# ⚠️ 这里**必须**同时 enable C —— 本工程含一个 C 源文件 apx_uinput.c。
+# 只写 LANGUAGES CXX 时 CMake 无法把 .c 映射到任何已启用语言，会把它当
+# "未知语言源文件"**静默跳过**：编译链接全绿、CI 全绿，但 .so 里根本没有那批
+# JNI 符号，运行期才炸成
+#   "No implementation found for boolean
+#    com.allperiph.shared.input.UinputGamepad.openGamepad() ... is the library loaded?"
+# 虚拟手柄 / 摇杆由此静默不可用（真机 issue#43 日志复现，产物符号表实测为空）。
+project(apx_jni LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

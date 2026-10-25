@@ -79,6 +79,14 @@
 - **设置页长文收编（批 Q · issue 实测「文字说明太长」）**：通用/外观/工具组的 4 个
   说明 caption（模板/配色/背景/诊断提示）置为不可见并**原文搬进**帮助页对应卡
   （功能说明/手势/链路），分组页只留控件本体；诊断输出与内嵌选择器保留（功能不减）
+- **虚拟手柄/摇杆修复（原生符号缺失 · issue#43 真机日志）**：`apx_uinput.c` 是 C 源文件，
+  而 app 的 CMake 工程只 `LANGUAGES CXX` —— CMake 无法把 `.c` 映射到已启用语言，
+  直接**静默跳过**：编译链接全绿、CI 全绿，但 `libapx.so` 里一个 UinputGamepad 的
+  JNI 符号都没有（实测产物符号表为 0），运行期才报
+  `No implementation found ... UinputGamepad.openGamepad() is the library loaded?`，
+  摇杆与手柄按钮全走降级路径。修法：`project(apx_jni LANGUAGES C CXX)`（tv 工程本来就是 C，
+  所以只有手机端中招）。并新增 CI 关卡「Verify native JNI symbols in APKs」——
+  构建完直接拆 APK 验符号，这类"编译通过但产物缺东西"的问题以后拦在 CI 里
 - **深色模式取色修复（issue#44）**：副屏 / 手柄 / 文件 / 快捷 / 本地发送 / 被控输入
   6 个 Activity 与悬浮球此前**没接** `ThemePref`，用户选「深色」时它们仍按系统 uiMode
   取色（亮底亮字看不清）——现在全部接上同一套注入，悬浮球配色也令牌化
