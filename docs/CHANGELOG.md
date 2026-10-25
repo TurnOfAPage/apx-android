@@ -26,6 +26,9 @@
   直通三出口（PhysKeyBridge 增拦 dispatchGenericMotionEvent，TouchpadModule 增 feedPointer）
 - **三指滑动手势（反馈#8 Q2）**：GestureEngine 三指阶梯判定 —— ≥60px 主轴明确为滑动
   （上=Alt+Tab、下=Win+D、左右=Ctrl+Win+←/→），[12,60) 保留中键按住、点按仍为中键
+- **横屏底部分页栏常驻（反馈#9）**：横屏不再隐藏分页栏（原只能四指滑，从通知栏进来不便）；
+  底部 104/90dp 留白两朝向都保留（消除 v217 横屏“留白没栏”白带），选中胶囊横屏也滑动，
+  旋屏自动重算胶囊位置
 
 ---
 

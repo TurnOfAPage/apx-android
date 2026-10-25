@@ -488,22 +488,21 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
         // 但 include 标签的 android:visibility 会被 LayoutInflater 忽略（只认 layout_* 和 id），
         // 所以顶栏/底栏的显隐只能在这里设。
         headerBar.visibility = if (landscape) View.GONE else View.VISIBLE
-        tabBarView.visibility = if (landscape) View.GONE else View.VISIBLE
+        // 反馈#9：横屏也常驻底部分页栏（原：沉浸隐藏 → 只能四指滑，从通知栏进来切页不方便）
+        tabBarView.visibility = View.VISIBLE
 
-        // 竖屏布局里 pageKeyboard / pageTouchpad 的 paddingBottom（104dp / 90dp）是给悬浮
-        // 底栏留位的；横屏底栏隐藏、且旋屏不重建（configChanges 含 orientation → layout-land
-        // 不生效），所以这里必须手动把底部留白去掉，否则横屏键盘下方会顶出一大片白
-        // （真机复现：键盘内容只到约 2/3 屏高，下面 300px 空白）。
+        // 反馈#9：横屏底部分页栏常驻后，底部留白两种朝向都保留 —— 空间正好被分页栏用掉，
+        // 不再是 v217 那种“留白但栏被隐藏”的 300px 白带（横屏键盘/触控板下缘各让出栏位）。
         if (::pageKeyboardView.isInitialized) {
             pageKeyboardView.setPadding(
                 pageKeyboardView.paddingLeft, pageKeyboardView.paddingTop,
-                pageKeyboardView.paddingRight, if (landscape) dp(2) else dp(104),
+                pageKeyboardView.paddingRight, dp(104),
             )
         }
         if (::pageTouchpadView.isInitialized) {
             pageTouchpadView.setPadding(
                 pageTouchpadView.paddingLeft, pageTouchpadView.paddingTop,
-                pageTouchpadView.paddingRight, if (landscape) dp(16) else dp(90),
+                pageTouchpadView.paddingRight, dp(90),
             )
         }
 
@@ -528,7 +527,8 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
             }
         }
 
-        if (landscape) navGlass.setIndicator(null)
+        // 反馈#9：横屏底栏常驻 → 旋屏后重算胶囊位置（原横屏 setIndicator(null) 清除）
+        if (landscape) findViewById<View>(R.id.contentStack).post { animateIndicator() }
         applyImmersive()
         applyNavBarWidth()
         updateSettingsEntry()
@@ -921,8 +921,7 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
             }
         }
         updateSettingsEntry()
-        // 横屏沉浸模式：没有底栏，靠四指左右滑换页
-        if (landscape) return
+        // 反馈#9：横屏底栏常驻 → 不再提前返回，选中胶囊也跟着滑（四指滑切页保留，只是不再唯一）
         // 新页布局完成后再滑动胶囊（否则取到的还是上一页的坐标）
         findViewById<View>(R.id.contentStack).post { animateIndicator() }
     }
