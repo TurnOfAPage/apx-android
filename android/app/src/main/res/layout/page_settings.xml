@@ -679,6 +679,111 @@
                     android:textColor="#CC000000"
                     android:textSize="13sp" />
             </LinearLayout>
+
+            <!-- 批C：功能说明（原状态页 boxIdleFeatures 九行搬来，原文零改动） -->
+            <TextView
+                style="@style/APSectionTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/ui_help_title_features" />
+
+            <LinearLayout
+                style="@style/APCard"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingTop="8dp"
+                android:text="@string/lay_status_text_touchpad_cursor_swipe"
+                android:textAppearance="@style/APTextCaption" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingTop="6dp"
+                android:text="@string/lay_status_text_remote_keyboard"
+                android:textAppearance="@style/APTextCaption" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingTop="6dp"
+                android:text="@string/lay_status_text_hotkey_template"
+                android:textAppearance="@style/APTextCaption" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingTop="6dp"
+                android:text="@string/lay_status_text_volume_play"
+                android:textAppearance="@style/APTextCaption" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingTop="6dp"
+                android:text="@string/lay_status_text_mic"
+                android:textAppearance="@style/APTextCaption" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingTop="6dp"
+                android:text="@string/lay_status_text_speaker"
+                android:textAppearance="@style/APTextCaption" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingTop="6dp"
+                android:text="@string/lay_idle_bluetooth"
+                android:textAppearance="@style/APTextCaption" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingTop="6dp"
+                android:text="@string/lay_status_text_hotkey_touchpad_keyboard"
+                android:textAppearance="@style/APTextCaption" />
+            </LinearLayout>
+
+            <!-- 批C：三步上手（原状态页常显卡搬来，原文零改动） -->
+            <TextView
+                style="@style/APSectionTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/ui_help_title_howto" />
+
+            <LinearLayout
+                style="@style/APCard"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingTop="8dp"
+                android:text="@string/lay_status_text_disconnect_open"
+                android:textAppearance="@style/APTextCaption" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingTop="6dp"
+                android:text="@string/lay_status_text_open_menu"
+                android:textAppearance="@style/APTextCaption" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingTop="6dp"
+                android:text="@string/lay_status_text_hotkey_mic_touchpad_keyboard"
+                android:textAppearance="@style/APTextCaption" />
+            </LinearLayout>
         </LinearLayout>
     </LinearLayout>
 </ScrollView>

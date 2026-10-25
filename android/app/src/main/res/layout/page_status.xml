@@ -130,111 +130,18 @@
             android:text="@string/hint_idle"
             android:textAppearance="@style/APTextCaption" />
 
-        <!-- 未启动时的功能说明：打开开关前先让用户知道能得到什么（启动后自动隐藏） -->
+        <!-- 批C：功能说明九行已搬进帮助页 groupHelp；本容器保留为空壳——
+             StatusFragment ensureViews 找不到会 return false、MainActivity lateinit 会 NPE，
+             子 TextView 无 id 故代码不可达；透明空壳高为 0、零渲染。 -->
         <LinearLayout
             android:id="@+id/boxIdleFeatures"
-            style="@style/APCard"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="vertical">
+            android:background="@android:color/transparent"
+            android:orientation="vertical"
+            android:padding="0dp" />
 
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="@string/lay_status_text_open"
-                android:textAppearance="@style/APTextSubtitle" />
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:paddingTop="8dp"
-                android:text="@string/lay_status_text_touchpad_cursor_swipe"
-                android:textAppearance="@style/APTextCaption" />
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:paddingTop="6dp"
-                android:text="@string/lay_status_text_remote_keyboard"
-                android:textAppearance="@style/APTextCaption" />
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:paddingTop="6dp"
-                android:text="@string/lay_status_text_hotkey_template"
-                android:textAppearance="@style/APTextCaption" />
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:paddingTop="6dp"
-                android:text="@string/lay_status_text_volume_play"
-                android:textAppearance="@style/APTextCaption" />
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:paddingTop="6dp"
-                android:text="@string/lay_status_text_mic"
-                android:textAppearance="@style/APTextCaption" />
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:paddingTop="6dp"
-                android:text="@string/lay_status_text_speaker"
-                android:textAppearance="@style/APTextCaption" />
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:paddingTop="6dp"
-                android:text="@string/lay_idle_bluetooth"
-                android:textAppearance="@style/APTextCaption" />
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:paddingTop="6dp"
-                android:text="@string/lay_status_text_hotkey_touchpad_keyboard"
-                android:textAppearance="@style/APTextCaption" />
-        </LinearLayout>
-
-        <!-- 三步上手：开启后用户经常不知道下一步，这里给固定引导（常显，方便随时回看） -->
-        <LinearLayout
-            style="@style/APCard"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical">
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="@string/lay_howto_title"
-                android:textAppearance="@style/APTextSubtitle" />
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:paddingTop="8dp"
-                android:text="@string/lay_status_text_disconnect_open"
-                android:textAppearance="@style/APTextCaption" />
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:paddingTop="6dp"
-                android:text="@string/lay_status_text_open_menu"
-                android:textAppearance="@style/APTextCaption" />
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:paddingTop="6dp"
-                android:text="@string/lay_status_text_hotkey_mic_touchpad_keyboard"
-                android:textAppearance="@style/APTextCaption" />
-        </LinearLayout>
+        <!-- 批C：三步上手三行已搬进帮助页 groupHelp -->
 
         <LinearLayout
             android:id="@+id/boxRunning"
