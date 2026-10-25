@@ -10,6 +10,9 @@
   - CHANGELOG 补条
 说明：各处散落的长描述 TextView 收进帮助页属批 C（下一批）。
 
+⚠ 锚点写法铁律（run#5 / run#14 连续实锤）：锚点内容若以双引号收尾，
+  必须先写换行再写闭合三引号，否则四个引号会被提前当闭合 → SyntaxError。
+
 两阶段：①按期望次数全量校验；②全过才写盘。失配 → 退出非零 → 不提交。
 """
 import sys
@@ -109,7 +112,8 @@ CAT_ROWS = """        <!-- 分类列表首页（反馈#10 批 B，方案 B）：
         </LinearLayout>
 
         <LinearLayout
-            android:id="@+id/groupGeneral"""
+            android:id="@+id/groupGeneral"
+"""
 
 HELP_GROUP = """
         <!-- 帮助与说明（反馈#10 批 B）：文字性说明集中地，各分类只留一行式条目 -->
@@ -199,7 +203,7 @@ HELP_GROUP = """
 """
 
 EDITS = [
-    # ————— 1. 分段条 → 分类列表（含返回行），保留 groupGeneral 开头作锚 —————
+    # ————— 1. 分段条 → 分类列表（含返回行）；锚点结尾走换行避开 run#14 三引号坑 —————
     ("android/app/src/main/res/layout/page_settings.xml", [
         ("""        <!-- 设置页分段：点顶部切换，避免一屏滚太长 -->
         <LinearLayout
@@ -258,7 +262,8 @@ EDITS = [
         </LinearLayout>
 
         <LinearLayout
-            android:id="@+id/groupGeneral"""",
+            android:id="@+id/groupGeneral"
+""",
          CAT_ROWS, 1),
         # 2. groupAbout 之后加帮助组
         ("        </LinearLayout><!-- /groupAbout -->\n",
