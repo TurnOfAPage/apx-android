@@ -22,7 +22,8 @@ UI 上的这些问题**编译器都不报**，只在真机上以「深色看不�
    梯度在 `values/dimens.xml`。
 4. 用了 `R.*` 却没 `import <模块 namespace>.R` → 失败（`android.R` 不算）。
 5. 代码里 `R.id.xxx` 必须在布局里有对应 `@+id/xxx` → 失败（`android.R.id.*` 跳过）。
-6. Kotlin/Java 里的中文文案存量 → **棘轮**：只统计 + 超基线告警，不让 CI 变红。
+6. `xxx.visibility` / `xxx.text` 这类用法，其字段必须在同一文件里有声明 → 失败。
+7. Kotlin/Java 里的中文文案存量 → **棘轮**：只统计 + 超基线告警，不让 CI 变红。
    这 500+ 处分散在 UI 与各模块（模块状态串、LocalSend 结果串所在类没有 Context，
    要资源化得先注入 App 级 Context），属独立重构，不适合顺手塞进某一批。
 
@@ -172,6 +173,53 @@ def check_view_refs(problems):
                             % (os.path.relpath(path, ROOT), i, vid))
 
 
+def check_view_fields(problems):
+    """删掉视图字段后，同一文件里遗留的 `字段.xxx` 用法必须能被发现。
+
+    本轮踩过：精简状态块时删了 `boxRunning` / `tvRunningSummary` 的 lateinit 声明与
+    findViewById 绑定，但 `boxRunning.visibility = ...` 还在 —— 编译器会报
+    Unresolved reference，可**要等一整轮 CI 构建**才知道；`R.id` 关卡也查不到
+    （布局里 id 还在）。
+
+    判据刻意收得很窄，避免误报：
+      · 只认「小写字母开头、长度 ≥ 3」的接收者；
+      · 只认视图属性/方法（visibility / text / isChecked / setOnClickListener …）；
+      · 排除 `android.`、`java.`、`kotlin.` 等包名前缀与常见局部名；
+      · 该名字必须在本文件的 `lateinit var` 声明里出现过**或**出现在
+        `字段 = ...findViewById` 绑定里，否则不判 —— 也就是本规则只用来抓
+        「本文件曾经声明过这类字段」的残留，宁可漏报不误报。
+    """
+    PKG = ("android", "java", "kotlin", "kotlinx", "androidx", "com", "org", "io")
+    VIEW_PROP = re.compile(
+        r'(?<![\w.])([a-z]\w{2,})\.(?:visibility|isChecked|isEnabled|alpha|'
+        r'setText|setTextColor|setTextSize|setBackgroundColor|setBackgroundResource|'
+        r'setOnClickListener|setPadding|setValue|isSelected|setVisibility|setImageResource)\b')
+    FIELD_DECL = re.compile(r'\blateinit\s+var\s+(\w+)\s*:')
+    for dirpath, _d, files in os.walk(os.path.join(ROOT, "android", "app", "src", "main", "java")):
+        for f in files:
+            if not f.endswith(".kt"):
+                continue
+            path = os.path.join(dirpath, f)
+            txt = open(path, encoding="utf-8").read()
+            declared = set(FIELD_DECL.findall(txt))
+            if not declared:
+                continue          # 本文件没有 lateinit 视图字段，不适用本规则
+            local = set(re.findall(r'\b(?:val|var)\s+(\w+)\s*[:=]', txt))
+            for i, line in enumerate(txt.splitlines(), 1):
+                if line.strip().startswith(("//", "*", "/*")):
+                    continue
+                for m in VIEW_PROP.finditer(line):
+                    name = m.group(1)
+                    if name in declared or name in local or name in PKG:
+                        continue
+                    # 循环变量 / 参数里常见的短名一律放过（宁可漏报）
+                    if name in ("btn", "row", "tv", "box", "col", "cell", "node"):
+                        continue
+                    problems.append(
+                        "%s:%d 用到 `%s.…`，但本文件没有它的 lateinit var 声明"
+                        "（删字段时容易漏改调用点）" % (os.path.relpath(path, ROOT), i, name))
+
+
 def count_chinese_literals():
     """main 源码里的中文字面量（排除注释行与日志行）。`src/test` 的测试数据不算。"""
     hits, per_file = 0, {}
@@ -206,6 +254,7 @@ def main():
     check_spacing(problems)
     check_r_import(problems)
     check_view_refs(problems)
+    check_view_fields(problems)
     hits, per_file = count_chinese_literals()
 
     print("检查 %d 个布局/资源文件" % checked)

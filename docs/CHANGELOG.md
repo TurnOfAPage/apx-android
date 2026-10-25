@@ -104,6 +104,18 @@
   同时把构建失败的错误上报从 check-runs API 改成 **workflow command**（`::error::`）：
   原实现先用 gh api 查 check-run id 再 POST，实测在 job 进行中返回 404、annotation 一直没写上去；
   workflow command 由 GitHub 自动收集成 annotation，不需要任何 token 权限
+- **修 run#598 编译失败 + 新增两道本地可查的关卡**：瘦身时删掉了 `boxRunning` 的
+  lateinit 声明与绑定，但 `boxRunning.visibility = ...` 还在 → `Unresolved reference`
+  （两处）。这类问题编译器能报，可**要等一整轮 CI**；现补两道检查提前到本地：
+  ① `R.id.xxx` 必须在布局里有 `@+id/xxx`；② `小写字段.visibility/text/isChecked…`
+  这类用法，其字段须在同一文件声明过（只对本文件已有 lateinit var 的文件生效，
+  避免误报）。两条都做过负向测试
+- **设置页横屏两栏 + manifest 注释对齐（实机反馈）**：横屏时设置页从「整宽堆叠」
+  改为左 1/3（状态概览 + 传输按钮 + 分类/返回）、右 2/3（当前分类的功能分组），
+  由 `MainActivity.applySettingsTwoPane()` 只改容器 orientation 与两个 pane 的
+  LayoutParams（视图实例不变，绑定/滚动/分类跳转都不受影响）；竖屏退回纵向堆叠。
+  另修正 manifest 里 4 处指向**并不存在**的 `layout-land/activity_*.xml` 的注释
+  （只有 activity_main 真有横屏布局，其余页面的横屏适配都在代码里）
 - **状态块瘦身 + 传输开关改按钮 + 手柄页强制横屏（实机反馈）**：
   ① 撤掉「运行摘要 / 连接状态 / 跟手程度」三张卡（信息并入顶部一行），
      首屏让给真正的操作入口；链路诊断五行搬进「通用」分组的 `rowsLinkHost`（逻辑一行没改）

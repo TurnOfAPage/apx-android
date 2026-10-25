@@ -84,6 +84,7 @@ class StatusFragment : Fragment() {
         btnTransportBt = act.findViewById(R.id.btnTransportBt) ?: return false
         btnTransportUsb = act.findViewById(R.id.btnTransportUsb) ?: return false
         tvIdleHint = act.findViewById(R.id.tvIdleHint) ?: return false
+        boxRunning = act.findViewById(R.id.boxRunning) ?: return false
         boxIdleFeatures = act.findViewById(R.id.boxIdleFeatures) ?: return false
         groupWifi = act.findViewById(R.id.groupWifi) ?: return false
         groupBt = act.findViewById(R.id.groupBt) ?: return false
@@ -108,6 +109,7 @@ class StatusFragment : Fragment() {
     private lateinit var tvOverall: TextView
     private lateinit var tvOverallSub: TextView
     private lateinit var tvIdleHint: TextView
+    private lateinit var boxRunning: LinearLayout
     private lateinit var btnTransportWifi: TextView
     private lateinit var btnTransportBt: TextView
     private lateinit var btnTransportUsb: TextView

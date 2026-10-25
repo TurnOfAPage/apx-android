@@ -105,6 +105,7 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
 
     // 启动后才显示的区域（状态页）
     private lateinit var tvIdleHint: TextView
+    private lateinit var boxRunning: LinearLayout
     private lateinit var boxIdleFeatures: LinearLayout
 
     // 触控板页：手势提示 + 常用快捷键条
@@ -343,6 +344,7 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
         btnRefresh = findViewById(R.id.btnRefresh)
 
         tvIdleHint = findViewById(R.id.tvIdleHint)
+        boxRunning = findViewById(R.id.boxRunning)
         boxIdleFeatures = findViewById(R.id.boxIdleFeatures)
 
         touchHint = findViewById(R.id.tvTouchHint)
@@ -494,21 +496,12 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
         //（键盘页已转正进底栏，不再“横过来就自动跳键盘”）。
         if (::pager.isInitialized) {
 
-            // 横屏下状态/设置页左右限宽居中：两页复用竖屏整宽块，宽屏拉满后卡片行过长、
-            // 视线要横跨整屏。留白随屏宽自适应（窄屏不强切）。子项顺序 = 页常量：
-            // 0 触控板 1 键盘 2 设置（状态页已并入设置，反馈#10；横屏限宽只作用于设置页）。
-            val sidePad = if (landscape) {
-                ((resources.displayMetrics.widthPixels - dp(680)).coerceAtLeast(0)) / 2
-            } else 0
-            for (i in PAGE_SETTINGS..PAGE_SETTINGS) {
-                val child = pager.getChildAt(i) ?: continue
-                val lp = child.layoutParams as? android.widget.FrameLayout.LayoutParams ?: continue
-                if (lp.marginStart != sidePad) {
-                    lp.marginStart = sidePad
-                    lp.marginEnd = sidePad
-                    child.layoutParams = lp
-                }
-            }
+            // 设置页两栏（横屏）：左 1/3 = 状态概览 + 传输按钮 + 分类/返回，
+            //                      右 2/3 = 当前分类的功能分组。
+            // 竖屏：两栏容器退回纵向堆叠（与改造前的视觉一致）。
+            // 只改 settingsTwoPane 的 orientation 与两个 pane 的 LayoutParams，
+            // 视图实例不变 —— Fragment / 事件订阅 / 滚动位置全部保持。
+            applySettingsTwoPane(landscape)
         }
 
         // 反馈#9：横屏底栏常驻 → 旋屏后重算胶囊位置（原横屏 setIndicator(null) 清除）
@@ -840,6 +833,44 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
         }
         // 初始页固定触控板（横竖屏一致；旋转只换布局，不再自动跳键盘页）
         showPage(PAGE_TOUCHPAD)
+    }
+
+    /**
+     * 设置页两栏排布（横屏）：左 1/3 放「状态概览 + 传输按钮 + 分类列表/返回」，
+     * 右 2/3 放当前分类的功能分组；竖屏退回纵向堆叠。
+     *
+     * 只动容器 orientation 与两个 pane 的 LayoutParams，视图实例不变：
+     * SettingsFragment 的字段绑定、分类跳转的 visibility 逻辑、
+     * 外层 ScrollView 的滚动位置都不受影响（与 TouchpadSplit 同一思路）。
+     *
+     * 权重 1:2 = 1/3 : 2/3（用户要求"常用的占 1/3"）。
+     */
+    private fun applySettingsTwoPane(landscape: Boolean) {
+        val two = findViewById<LinearLayout>(R.id.settingsTwoPane) ?: return
+        val left = findViewById<LinearLayout>(R.id.paneStatus) ?: return
+        val right = findViewById<LinearLayout>(R.id.paneGroups) ?: return
+
+        // 横屏：左 1/3，右 2/3，中缝 12dp
+        two.orientation = if (landscape) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
+        val lpLeft = if (landscape) {
+            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        } else {
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+        val lpRight = if (landscape) {
+            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 2f)
+        } else {
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+        if (landscape) {
+            lpLeft.marginEnd = dp(12)
+        }
+        left.layoutParams = lpLeft
+        right.layoutParams = lpRight
     }
 
     /**
