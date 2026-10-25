@@ -6,49 +6,73 @@
   折叠的原因：模板列表有 10 套预置 + 1 行自建入口，展开 ≈ 800dp，正好把一屏占满，
   导致"功能开关 / 主题方案"永远在第二屏。现在默认只留「当前模板 + 更换/展开」一行。
 -->
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/pageSettings"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:clipToPadding="false"
-    android:fillViewport="true"
+    android:orientation="horizontal"
     android:paddingStart="@dimen/space_16"
     android:paddingEnd="@dimen/space_16"
     android:paddingBottom="@dimen/inset_bottom_nav">
 
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:paddingTop="@dimen/space_4">
+    <!--
+      两栏容器（**不分朝向** —— 用户明确要求「设置页分左 1 右 2，不是横屏才这样」）：
+        左 1/3 = 状态概览 + 传输按钮（常用项，随手就够得到）
+        右 2/3 = 分类列表 + 当前分类的功能分组
 
-        <!--
-          两栏容器（实机反馈「分左右，常用占 1/3，用按钮加段文字」）：
-            竖屏 —— 纵向堆叠：状态块在上、功能分组在下（与改造前视觉一致）
-            横屏 —— 横向两栏：左 1/3 = 状态概览 + 传输按钮 + 分类/返回，
-                             右 2/3 = 当前分类的功能分组
-          排布由 MainActivity.applySettingsTwoPane() 在朝向变化时切换：只改这里的
-          orientation 与两个 pane 的 LayoutParams，视图实例不变。
-        -->
-        <LinearLayout
-            android:id="@+id/settingsTwoPane"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical">
+      两栏各自 match_parent 高度、各自滚动：整屏铺满 —— 此前是「外层一条 ScrollView +
+      wrap_content 长卡片」，内容短时下半屏整片空着，看着就是「没全屏」；
+      右侧分组很长时，左侧常用项也不该被一起滚走。
+
+      权重与高度全部写在布局里，运行期不再改 orientation / LayoutParams ——
+      少一处「代码以为改了、实际没生效」的地方。MainActivity 只按朝向调底部留白。
+    -->
+    <LinearLayout
+        android:id="@+id/settingsTwoPane"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="horizontal">
+
+        <!-- 左栏（weight=1 → 1/3）：独立滚动 -->
+        <ScrollView
+            android:id="@+id/paneStatusScroll"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:clipToPadding="false"
+            android:scrollbars="none">
 
             <LinearLayout
                 android:id="@+id/paneStatus"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:orientation="vertical">
+                android:orientation="vertical"
+                android:paddingTop="@dimen/space_4">
 
-                <!-- 状态块（原状态页并入设置页顶，反馈#10）：状态概览 + 传输按钮。
-                     根节点是 LinearLayout 平铺，滚动交给本页外层 ScrollView。 -->
+                <!-- 状态块（原状态页并入设置页顶，反馈#10）：状态概览 + 传输按钮。 -->
                 <include
                     layout="@layout/page_status"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content" />
             </LinearLayout>
+        </ScrollView>
+
+        <!-- 栏间分隔线：让「左 1 右 2」的分栏在视觉上立刻可辨 -->
+        <View
+            android:layout_width="1dp"
+            android:layout_height="match_parent"
+            android:layout_marginStart="@dimen/space_12"
+            android:layout_marginEnd="@dimen/space_12"
+            android:background="?android:attr/listDivider" />
+
+        <!-- 右栏（weight=2 → 2/3）：独立滚动 -->
+        <ScrollView
+            android:id="@+id/paneGroupsScroll"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="2"
+            android:clipToPadding="false"
+            android:scrollbars="none">
 
             <LinearLayout
                 android:id="@+id/paneGroups"
@@ -946,6 +970,6 @@
                 </LinearLayout>
             </LinearLayout>
             </LinearLayout>
-        </LinearLayout>
+        </ScrollView>
     </LinearLayout>
-</ScrollView>
+</LinearLayout>

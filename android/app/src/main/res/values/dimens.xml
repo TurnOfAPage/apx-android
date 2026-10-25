@@ -29,4 +29,12 @@
       底栏本体约 6+23+3+14+6=52dp + 6dp 外边距 + 系统手势条，96dp 足够不重叠。
     -->
     <dimen name="inset_bottom_nav">96dp</dimen>
+
+    <!--
+      横屏底部留白。横屏没有悬浮底栏（tabBar 整条隐藏），留白必须收回去 ——
+      真机反馈「横屏后隐藏的底栏部分没有扩展回去」：此前代码无条件写 104dp/90dp，
+      把 layout-land 给的值覆盖掉，底栏都藏了底下还压着一条百 dp 死白带。
+      12dp 与 layout-land 里触控板页原本的 space_16 同量级，够不贴边即可。
+    -->
+    <dimen name="inset_bottom_land">12dp</dimen>
 </resources>

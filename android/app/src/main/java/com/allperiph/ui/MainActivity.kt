@@ -195,10 +195,9 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // 防截屏 / 防录屏：内容不进截图，也不出现在最近任务的缩略图里。
-        // 静默生效 —— 界面上不加任何"已开启防护"提示。
-        // （用户主动按截图键时系统自己会提示"无法截图"，那是截图服务的行为，应用侧关不掉。）
-        window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+        // ⚠️ 截屏已放开（用户反馈：不能截屏 = 没法截图反馈界面问题）。
+        // 此前这里挂 FLAG_SECURE，截图/录屏/最近任务缩略图全黑，排查 UI 只能靠口述；
+        // TouchpadActivity 同步移除，两处口径一致。
         setContentView(R.layout.activity_main)
         // 启动即开始发现：信标周期广播，早开早能看到设备（不再等到打开选择框才开）
         TvDiscovery.start()
@@ -477,31 +476,43 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
         // 批P：撤回反馈#9（实测横屏底栏碍事）→ 恢复对称式隐藏；切页改走右上 pill 条
         tabBarView.visibility = if (landscape) View.GONE else View.VISIBLE
 
-        // 反馈#9：横屏底部分页栏常驻后，底部留白两种朝向都保留 —— 空间正好被分页栏用掉，
-        // 不再是 v217 那种“留白但栏被隐藏”的 300px 白带（横屏键盘/触控板下缘各让出栏位）。
+        // ⚠️ 底部留白只按**朝向**取一次，且用 dimen 令牌（不再就地写 104dp / 90dp）：
+        //   竖屏 = inset_bottom_nav（给悬浮底栏让位）
+        //   横屏 = inset_bottom_land（底栏是隐藏的，留白必须收回去）
+        // 真机反馈「横屏后隐藏的底栏部分没有扩展回去」的根因就在这里：原来无条件写死
+        // 104dp / 90dp，把 layout-land 给的值整个覆盖掉 —— 底栏都藏了，底下还压着一条
+        // 百 dp 死白带；何况旋屏不重建 Activity，横屏用的还是竖屏那棵视图树。
+        val padPortrait = resources.getDimensionPixelSize(R.dimen.inset_bottom_nav)
+        val padLandscape = resources.getDimensionPixelSize(R.dimen.inset_bottom_land)
+        val bottomPad = if (landscape) padLandscape else padPortrait
         if (::pageKeyboardView.isInitialized) {
             pageKeyboardView.setPadding(
                 pageKeyboardView.paddingLeft, pageKeyboardView.paddingTop,
-                pageKeyboardView.paddingRight, dp(104),
+                pageKeyboardView.paddingRight, bottomPad,
             )
         }
         if (::pageTouchpadView.isInitialized) {
             pageTouchpadView.setPadding(
                 pageTouchpadView.paddingLeft, pageTouchpadView.paddingTop,
-                pageTouchpadView.paddingRight, dp(90),
+                pageTouchpadView.paddingRight, bottomPad,
             )
         }
+        // 设置页没有 layout-land 版本（同一份布局两种朝向都适用），底部留白同样在这里调
+        findViewById<View>(R.id.pageSettings)?.let {
+            it.setPadding(it.paddingLeft, it.paddingTop, it.paddingRight, bottomPad)
+        }
+        // 批P：横屏操作条 pill 的显隐也在这里按朝向设 —— 见 bindActions 里的说明。
+        findViewById<View>(R.id.pillLandActions)?.visibility =
+            if (landscape) View.VISIBLE else View.GONE
 
         // 旋转只换布局、不切页：横竖屏各自铺各自的布局，当前页面保持不动
         //（键盘页已转正进底栏，不再“横过来就自动跳键盘”）。
         if (::pager.isInitialized) {
 
-            // 设置页两栏（不分朝向）：左 1/3 = 状态概览 + 传输按钮 + 分类/返回，
-            //                      右 2/3 = 当前分类的功能分组。
-            // 用户明确要求竖屏也是「左 1 右 2」，不再退回纵向堆叠。
-            // 只改 settingsTwoPane 的 orientation 与两个 pane 的 LayoutParams，
-            // 视图实例不变 —— Fragment / 事件订阅 / 滚动位置全部保持。
-            applySettingsTwoPane()
+            // 设置页两栏（不分朝向：左 1 右 2、两栏各自全高独立滚动）已**写进布局** ——
+            // settingsTwoPane 恒为横排，权重 1:2 写在 XML 里。运行期不再改 orientation
+            // 与 LayoutParams，少一处「代码以为改了、实际没生效」的状态。
+            // 需要按朝向调的只有上面那段底部留白。
         }
 
         // 反馈#9：横屏底栏常驻 → 旋屏后重算胶囊位置（原横屏 setIndicator(null) 清除）
@@ -835,35 +846,6 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
         showPage(PAGE_TOUCHPAD)
     }
 
-    /**
-     * 设置页两栏排布（**不分朝向**）：左 1/3 放「状态概览 + 传输按钮 + 分类列表/返回」，
-     * 右 2/3 放当前分类的功能分组。
-     *
-     * 用户明确要求「设置页就是左 1 右 2，不是横屏才这样」—— 竖屏同样左右分栏，
-     * 不再退回纵向堆叠；旋屏时这里会被重新调用，结果一致（无可见跳动）。
-     *
-     * 只动容器 orientation 与两个 pane 的 LayoutParams，视图实例不变：
-     * SettingsFragment 的字段绑定、分类跳转的 visibility 逻辑、
-     * 外层 ScrollView 的滚动位置都不受影响（与 TouchpadSplit 同一思路）。
-     *
-     * 权重 1:2 = 1/3 : 2/3（用户要求"常用的占 1/3"）。
-     */
-    private fun applySettingsTwoPane() {
-        val two = findViewById<LinearLayout>(R.id.settingsTwoPane) ?: return
-        val left = findViewById<LinearLayout>(R.id.paneStatus) ?: return
-        val right = findViewById<LinearLayout>(R.id.paneGroups) ?: return
-
-        // 左 1/3，右 2/3，中缝 12dp（竖屏同样是这个比例）
-        two.orientation = LinearLayout.HORIZONTAL
-        val lpLeft = LinearLayout.LayoutParams(
-            0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f
-        ).apply { marginEnd = dp(12) }
-        val lpRight = LinearLayout.LayoutParams(
-            0, LinearLayout.LayoutParams.WRAP_CONTENT, 2f
-        )
-        left.layoutParams = lpLeft
-        right.layoutParams = lpRight
-    }
 
     /**
      * 玻璃扩散：从按下的**落点**向外铺开一圈波前（中心柔光 + 前缘亮环），慢慢变淡后自己收尾。
@@ -1653,7 +1635,15 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
             setOnCheckedChangeListener { _, on -> setOrientLock(on) }
         }
         // 批P：横屏操作条 pill——触控板/键盘切换 + 方向锁 + 设置（issue 实测：底栏碍事、四指滑不直观）
-        findViewById<View>(R.id.pillLandActions)?.visibility = if (landscape) View.VISIBLE else View.GONE
+        // ⚠️ 显隐**不在这里设**：本方法只在 onCreate 跑一次，而 MainActivity 的
+        // configChanges 含 orientation —— 旋屏不重建 Activity，于是「竖屏启动 → 转横屏」
+        // 这条 pill 永远是 GONE（真机反馈「横屏键盘没有方向锁定和切换触摸板/键盘按键」）。
+        // 统一由 applyOrientationLayout() 按朝向设，冷启动与旋屏两条路径同源。
+        // 触控目标垫到 48dp：横屏这条 pill 压在键盘上方，太矮会点不中（UI 清单第 10 条）。
+        findViewById<TextView>(R.id.btnLandTouchpad)?.minHeight = dp(48)
+        findViewById<TextView>(R.id.btnLandKeyboard)?.minHeight = dp(48)
+        findViewById<TextView>(R.id.btnLandLock)?.minHeight = dp(48)
+        findViewById<TextView>(R.id.btnLandSettings)?.minHeight = dp(48)
         findViewById<TextView>(R.id.btnLandTouchpad)?.setOnClickListener { Feedback.tap(it); showPage(PAGE_TOUCHPAD) }
         findViewById<TextView>(R.id.btnLandKeyboard)?.setOnClickListener { Feedback.tap(it); showPage(PAGE_KEYBOARD) }
         findViewById<TextView>(R.id.btnLandLock)?.setOnClickListener { Feedback.tap(it); toggleOrientLock() }

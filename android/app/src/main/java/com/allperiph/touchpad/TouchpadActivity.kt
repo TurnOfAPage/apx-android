@@ -173,8 +173,8 @@ class TouchpadActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // v1.7：触控板模式防截屏/防投屏窥视（架构 §4 触控板模式屏幕为手势采集面）
-        window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+        // 截屏已放开（与 MainActivity 口径一致）：主控制面此前挂 FLAG_SECURE，
+        // 截图/录屏一片黑，用户没法截图反馈界面问题，排查只能靠口述。
         // 快捷键列表由 HotkeyBoard 自己从盘上读（见 buildChipsPanel）
         hidReady = AgentController.runtime?.hid?.isReady() == true
 

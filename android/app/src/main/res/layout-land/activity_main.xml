@@ -222,6 +222,7 @@
         android:layout_marginTop="@dimen/space_12"
         android:layout_marginEnd="@dimen/space_12"
         android:background="@drawable/bg_card"
+        android:elevation="@dimen/space_8"
         android:gravity="center_vertical"
         android:orientation="horizontal"
         android:padding="@dimen/space_4"

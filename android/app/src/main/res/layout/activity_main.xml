@@ -183,6 +183,73 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content" />
 
+    <!--
+      批P：横屏操作条 pill——触控板/键盘切换 + 方向锁 + 设置。
+      ⚠️ 为什么竖屏布局里也要有：MainActivity 的 configChanges 含 orientation，**旋屏不重建
+      Activity**（也就不会加载 layout-land）—— 横屏那棵树其实还是这份竖屏布局。此前 pill 只
+      写在 layout-land，于是「竖屏启动→转横屏」根本没有这条 pill，用户反馈「横屏键盘没有方向
+      锁定和切换触摸板/键盘按键」。默认 gone，显隐由 MainActivity.applyOrientationLayout()
+      按朝向设；layout-land 里也保留一份，冷启动即横屏时同样可用。
+    -->
+    <LinearLayout
+        android:id="@+id/pillLandActions"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|end"
+        android:layout_marginTop="@dimen/space_12"
+        android:layout_marginEnd="@dimen/space_12"
+        android:background="@drawable/bg_card"
+        android:elevation="@dimen/space_8"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:padding="@dimen/space_4"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/btnLandTouchpad"
+            style="@style/APTextButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:minHeight="48dp"
+            android:gravity="center"
+            android:paddingStart="@dimen/space_8"
+            android:paddingEnd="@dimen/space_6"
+            android:text="@string/ui_main_item_touchpad" />
+
+        <TextView
+            android:id="@+id/btnLandKeyboard"
+            style="@style/APTextButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:minHeight="48dp"
+            android:gravity="center"
+            android:paddingStart="@dimen/space_6"
+            android:paddingEnd="@dimen/space_6"
+            android:text="@string/ui_touchpad_label_keyboard" />
+
+        <TextView
+            android:id="@+id/btnLandLock"
+            style="@style/APTextButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:minHeight="48dp"
+            android:gravity="center"
+            android:paddingStart="@dimen/space_6"
+            android:paddingEnd="@dimen/space_6"
+            android:text="@string/ui_main_btn_orient_lock" />
+
+        <TextView
+            android:id="@+id/btnLandSettings"
+            style="@style/APTextButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:minHeight="48dp"
+            android:gravity="center"
+            android:paddingStart="@dimen/space_6"
+            android:paddingEnd="@dimen/space_8"
+            android:text="@string/ui_main_btn_settings_entry" />
+    </LinearLayout>
+
     <!-- 横屏沉浸右上角悬浮设置入口（反馈#2）：横屏 chrome 全隐时的常驻入口 -->
     <TextView
         android:id="@+id/btnSettingsFloat"

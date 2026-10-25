@@ -261,7 +261,11 @@ class SettingsFragment : Fragment() {
             categories.forEach { (_, gid) -> act.findViewById<View>(gid)?.visibility = View.GONE }
         }
         fun scrollTop() {
-            (act.findViewById<View>(R.id.pageSettings) as? android.widget.ScrollView)?.fullScroll(View.FOCUS_UP)
+            // 设置页改成两栏后**没有外层 ScrollView**（左右两栏各自滚动）：
+            // 分类跳转要回到顶部的是**右栏**（分组内容区），此前那个 as? ScrollView
+            // 转型现在恒为 null（静默失效，点了分类不回到顶部）。
+            (act.findViewById<View>(R.id.paneGroupsScroll) as? android.widget.ScrollView)
+                ?.fullScroll(View.FOCUS_UP)
         }
         fun showHome() {
             home?.visibility = View.VISIBLE
