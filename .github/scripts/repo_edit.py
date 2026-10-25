@@ -1,15 +1,12 @@
 #!/usr/bin/env python3
 """repo-edit：大文件锚点替换编辑器。
 
-本批（批 Q' · 修 run#33 失配重发，B1a）：
-  修：锚1-4（5行 caption 块）基于本地副本失配 → 改**单行锚 + 插 visibility=gone**，
-      完全豁免块结构/缩进差异；效果等价删除（代码保留可逆）。
-  帮助承接三锚已用 search 实证（20空格属性/token色/close 12空格全对），原样保留。
-  EDITS 顺序：4 caption 先改（此时承接未写入，单行锚唯一）→ 3 承接 → CHANGELOG。
-  分组页只留控件；模板/配色/背景/诊断四句说明原文进帮助页。
+本批（批 Q'' · 修 run#34 失配重发，B1a）：
+  修：锚6/7 缩进 16→20 空格（search fragment 实证帮助卡属性区=20，上版凭手感写16）。
+  编辑1-5（caption 单行 gone + 功能说明承接）已在 run#34 验证通过，原样保留。
 
-⚠ 铁律④：Kotlin/Java 串内 \\n 写 \\\\n（python 三引号会转义单反斜杠）。
-⚠ 铁律：锚以双引号收尾必须先换行再闭三引号。
+⚠ 教训：search 实证到的缩进必须逐字节进 payload，禁止手感。
+⚠ 铁律④：Kotlin/Java 串内 \\n 写 \\\\n。铁律：锚以双引号收尾先换行。
 两阶段：①按期望次数全量校验；②全过才写盘。
 """
 import sys
@@ -56,12 +53,11 @@ HELP_CAP_DIAG = """
 
 EDITS = [
     ("android/app/src/main/res/layout/page_settings.xml", [
-        # 1-4. caption 单行锚插 gone（顺序在承接前，单行引用唯一）
         (CAP[0][0], CAP[0][1], 1),
         (CAP[1][0], CAP[1][1], 1),
         (CAP[2][0], CAP[2][1], 1),
         (CAP[3][0], CAP[3][1], 1),
-        # 5. 配色+背景 caption 原文搬「功能说明」卡尾（批C 结构锚，search 实证）
+        # 5. 配色+背景 caption 搬「功能说明」卡尾（run#34 已验过）
         ("""                android:text="@string/lay_status_text_hotkey_touchpad_keyboard"
                 android:textAppearance="@style/APTextCaption" />
             </LinearLayout>
@@ -75,27 +71,27 @@ EDITS = [
 
             <!-- 批C：三步上手（原状态页常显卡搬来，原文零改动） -->
 """, 1),
-        # 6. 模板用法 caption 搬「手势与操作」卡尾（20空格/close 12空格实证）
-        ("""                android:text="@string/ui_help_gesture"
-                android:textColor="@color/md_on_surface_variant"
-                android:textSize="13sp" />
+        # 6. 模板用法 caption 搬「手势与操作」卡尾 —— 缩进 20（实证）
+        ("""                    android:text="@string/ui_help_gesture"
+                    android:textColor="@color/md_on_surface_variant"
+                    android:textSize="13sp" />
             </LinearLayout>
 """,
-         """                android:text="@string/ui_help_gesture"
-                android:textColor="@color/md_on_surface_variant"
-                android:textSize="13sp" />
+         """                    android:text="@string/ui_help_gesture"
+                    android:textColor="@color/md_on_surface_variant"
+                    android:textSize="13sp" />
 
 """ + HELP_CAP_TEMPLATE + """            </LinearLayout>
 """, 1),
-        # 7. 诊断提示 caption 搬「链路与延迟」卡尾
-        ("""                android:text="@string/ui_help_link"
-                android:textColor="@color/md_on_surface_variant"
-                android:textSize="13sp" />
+        # 7. 诊断提示 caption 搬「链路与延迟」卡尾 —— 缩进 20（实证）
+        ("""                    android:text="@string/ui_help_link"
+                    android:textColor="@color/md_on_surface_variant"
+                    android:textSize="13sp" />
             </LinearLayout>
 """,
-         """                android:text="@string/ui_help_link"
-                android:textColor="@color/md_on_surface_variant"
-                android:textSize="13sp" />
+         """                    android:text="@string/ui_help_link"
+                    android:textColor="@color/md_on_surface_variant"
+                    android:textSize="13sp" />
 """ + HELP_CAP_DIAG + """            </LinearLayout>
 """, 1),
     ]),
