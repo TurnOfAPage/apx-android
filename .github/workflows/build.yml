@@ -414,6 +414,11 @@ jobs:
       - name: Manifest 声明 vs 源文件
         run: python3 scripts/check_manifest_classes.py
 
+      # UI 一致性：布局/drawable 里的字面色值、布局里的硬编码文案（见 docs/UI-CHECKLIST.md）。
+      # 这两类编译器都不报，只在真机上以「深色看不清」「换肤没跟着变」暴露。
+      - name: UI 一致性（色值令牌化 + 文案入资源）
+        run: python3 scripts/check_ui_tokens.py
+
   # ------------------------------------------------ Release（仅 tag v*）
   # 跑在 windows-latest 上 —— Inno Setup 编译器只在 Windows 上有
   # macOS 资产由 macos.yml 的 tag 构建独立上传（两边对同一 Release 幂等协作：

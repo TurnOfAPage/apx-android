@@ -87,6 +87,12 @@
   摇杆与手柄按钮全走降级路径。修法：`project(apx_jni LANGUAGES C CXX)`（tv 工程本来就是 C，
   所以只有手机端中招）。并新增 CI 关卡「Verify native JNI symbols in APKs」——
   构建完直接拆 APK 验符号，这类"编译通过但产物缺东西"的问题以后拦在 CI 里
+- **UI 一致性收尾 + 自检清单**：把仅剩的几处字面色值收进色板（主按钮按下态
+  `md_primary_pressed` 此前写死 `#FF2B6BE0` 不跟主题；桌面小组件与副屏浮层的固定色
+  也进 `values/` 并注明「刻意不随主题」的理由）；布局里 10 处硬编码中文文案移入
+  `strings.xml`（横屏操作条复用既有 `ui_*` 资源，不重复造词）；悬浮球面板「收起」补到
+  48dp 触控下限。新增 `docs/UI-CHECKLIST.md`（XML Views 版自检清单）与
+  `scripts/check_ui_tokens.py`（CI 关卡：字面色值 / 硬编码文案，两类编译器都不报的问题）
 - **悬浮球面板深色取色（issue#44）**：展开的触控板面板底色是 `bg_card`（= `md_surface`，
   深色下变暗），而标题/提示/收起三处文字写死 `#DD000000` / `#66000000` / `#88000000` ——
   深色模式下黑字压深底，整块面板看不清。改用 `md_on_surface` / `md_on_surface_variant` /

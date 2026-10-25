@@ -6,7 +6,7 @@
     android:orientation="horizontal"
     android:gravity="center_vertical"
     android:padding="12dp"
-    android:background="#1F2228">
+    android:background="@color/widget_bg">
 
     <!-- 连接状态指示灯 -->
     <View
@@ -14,7 +14,7 @@
         android:layout_width="10dp"
         android:layout_height="10dp"
         android:layout_marginEnd="8dp"
-        android:background="#6E747C" />
+        android:background="@color/widget_dot" />
 
     <LinearLayout
         android:layout_width="0dp"
@@ -27,8 +27,8 @@
             android:id="@+id/widget_status"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="未连接"
-            android:textColor="#9BA1AA"
+            android:text="@string/lay_widget_disconnected"
+            android:textColor="@color/widget_text"
             android:textSize="13sp"
             android:textStyle="bold" />
 
@@ -38,7 +38,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="—"
-            android:textColor="#9BA1AA"
+            android:textColor="@color/widget_text"
             android:textSize="11sp"
             android:layout_marginTop="2dp" />
 

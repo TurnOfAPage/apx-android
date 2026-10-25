@@ -235,7 +235,7 @@
             android:paddingEnd="6dp"
             android:paddingTop="6dp"
             android:paddingBottom="6dp"
-            android:text="触控板"
+            android:text="@string/ui_main_item_touchpad"
             android:textColor="@color/md_on_surface"
             android:textSize="13sp" />
 
@@ -247,7 +247,7 @@
             android:paddingEnd="6dp"
             android:paddingTop="6dp"
             android:paddingBottom="6dp"
-            android:text="键盘"
+            android:text="@string/ui_touchpad_label_keyboard"
             android:textColor="@color/md_on_surface"
             android:textSize="13sp" />
 
@@ -259,7 +259,7 @@
             android:paddingEnd="6dp"
             android:paddingTop="6dp"
             android:paddingBottom="6dp"
-            android:text="锁定"
+            android:text="@string/ui_main_btn_orient_lock"
             android:textColor="@color/md_on_surface"
             android:textSize="13sp" />
 
@@ -271,7 +271,7 @@
             android:paddingEnd="10dp"
             android:paddingTop="6dp"
             android:paddingBottom="6dp"
-            android:text="设置"
+            android:text="@string/ui_main_btn_settings_entry"
             android:textColor="@color/md_on_surface"
             android:textSize="13sp" />
     </LinearLayout>
