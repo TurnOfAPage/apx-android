@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """repo-edit：大文件锚点替换编辑器。
 
-本批（批 M · 悬浮球实体化）：解决「太小/像一个点/深浅看不清」。
-  - bg_floating_ball：35% 黑半透明 → 95% 白实底 + 20% 黑描边（深浅背景都醒目）
-  - view_floating_ball：48dp → 56dp（触控目标更好点）；中心 ● 白字 → 深色（白底上可见）
-  - 注释同步；CHANGELOG 补条
+本批（批 M' · 修 run#25 失配重发）：悬浮球实体化。
+  修：①view锚2 属性缩进 16→8 空格（原文 8）；②CHANGELOG 锚改批K 尾（批L 未落库的连锁依赖解除）
+  - bg_floating_ball：35% 黑半透明 → 95% 白实底 + 20% 黑描边
+  - view：48→56dp；中心 ● 白字 → 深色；注释同步
 
 两阶段：①按期望次数全量校验；②全过才写盘。
 """
@@ -36,19 +36,18 @@ EDITS = [
     android:layout_height="56dp"
     android:background="@drawable/bg_floating_ball"
 """, 1),
-        ("""                android:text="●"
-                android:textSize="14sp"
-                android:textColor="#FFFFFFFF" />
+        ("""        android:text="●"
+        android:textSize="14sp"
+        android:textColor="#FFFFFFFF" />
 """,
-         """                android:text="●"
-                android:textSize="16sp"
-                android:textColor="#CC000000" />
+         """        android:text="●"
+        android:textSize="16sp"
+        android:textColor="#CC000000" />
 """, 1),
     ]),
     ("docs/CHANGELOG.md", [
-        ("  （keyCode/usage/mod、source/action/双指轴、焦点与分支结果）——用于定位实体键盘\n  功能键、双指手势、触控板点击误触三类实测问题（logcat tag=ApxBridge）\n",
-         """  （keyCode/usage/mod、source/action/双指轴、焦点与分支结果）——用于定位实体键盘
-  功能键、双指手势、触控板点击误触三类实测问题（logcat tag=ApxBridge）
+        ("  校准）——修深色下黑字看不清；悬浮球字体问题随球体样式批一并修\n",
+         """  校准）——修深色下黑字看不清；悬浮球字体问题随球体样式批一并修
 - **悬浮球实体化（批 M）**：球体 35% 黑半透明 → 95% 白实底 + 描边（深浅背景都醒目），
   48dp→56dp（触控目标更好点），中心点改深色；修实测「太小/像一个点」
 """, 1),
