@@ -61,6 +61,14 @@
     （只靠 padding 撑，13sp 文字 + 10dp padding ≈ 37dp，够不着下限）。
 11. **图标尺寸成组统一**：同一行/同一网格里的图标保持同一边长，避免切换内容时条目跳动。
 
+## 三·补、动态重挂载视图（旋屏 / 换布局时）
+
+11.1 **任何 `addView` 之前，该视图必须已经没有父**。被挂过的视图直接 `addView` 会抛
+   `IllegalStateException: The specified child already has a parent`。
+   `removeAllViews()` **只摘直接子节点**，被嵌在子容器里的视图仍挂在它自己的父上 ——
+   横竖屏来回切（`TouchpadSplit` 那种运行时重排）最容易踩，2026-10 真机崩过一次。
+   写法：`(v.parent as? ViewGroup)?.removeView(v)` 先摘，再挂。
+
 ## 四、对话框
 
 12. **按钮位固定**：否定在左、肯定在右。`AlertDialog` 里 `setNeutralButton` 显示在最左、

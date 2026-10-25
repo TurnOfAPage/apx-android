@@ -104,6 +104,13 @@
   同时把构建失败的错误上报从 check-runs API 改成 **workflow command**（`::error::`）：
   原实现先用 gh api 查 check-run id 再 POST，实测在 job 进行中返回 404、annotation 一直没写上去；
   workflow command 由 GitHub 自动收集成 annotation，不需要任何 token 权限
+- **修旋屏崩溃：横屏转回竖屏必崩（真机复现）**：`TouchpadSplit.restore()` 里
+  `page.removeAllViews()` 只摘直接子节点（left/divider/right），而 topRow/touchArea/
+  chipSection/scroll 仍挂在 left/right **内部**，紧接着 `page.addView(topRow)` 抛
+  `IllegalStateException: The specified child already has a parent` → 崩在
+  `ViewTreeObserver.dispatchOnGlobalLayout` 里。修法：重挂前一律先 `detach()`，
+  并把「任何 addView 之前该视图已无父」写成该类不变式（split/restore 两处对称处理）。
+  影响面：横屏→竖屏第一次切换即崩，App 直接退出
 - **间距令牌化（issue#42「排版混乱」）**：布局 padding/margin 此前 14 种取值，收敛为
   `values/dimens.xml` 的 8 级梯度（space_2/4/6/8/12/16/20/24），归一化 28 处（10→8、14→12、
   18→16、3→4，均不超过 2dp 且以减小为主）；给悬浮底栏留的底部空白此前三页分别是

@@ -30,6 +30,10 @@ import com.allperiph.shared.util.Log
  * 触发：[bind] 挂 OnGlobalLayoutListener（旋屏必有布局 pass）+ bind 时主动 sync 一次
  * （覆盖冷启动即横屏）；幂等判断（朝向与结构状态一致直接返回）保证不叠加。
  * layout-land/activity_main.xml 若已是分栏结构（冷启动横屏），识别后直接采认。
+ *
+ * ⚠️ 重挂视图前必须先 [detach]：被挂过的视图再 addView 会抛
+ * "The specified child already has a parent"。横竖屏来回切时尤其容易踩 ——
+ * restore 里把那四个视图从 left/right 内部摘出来这一步曾漏掉，导致转回竖屏必崩。
  */
 internal class TouchpadSplit(private val act: Activity) {
 
@@ -82,6 +86,11 @@ internal class TouchpadSplit(private val act: Activity) {
             topRow.addView(btn)
         }
 
+        // 同 restore()：重挂前先摘，保持"任何 addView 之前该视图已无父"的不变式
+        detach(topRow)
+        detach(touchArea)
+        detach(chipSection)
+        detach(scroll)
         page.removeAllViews()
         page.orientation = LinearLayout.HORIZONTAL
 
@@ -141,6 +150,15 @@ internal class TouchpadSplit(private val act: Activity) {
             chipSection.addView(btn, idx++)
         }
 
+        // ⚠️ 必须先把这四个从 left/right **内部**摘出来再重挂：
+        //   `page.removeAllViews()` 只摘直接子节点（left / divider / right），
+        //   topRow / touchArea / chipSection / scroll 仍挂在 left/right 身上，
+        //   直接 page.addView(...) 会抛
+        //   "The specified child already has a parent" —— 横屏转回竖屏时必崩（真机实测）。
+        detach(topRow)
+        detach(touchArea)
+        detach(chipSection)
+        detach(scroll)
         page.removeAllViews()
         page.orientation = LinearLayout.VERTICAL
         topRow.layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
@@ -165,6 +183,17 @@ internal class TouchpadSplit(private val act: Activity) {
         if (page.childCount != 3) return false
         val left = page.getChildAt(0) as? LinearLayout ?: return false
         return left.childCount >= 2 && left.getChildAt(1).id == R.id.touchArea
+    }
+
+    /**
+     * 从当前父容器里摘下来。
+     *
+     * 重挂载视图前**必须**先摘：`ViewGroup.addView` 对被挂过的视图会抛
+     * `IllegalStateException: The specified child already has a parent`
+     * —— 这是本类唯一踩过的崩溃（横屏转回竖屏必崩，真机复现）。
+     */
+    private fun detach(v: View?) {
+        (v?.parent as? ViewGroup)?.removeView(v)
     }
 
     private fun dp(v: Int): Int = (v * act.resources.displayMetrics.density + 0.5f).toInt()
