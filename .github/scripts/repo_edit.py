@@ -1,249 +1,375 @@
 #!/usr/bin/env python3
 """repo-edit：大文件锚点替换编辑器。
 
-本批（反馈#10 批 A：状态页并入设置页，4 页 → 3 页）：
-  - activity_main.xml / layout-land：pager 去掉状态页 include（两套都改）
-  - page_settings.xml：顶部平铺状态块 include（总开关/传输开关/链路诊断/运行摘要随迁）
-  - page_status.xml：根 ScrollView → LinearLayout（去自带 padding，滚动交给设置页外层）
-  - header_bar.xml：移除「状态↔设置」顶栏分段
-  - MainActivity：PAGE_STATUS 删除、PAGE_SETTINGS=3→2、四指循环/侧边限宽/页签归并/标题数组/
-    分段着色与点击 全链路收编（StatusFragment 寄生按 id 渲染，零改动）
+本批（反馈#10 批 B，方案 B）：设置首页改「分类列表 → 二级页」：
+  - page_settings：四分段 tabSettingsBar（通用/外观/遥控/关于）替换为 5 行分类列表
+    （新增“帮助与说明”）+ 二级页返回行；新增 groupHelp 帮助组（文字说明集中地）
+  - SettingsFragment.setupSettingsTabs：分段选中逻辑 → 首页/二级页导航逻辑
+  - MainActivity：每次进设置页回分类首页
+  - strings：分类/返回/帮助 14 条
   - CHANGELOG 补条
+说明：各处散落的长描述 TextView 收进帮助页属批 C（下一批）。
 
-两阶段：①按期望次数全量校验，失配一次性报全；②全过才写盘。失配 → 退出非零 → 不提交。
+两阶段：①按期望次数全量校验；②全过才写盘。失配 → 退出非零 → 不提交。
 """
 import sys
 
+CAT_ROWS = """        <!-- 分类列表首页（反馈#10 批 B，方案 B）：点行进二级页；二级页经返回行回首屏 -->
+        <LinearLayout
+            android:id="@+id/categoryHome"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="10dp"
+            android:background="@drawable/bg_card"
+            android:orientation="vertical"
+            android:paddingTop="4dp"
+            android:paddingBottom="4dp">
+
+            <TextView
+                android:id="@+id/catGeneral"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingStart="16dp"
+                android:paddingEnd="16dp"
+                android:paddingTop="12dp"
+                android:paddingBottom="12dp"
+                android:text="@string/ui_main_cat_general"
+                android:textColor="#DD000000"
+                android:textSize="15sp" />
+
+            <TextView
+                android:id="@+id/catLook"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingStart="16dp"
+                android:paddingEnd="16dp"
+                android:paddingTop="12dp"
+                android:paddingBottom="12dp"
+                android:text="@string/ui_main_cat_look"
+                android:textColor="#DD000000"
+                android:textSize="15sp" />
+
+            <TextView
+                android:id="@+id/catRemote"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingStart="16dp"
+                android:paddingEnd="16dp"
+                android:paddingTop="12dp"
+                android:paddingBottom="12dp"
+                android:text="@string/ui_main_cat_remote"
+                android:textColor="#DD000000"
+                android:textSize="15sp" />
+
+            <TextView
+                android:id="@+id/catAbout"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingStart="16dp"
+                android:paddingEnd="16dp"
+                android:paddingTop="12dp"
+                android:paddingBottom="12dp"
+                android:text="@string/ui_main_cat_about"
+                android:textColor="#DD000000"
+                android:textSize="15sp" />
+
+            <TextView
+                android:id="@+id/catHelp"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingStart="16dp"
+                android:paddingEnd="16dp"
+                android:paddingTop="12dp"
+                android:paddingBottom="12dp"
+                android:text="@string/ui_main_cat_help"
+                android:textColor="#DD000000"
+                android:textSize="15sp" />
+        </LinearLayout>
+
+        <!-- 二级页返回行（默认隐藏，进分类后显示，点击回首屏） -->
+        <LinearLayout
+            android:id="@+id/btnBackHome"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="6dp"
+            android:background="@drawable/bg_card"
+            android:orientation="horizontal"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
+            android:paddingTop="12dp"
+            android:paddingBottom="12dp"
+            android:visibility="gone">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/ui_main_cat_back"
+                android:textColor="#DD000000"
+                android:textSize="15sp" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/groupGeneral"""
+
+HELP_GROUP = """
+        <!-- 帮助与说明（反馈#10 批 B）：文字性说明集中地，各分类只留一行式条目 -->
+        <LinearLayout
+            android:id="@+id/groupHelp"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <TextView
+                style="@style/APSectionTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/ui_help_title_project" />
+
+            <LinearLayout
+                style="@style/APCard"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/ui_help_project"
+                    android:textColor="#CC000000"
+                    android:textSize="13sp" />
+            </LinearLayout>
+
+            <TextView
+                style="@style/APSectionTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/ui_help_title_link" />
+
+            <LinearLayout
+                style="@style/APCard"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/ui_help_link"
+                    android:textColor="#CC000000"
+                    android:textSize="13sp" />
+            </LinearLayout>
+
+            <TextView
+                style="@style/APSectionTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/ui_help_title_gesture" />
+
+            <LinearLayout
+                style="@style/APCard"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/ui_help_gesture"
+                    android:textColor="#CC000000"
+                    android:textSize="13sp" />
+            </LinearLayout>
+
+            <TextView
+                style="@style/APSectionTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/ui_help_title_faq" />
+
+            <LinearLayout
+                style="@style/APCard"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/ui_help_faq"
+                    android:textColor="#CC000000"
+                    android:textSize="13sp" />
+            </LinearLayout>
+        </LinearLayout>
+"""
+
 EDITS = [
-    # ————— 1. 竖屏 pager 去状态页 —————
-    ("android/app/src/main/res/layout/activity_main.xml", [
-        ("""            <!-- ③ 状态页 / ④ 设置页（复用块） -->
-            <include
-                layout="@layout/page_status"
-                android:layout_width="match_parent"
-                android:layout_height="match_parent" />
-
-            <include
-                layout="@layout/page_settings"
-""",
-         """            <!-- ④ 设置页（状态页已并入设置顶，反馈#10） -->
-            <include
-                layout="@layout/page_settings"
-""", 1),
-    ]),
-    # ————— 2. 横屏 pager 去状态页 —————
-    ("android/app/src/main/res/layout-land/activity_main.xml", [
-        ("""            <!-- ③ 状态页 / ④ 设置页（复用块） -->
-            <include
-                layout="@layout/page_status"
-                android:layout_width="match_parent"
-                android:layout_height="match_parent" />
-
-            <include
-                layout="@layout/page_settings"
-""",
-         """            <!-- ④ 设置页（状态页已并入设置顶，反馈#10） -->
-            <include
-                layout="@layout/page_settings"
-""", 1),
-    ]),
-    # ————— 3. 设置页顶部平铺状态块 —————
+    # ————— 1. 分段条 → 分类列表（含返回行），保留 groupGeneral 开头作锚 —————
     ("android/app/src/main/res/layout/page_settings.xml", [
         ("""        <!-- 设置页分段：点顶部切换，避免一屏滚太长 -->
-""",
-         """        <!-- 状态块（原状态页并入设置页顶，反馈#10）：总开关 / 传输开关 / 链路诊断 /
-             运行摘要。根节点已由 ScrollView 改为 LinearLayout 平铺，滚动交给本页外层。 -->
-        <include
-            layout="@layout/page_status"
+        <LinearLayout
+            android:id="@+id/tabSettingsBar"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content" />
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:background="@drawable/bg_card"
+            android:padding="4dp"
+            android:layout_marginBottom="10dp">
 
-        <!-- 设置页分段：点顶部切换，避免一屏滚太长 -->
+            <TextView
+                android:id="@+id/tabSegGeneral"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:paddingTop="10dp"
+                android:paddingBottom="10dp"
+                android:text="@string/lay_settings_tab_general"
+                android:textSize="13sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tabSegLook"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:paddingTop="10dp"
+                android:paddingBottom="10dp"
+                android:text="@string/lay_settings_tab_look"
+                android:textSize="13sp" />
+
+            <TextView
+                android:id="@+id/tabSegRemote"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:paddingTop="10dp"
+                android:paddingBottom="10dp"
+                android:text="@string/ui_touchpad_text_remote"
+                android:textSize="13sp" />
+
+            <TextView
+                android:id="@+id/tabSegAbout"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:paddingTop="10dp"
+                android:paddingBottom="10dp"
+                android:text="@string/lay_settings_tab_about"
+                android:textSize="13sp" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/groupGeneral"""",
+         CAT_ROWS, 1),
+        # 2. groupAbout 之后加帮助组
+        ("        </LinearLayout><!-- /groupAbout -->\n",
+         "        </LinearLayout><!-- /groupAbout -->\n" + HELP_GROUP, 1),
+    ]),
+    # ————— 3. 分段选中 → 首页/二级页导航 —————
+    ("android/app/src/main/java/com/allperiph/ui/SettingsFragment.kt", [
+        ("""    fun setupSettingsTabs() {
+        if (!ensureViews()) return
+        val act = activity ?: return
+        val tabs = listOf(
+            act.findViewById<TextView>(R.id.tabSegGeneral),
+            act.findViewById<TextView>(R.id.tabSegLook),
+            act.findViewById<TextView>(R.id.tabSegRemote),
+            act.findViewById<TextView>(R.id.tabSegAbout),
+        )
+        val groups = listOf(
+            act.findViewById<LinearLayout>(R.id.groupGeneral),
+            act.findViewById<LinearLayout>(R.id.groupLook),
+            act.findViewById<LinearLayout>(R.id.groupRemote),
+            act.findViewById<LinearLayout>(R.id.groupAbout),
+        )
+        fun select(i: Int) {
+            tabs.forEachIndexed { j, t ->
+                val on = i == j
+                t.setBackgroundResource(if (on) R.drawable.bg_btn_primary else 0)
+                t.setTextColor(
+                    if (on) resources.getColor(R.color.md_on_primary)
+                    else resources.getColor(R.color.md_on_surface_variant)
+                )
+            }
+            groups.forEachIndexed { j, g -> g.visibility = if (i == j) View.VISIBLE else View.GONE }
+        }
+        tabs.forEachIndexed { j, t -> t.setOnClickListener { select(j) } }
+        select(0)
+    }
+""",
+         """    fun setupSettingsTabs() {
+        if (!ensureViews()) return
+        val act = activity ?: return
+        // 反馈#10 批 B（方案 B）：首页 = 分类列表，点行进二级页，返回行回首屏。
+        // 分组容器复用原四个 group*，另加帮助组 groupHelp；原四分段 tab 已删。
+        val categories = listOf(
+            act.findViewById<View>(R.id.catGeneral) to R.id.groupGeneral,
+            act.findViewById<View>(R.id.catLook) to R.id.groupLook,
+            act.findViewById<View>(R.id.catRemote) to R.id.groupRemote,
+            act.findViewById<View>(R.id.catAbout) to R.id.groupAbout,
+            act.findViewById<View>(R.id.catHelp) to R.id.groupHelp,
+        )
+        val home = act.findViewById<View>(R.id.categoryHome)
+        val back = act.findViewById<View>(R.id.btnBackHome)
+        fun hideAllGroups() {
+            categories.forEach { (_, gid) -> act.findViewById<View>(gid)?.visibility = View.GONE }
+        }
+        fun scrollTop() {
+            (act.findViewById<View>(R.id.pageSettings) as? android.widget.ScrollView)?.fullScroll(View.FOCUS_UP)
+        }
+        fun showHome() {
+            home?.visibility = View.VISIBLE
+            back?.visibility = View.GONE
+            hideAllGroups()
+            scrollTop()
+        }
+        categories.forEach { (row, gid) ->
+            row?.setOnClickListener {
+                home?.visibility = View.GONE
+                back?.visibility = View.VISIBLE
+                hideAllGroups()
+                act.findViewById<View>(gid)?.visibility = View.VISIBLE
+                scrollTop()
+            }
+        }
+        back?.setOnClickListener { showHome() }
+        showHome()
+    }
 """, 1),
     ]),
-    # ————— 4. page_status 根节点改平铺 —————
-    ("android/app/src/main/res/layout/page_status.xml", [
-        ("""<!--
-  状态页（复用块）：大号启动开关；**启动后**才展开运行摘要 / 链路诊断 / 延迟预算。
-  竖屏底部留 96dp 给悬浮底栏；横屏（layout-land）由外层覆盖为 16dp。
--->
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
-    android:id="@+id/pageStatus"
-    android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:clipToPadding="false"
-    android:fillViewport="true"
-    android:paddingStart="16dp"
-    android:paddingEnd="16dp"
-    android:paddingBottom="96dp">
-""",
-         """<!--
-  状态块（已并入设置页顶，反馈#10）：根节点改 LinearLayout 平铺，滚动交给设置页外层
-  ScrollView；左右/底部留白由设置页统一提供（本块不再自带 padding）。
--->
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:id="@+id/pageStatus"
-    android:layout_width="match_parent"
-    android:layout_height="wrap_content"
-    android:orientation="vertical">
-""", 1),
-        ("</ScrollView>\n", "</LinearLayout>\n", 1),
-    ]),
-    # ————— 5. 顶栏移除状态↔设置分段 —————
-    ("android/app/src/main/res/layout/header_bar.xml", [
-        ("""    <!-- 状态 ↔ 设置 页内分页（状态页并入设置 tab 后的二级切换；非这两页时隐藏） -->
-    <LinearLayout
-        android:id="@+id/segPages"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginEnd="8dp"
-        android:orientation="horizontal"
-        android:visibility="gone">
-
-        <TextView
-            android:id="@+id/segGoStatus"
-            style="@style/APTextButton"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/ui_page_state" />
-
-        <TextView
-            android:id="@+id/segGoSettings"
-            style="@style/APTextButton"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="6dp"
-            android:text="@string/section_settings" />
-    </LinearLayout>
-
-""",
-         "", 1),
-    ]),
-    # ————— 6. MainActivity：PAGE 常量链 —————
+    # ————— 4. 进设置页回分类首页 —————
     ("android/app/src/main/java/com/allperiph/ui/MainActivity.kt", [
-        # 6a. 常量 + TAB_PAGES 注释
-        ("""        private const val PAGE_TOUCHPAD = 0
-        private const val PAGE_KEYBOARD = 1
-        private const val PAGE_STATUS = 2
-        private const val PAGE_SETTINGS = 3
-
-        /**
-         * 底栏页签 → ViewFlipper 页面 index 的映射。
-         * 页签：触控板(0) / 键盘(1) / 设置(3)；状态页(2) 并入设置 tab（tabIndexFor 归并高亮）。
-         */
-        private val TAB_PAGES = intArrayOf(PAGE_TOUCHPAD, PAGE_KEYBOARD, PAGE_SETTINGS)
-""",
-         """        private const val PAGE_TOUCHPAD = 0
-        private const val PAGE_KEYBOARD = 1
-        // 状态页已并入设置页（反馈#10）：设置成为第 3 个也是最后一个孩子
-        private const val PAGE_SETTINGS = 2
-
-        /**
-         * 底栏页签 → ViewFlipper 页面 index 的映射。
-         * 页签：触控板(0) / 键盘(1) / 设置(2)。
-         */
-        private val TAB_PAGES = intArrayOf(PAGE_TOUCHPAD, PAGE_KEYBOARD, PAGE_SETTINGS)
-""", 1),
-        # 6b. 横屏侧边限宽只作用设置页
-        ("""            // 视线要横跨整屏。留白随屏宽自适应（窄屏不强切）。子项顺序 = 页常量：
-            // 0 触控板 1 键盘 2 状态 3 设置（两套 activity_main.xml 的 ViewFlipper 顺序）。
-            val sidePad = if (landscape) {
-                ((resources.displayMetrics.widthPixels - dp(680)).coerceAtLeast(0)) / 2
-            } else 0
-            for (i in PAGE_STATUS..PAGE_SETTINGS) {
-""",
-         """            // 视线要横跨整屏。留白随屏宽自适应（窄屏不强切）。子项顺序 = 页常量：
-            // 0 触控板 1 键盘 2 设置（状态页已并入设置，反馈#10；横屏限宽只作用于设置页）。
-            val sidePad = if (landscape) {
-                ((resources.displayMetrics.widthPixels - dp(680)).coerceAtLeast(0)) / 2
-            } else 0
-            for (i in PAGE_SETTINGS..PAGE_SETTINGS) {
-""", 1),
-        # 6c. 四指循环去掉状态
-        ("""                            // 横屏无底栏，四指是唯一换页方式：按页序循环（触控板→键盘→状态→设置）
-                            val order = intArrayOf(
-                                PAGE_TOUCHPAD, PAGE_KEYBOARD, PAGE_STATUS, PAGE_SETTINGS,
-                            )
-""",
-         """                            // 横屏四指循环换页（触控板→键盘→设置；状态页已并入设置，反馈#10）
-                            val order = intArrayOf(
-                                PAGE_TOUCHPAD, PAGE_KEYBOARD, PAGE_SETTINGS,
-                            )
-""", 1),
-        # 6d. tabIndexFor 去归并
-        ("""    /** 页 → 底栏页签下标（状态页并入设置 tab，高亮归并到「设置」；未映射返回 -1） */
-    private fun tabIndexFor(page: Int): Int =
-        TAB_PAGES.indexOf(if (page == PAGE_STATUS) PAGE_SETTINGS else page)
-""",
-         """    /** 页 → 底栏页签下标（未映射返回 -1；状态页已并入设置，反馈#10） */
-    private fun tabIndexFor(page: Int): Int =
-        TAB_PAGES.indexOf(page)
-""", 1),
-        # 6e. showPage 分段着色块移除
-        ("""        // 状态/设置 页内分页：顶栏分段（竖屏 header 可见；横屏靠四指循环互切）
-        val onSeg = i == PAGE_STATUS || i == PAGE_SETTINGS
-        findViewById<View>(R.id.segPages)?.visibility = if (onSeg) View.VISIBLE else View.GONE
-        if (onSeg) {
-            val cOn = resources.getColor(R.color.md_primary)
-            val cOff = resources.getColor(R.color.state_idle)
-            findViewById<TextView>(R.id.segGoStatus)?.apply {
-                setTextColor(if (i == PAGE_STATUS) cOn else cOff)
-                setTypeface(null, if (i == PAGE_STATUS) Typeface.BOLD else Typeface.NORMAL)
-            }
-            findViewById<TextView>(R.id.segGoSettings)?.apply {
-                setTextColor(if (i == PAGE_SETTINGS) cOn else cOff)
-                setTypeface(null, if (i == PAGE_SETTINGS) Typeface.BOLD else Typeface.NORMAL)
-            }
-        }
-""",
-         """        // 状态已并入设置页（反馈#10）：顶栏「状态↔设置」分段及其着色一并移除
-""", 1),
-        # 6f. bindActions 分段点击移除
-        ("""        // 状态 ↔ 设置 页内分页（状态页已并入设置 tab，两页经顶栏分段互切）
-        findViewById<TextView>(R.id.segGoStatus)?.setOnClickListener {
-            Feedback.tap(it)
-            showPage(PAGE_STATUS)
-        }
-        findViewById<TextView>(R.id.segGoSettings)?.setOnClickListener {
-            Feedback.tap(it)
-            showPage(PAGE_SETTINGS)
-        }
-""",
-         """        // 状态已并入设置页（反馈#10）：分段控件与点击绑定移除（视图已在 header_bar 删除）
-""", 1),
-        # 6g. 标题/副标题数组去状态
-        ("""        private val PAGE_TITLES = intArrayOf(
-            R.string.ui_main_item_touchpad,        // 触控板
-            R.string.ui_touchpad_label_keyboard,   // 键盘
-            R.string.ui_page_state,                // 状态
-            R.string.section_settings,             // 设置
-        )
-        private val PAGE_SUBS = intArrayOf(
-            R.string.ui_main_item_hotkey_send_cursor_swipe,
-            R.string.ui_touchpad_label_remote,
-            R.string.ui_main_item_state,
-            R.string.ui_main_item_template_theme,
-        )
-""",
-         """        private val PAGE_TITLES = intArrayOf(
-            R.string.ui_main_item_touchpad,        // 触控板
-            R.string.ui_touchpad_label_keyboard,   // 键盘
-            R.string.section_settings,             // 设置
-        )
-        private val PAGE_SUBS = intArrayOf(
-            R.string.ui_main_item_hotkey_send_cursor_swipe,
-            R.string.ui_touchpad_label_remote,
-            R.string.ui_main_item_template_theme,
-        )
+        ("        if (i == PAGE_TOUCHPAD) renderChips()\n",
+         """        if (i == PAGE_TOUCHPAD) renderChips()
+        // 反馈#10 批 B：进设置页一律落回分类首页（setupSettingsTabs 内部 showHome）
+        if (i == PAGE_SETTINGS) settingsFragment?.setupSettingsTabs()
 """, 1),
     ]),
-    # ————— 7. CHANGELOG —————
+    # ————— 5. strings：分类/返回/帮助 14 条 —————
+    ("android/app/src/main/res/values/strings.xml", [
+        ("</resources>", """    <string name="ui_main_cat_general">通用\n模板 · 功能开关 · 方向锁定</string>
+    <string name="ui_main_cat_look">外观\n主题 · 配色 · 背景 · 动效</string>
+    <string name="ui_main_cat_remote">遥控 · 工具\nTV/PC 控制 · 诊断 · 文件 · 自检/日志/悬浮球</string>
+    <string name="ui_main_cat_about">关于与维护\n版本 · 更新日志 · 反馈 · 电池白名单</string>
+    <string name="ui_main_cat_help">帮助与说明\n项目说明 · 链路解释 · 手势 · 常见问题</string>
+    <string name="ui_main_cat_back">‹ 返回分类列表</string>
+    <string name="ui_help_title_project">项目说明</string>
+    <string name="ui_help_title_link">链路与延迟</string>
+    <string name="ui_help_title_gesture">手势与操作</string>
+    <string name="ui_help_title_faq">常见问题</string>
+    <string name="ui_help_project">全能外设把手机/平板变成电脑的键盘、鼠标、副屏与声卡：USB 有线或 Wi-Fi 连上电脑后，手机屏就是触控板，实体键盘打字也会转发到电脑。所有通信仅限局域网，不上传任何数据（MIT 开源）。</string>
+    <string name="ui_help_link">USB 有线：性能最高且同时充电，需 root，目前仅支持 Windows；Wi-Fi：免 root，走 9511 控制面 / 9502 媒体 / 9501 发现信标 / 9512 文件；蓝牙：HID 键盘鼠标。延迟与速率看「链路诊断」行；出现 UDC/带宽告警时，重启手机再开关 USB 模式通常可恢复。</string>
+    <string name="ui_help_gesture">触控板：单指移动、双指滚动与捏合缩放、双指点按右键；三指点按为中键，三指滑动映射 Windows 手势（位移≥60px 触发）：上=Alt+Tab、下=Win+D、左右=Ctrl+Win+←/→。横屏支持触控板左右分栏、四指换页；实体键盘的触摸板也会映射到电脑。设置里的「悬浮球」可在其它应用上方保留一块触控板面板（需悬浮窗授权）。</string>
+    <string name="ui_help_faq">① USB 模式需要 root（会提示授权）；② USB 模式仅支持 Windows，macOS 暂无副屏；③ 请把本应用加入电池优化白名单（设置→应用→电池→无限制），否则后台几十秒可能被杀、导致连不上；④ Windows 收 USB 麦克风/音箱、macOS 系统音频授权等进阶用法见仓库 docs/使用说明.md。</string>
+</resources>""", 1),
+    ]),
+    # ————— 6. CHANGELOG —————
     ("docs/CHANGELOG.md", [
-        ("底部 300dp 面板直接喂触控板链路（单/双/三指全支持），入口在设置页「工具」小节\n",
-         """底部 300dp 面板直接喂触控板链路（单/双/三指全支持），入口在设置页「工具」小节
-- **状态页并入设置（反馈#10 批 A）**：4 页 → 触控板/键盘/设置 3 页；状态块（总开关/
-  传输开关/链路诊断/运行摘要）平铺进设置页顶部，顶栏「状态↔设置」分段移除，
-  四指循环/侧边限宽/页签映射/标题数组全链路收编（StatusFragment 寄生渲染零改动）
+        ("  四指循环/侧边限宽/页签映射/标题数组全链路收编（StatusFragment 寄生渲染零改动）\n",
+         """  四指循环/侧边限宽/页签映射/标题数组全链路收编（StatusFragment 寄生渲染零改动）
+- **设置页分类列表化（反馈#10 批 B，方案 B）**：原「通用/外观/遥控/关于」顶部分段
+  改为 5 行分类列表（新增「帮助与说明」）→ 点行进二级页 + 返回行回首屏；
+  新增 groupHelp 帮助组（项目说明/链路与延迟/手势与操作/常见问题四卡），
+  进设置页一律落回分类首页
 """, 1),
     ]),
 ]
