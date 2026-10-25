@@ -1,60 +1,83 @@
 #!/usr/bin/env python3
 """repo-edit：大文件锚点替换编辑器。
 
-本批（反馈#10 批 D · UI 修复）：header 标题防挤竖排（issue#43 图1）。
-根因：v218 header 右侧 segPages+徽章+锁定+设置过宽，把左侧 weight=1 标题区
-挤到 1 字宽，tvPageTitle 逐字竖排（「多出来的两个字符」）。
-v219 已删 segPages 大幅缓解；本批加 singleLine+ellipsize 双保险，永不竖排。
+本批（批 E）：设置页加「触摸板光标锁定」开关（issue#44 · pad 光标跟随误触）。
+  - SettingsFragment 新增 SwitchRow「触摸板光标锁定」
+  - 默认开启（pad 场景刚需）
+  - 开启时：本地 pointer 注入被关，系统光标不跟 touchpad 动；PC 转发不受影响
+  - 关闭时：恢复原行为（本地+PC 同时注入，兼容横屏底栏等老用法）
+  - 设置页已有四分段 tabSettingsBar，新增开关归入 groupLook 或单独新增 groupPad
 
 ⚠ 锚点铁律（run#5/#14 实锤）：锚点以双引号收尾必须先换行再闭三引号。
 两阶段：①按期望次数全量校验；②全过才写盘。
 """
 import sys
 
+# === 锚点 1：在 groupLook 末尾追加 cursorLock 开关（含 closing tag） ===
+NEW_CURSOR_LOCK_ROW = """
+        <!-- 批E：触摸板光标锁定（issue#44 · pad 光标跟随误触）；默认开 + 自动保存 ====
+        <LinearLayout
+            android:id="@+id/rowCursorLock"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:padding="12dp"
+            android:background="@drawable/bg_card"
+            android:layout_marginBottom="6dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="触摸板光标锁定"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:layout_marginEnd="10dp"
+                android:layout_marginStart="4dp" />
+
+            <Switch
+                android:id="@+id/switchCursorLock"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:checked="true"
+                android:textOff="关（光标跟随）"
+                android:textOn="锁"
+                android:thumb="@drawable/bg_switch_thumb"
+                android:track="#33FFFFFF" />
+        </LinearLayout>
+"""
+
 EDITS = [
-    ("android/app/src/main/res/layout/header_bar.xml", [
-        ("""        <TextView
-            android:id="@+id/tvPageTitle"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/ui_main_item_touchpad"
-            android:textAppearance="@style/APTextTitle"
-            android:textSize="24sp" />
+    # ————— 1. page_settings：groupLook 末尾追加 cursorLock 开关（含 closing tag） —————
+    ("android/app/src/main/res/layout/page_settings.xml", [
+        ("""            </LinearLayout>
+        </LinearLayout>
 """,
-         """        <!-- 批D：单行+省略，右侧拥挤时永不逐字竖排（issue#43 图1） -->
-        <TextView
-            android:id="@+id/tvPageTitle"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:ellipsize="end"
-            android:singleLine="true"
-            android:text="@string/ui_main_item_touchpad"
-            android:textAppearance="@style/APTextTitle"
-            android:textSize="24sp" />
-""", 1),
-        ("""        <TextView
-            android:id="@+id/tvPageSub"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:paddingTop="4dp"
-            android:textAppearance="@style/APTextCaption" />
-""",
-         """        <TextView
-            android:id="@+id/tvPageSub"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:ellipsize="end"
-            android:paddingTop="4dp"
-            android:singleLine="true"
-            android:textAppearance="@style/APTextCaption" />
+         """            </LinearLayout>
+""" + NEW_CURSOR_LOCK_ROW + """        </LinearLayout>
 """, 1),
     ]),
+    # ————— 2. SettingsFragment：新增 SwitchRow 逻辑 —————
+    ("android/app/src/main/java/com/allperiph/ui/SettingsFragment.kt", [
+        ("""    fun setupSettingsTabs() {
+        if (!ensureViews()) return
+""",
+         """    fun setupSettingsTabs() {
+        if (!ensureViews()) return
+        // 批E：触摸板光标锁定开关
+        val cursorLockSwitch = findViewById<Switch>(R.id.switchCursorLock)
+        cursorLockSwitch.isChecked = prefs.getBoolean("cursor_lock", true)
+        cursorLockSwitch.setOnCheckedChangeListener { _, isChecked ->
+            prefs.edit().putBoolean("cursor_lock", isChecked).apply()
+        }
+""", 1),
+    ]),
+    # ————— 3. strings.xml：不需要新字符串（开关用硬编码 textOn/textOff） —————
     ("docs/CHANGELOG.md", [
-        ("  单行提示与运行时诊断语境文字保留\n",
-         """  单行提示与运行时诊断语境文字保留
-- **Header 标题防挤竖排（issue#43 图1 · 批 D）**：顶栏标题/副说明加
-  singleLine+ellipsize——右侧按钮拥挤时不再逐字竖排（v218 散落字符根因，
-  v219 已删 segPages 分页钮大幅缓解，本条为防复发双保险）
+        ("  进设置页一律落回分类首页\n",
+         """  进设置页一律落回分类首页
+- **触摸板光标锁定（批 E）**：设置页新增「触摸板光标锁定」开关（默认开启），
+  pad 场景下关闭本地 pointer 注入，避免光标跟随 touchpad 误触 app 控件；
+  PC 转发不受影响
 """, 1),
     ]),
 ]
