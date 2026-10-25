@@ -524,6 +524,18 @@ if(APXPC_BUILD_TESTS)
     target_link_libraries(ctrl_frame_test PRIVATE ws2_32 hid setupapi cfgmgr32)
   endif()
   add_test(NAME ctrl_frame_test COMMAND ctrl_frame_test)
+
+  # v198 无线会话生命周期压测：worker 在 stop() 之后不得重建 beacon 线程，
+  # 否则 stop() 末尾 join 收不回，进程无法退出（必须 kill）。
+  add_executable(wireless_session_lifecycle_test
+                 "${APXPC_ROOT}/tests/wireless_session_lifecycle_test.cpp")
+  target_link_libraries(wireless_session_lifecycle_test PRIVATE apxpc_service)
+  if(WIN32)
+    target_link_libraries(wireless_session_lifecycle_test PRIVATE ws2_32 hid setupapi cfgmgr32)
+  endif()
+  add_test(NAME wireless_session_lifecycle_test COMMAND wireless_session_lifecycle_test)
+  # 400 轮 start/stop，每轮含 50ms 相位错开 —— 给足超时，避免 CI 慢机误判死锁
+  set_tests_properties(wireless_session_lifecycle_test PROPERTIES TIMEOUT 300)
 endif()
 
 # ---------------------------------------------------------------- 安装

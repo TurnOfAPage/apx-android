@@ -9,6 +9,19 @@
 ## Unreleased（2026-10-25）
 
 ### 修复
+- **HID 上报重复（合并未合分支）**：`pc/display/inject/hid/apxhid.c` 的 `ApxHidEnqueue` 在有挂起读请求时，
+  把同一份报告**既**交给挂起请求**又**写进环形缓冲区 —— 下一次 READ_REPORT 会把同一报告再报一次
+  （表现为按键/鼠标重复、抖动）。改为二选一：先给挂起请求，没有挂起请求才入队；
+  `ApxHidCompletePendingRead` 改为返回「是否已交付」。
+- **USB 重连后 Use-After-Free（合并未合分支）**：`FrameWriter` / `CtrlSession` 持有的是
+  `open()` 时创建的 Channel 裸指针，而 USB transport 每次 `open()` 都重建 Channel 对象 ——
+  重连成功后写帧与控制面都在用已析构对象。新增 `setChannel()`，并在**两条**重连路径
+  （LinkMonitor 自愈、encodeThread 连续 30 帧失败）重绑到新指针。
+- **stop() 后进程退不掉（v198 无线会话死锁，合并未合分支）**：`worker()` 的 Auto 分支
+  收完旧 beacon 线程后无条件 `beaconRun_.store(true)` 重建；与 `stop()` 在临界区交汇时，
+  新 beacon 线程挂在 `recvfrom` 上、`stop()` 末尾 join 永不返回（只能 kill 进程）。
+  收完旧线程后**重核 `running_`**，已停就不重建；并补压力测试
+  `pc/host/tests/wireless_session_lifecycle_test.cpp`（400 轮 start/stop + 析构路径，已进 CTest）。
 - **USB 模式锁 2 个大核全频满载（反馈#1）**：`apx_jni.cpp` ALSA 非阻塞读写遇 EAGAIN 自旋 ——
   `nativeRead` 主机不发流时空转钉死一核、`nativeWrite` 缓冲满时 `continue` 空转钉死另一核；
   改为 EAGAIN 立即返回 / 1ms 节流重试（100ms 预算，超时丢帧保 stop() 能收线程），
@@ -16,6 +29,11 @@
 - **方向锁定仍绑陀螺仪、设置入口难达（反馈#2）**：锁定中布局钉死不再跟系统配置翻面、
   `onResume` 不使能方向传感器、`setOrientLock` 直接停物理检测；竖屏顶栏 + 横屏悬浮
   右上角常驻「设置」入口（f3da1d0）
+
+### 变更
+- **设置页「左 1 右 2」不再跟朝向**：原先只有横屏左右分栏、竖屏退回纵向堆叠；
+  按要求改为**任何朝向**都是左 1/3（状态概览 + 传输按钮 + 分类/返回）+ 右 2/3（功能分组），
+  中缝 12dp。旋屏只是重算 orientation 与 LayoutParams，视图实例、分类跳转状态与滚动位置不变。
 
 ### 新增
 - **Logcat 系统日志工具（反馈#4）**：设置页「工具」小节新增入口，root 抓全进程 logcat，

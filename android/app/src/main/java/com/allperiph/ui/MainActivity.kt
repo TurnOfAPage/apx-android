@@ -496,12 +496,12 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
         //（键盘页已转正进底栏，不再“横过来就自动跳键盘”）。
         if (::pager.isInitialized) {
 
-            // 设置页两栏（横屏）：左 1/3 = 状态概览 + 传输按钮 + 分类/返回，
+            // 设置页两栏（不分朝向）：左 1/3 = 状态概览 + 传输按钮 + 分类/返回，
             //                      右 2/3 = 当前分类的功能分组。
-            // 竖屏：两栏容器退回纵向堆叠（与改造前的视觉一致）。
+            // 用户明确要求竖屏也是「左 1 右 2」，不再退回纵向堆叠。
             // 只改 settingsTwoPane 的 orientation 与两个 pane 的 LayoutParams，
             // 视图实例不变 —— Fragment / 事件订阅 / 滚动位置全部保持。
-            applySettingsTwoPane(landscape)
+            applySettingsTwoPane()
         }
 
         // 反馈#9：横屏底栏常驻 → 旋屏后重算胶囊位置（原横屏 setIndicator(null) 清除）
@@ -836,8 +836,11 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
     }
 
     /**
-     * 设置页两栏排布（横屏）：左 1/3 放「状态概览 + 传输按钮 + 分类列表/返回」，
-     * 右 2/3 放当前分类的功能分组；竖屏退回纵向堆叠。
+     * 设置页两栏排布（**不分朝向**）：左 1/3 放「状态概览 + 传输按钮 + 分类列表/返回」，
+     * 右 2/3 放当前分类的功能分组。
+     *
+     * 用户明确要求「设置页就是左 1 右 2，不是横屏才这样」—— 竖屏同样左右分栏，
+     * 不再退回纵向堆叠；旋屏时这里会被重新调用，结果一致（无可见跳动）。
      *
      * 只动容器 orientation 与两个 pane 的 LayoutParams，视图实例不变：
      * SettingsFragment 的字段绑定、分类跳转的 visibility 逻辑、
@@ -845,30 +848,19 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
      *
      * 权重 1:2 = 1/3 : 2/3（用户要求"常用的占 1/3"）。
      */
-    private fun applySettingsTwoPane(landscape: Boolean) {
+    private fun applySettingsTwoPane() {
         val two = findViewById<LinearLayout>(R.id.settingsTwoPane) ?: return
         val left = findViewById<LinearLayout>(R.id.paneStatus) ?: return
         val right = findViewById<LinearLayout>(R.id.paneGroups) ?: return
 
-        // 横屏：左 1/3，右 2/3，中缝 12dp
-        two.orientation = if (landscape) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
-        val lpLeft = if (landscape) {
-            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-        } else {
-            LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
-            )
-        }
-        val lpRight = if (landscape) {
-            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 2f)
-        } else {
-            LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
-            )
-        }
-        if (landscape) {
-            lpLeft.marginEnd = dp(12)
-        }
+        // 左 1/3，右 2/3，中缝 12dp（竖屏同样是这个比例）
+        two.orientation = LinearLayout.HORIZONTAL
+        val lpLeft = LinearLayout.LayoutParams(
+            0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f
+        ).apply { marginEnd = dp(12) }
+        val lpRight = LinearLayout.LayoutParams(
+            0, LinearLayout.LayoutParams.WRAP_CONTENT, 2f
+        )
         left.layoutParams = lpLeft
         right.layoutParams = lpRight
     }
