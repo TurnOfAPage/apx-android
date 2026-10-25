@@ -29,6 +29,7 @@ enum class GestureFeedback {
     RIGHT_TAP,      // 双指点按 → 右键
     RIGHT_DRAG,     // 双指长按 → 右键拖拽
     MIDDLE,         // 三指按下 → 中键
+    THREE_SWIPE,    // 三指滑动 → 组合键（上/下/左/右，由外层转译）
 }
 
 /**
@@ -42,6 +43,9 @@ enum class GestureFeedback {
 class GestureEngine(private val sink: TouchpadSink) {
     /** 手势里程碑回调（震动 / 声音）。引擎层不碰 Android API，由外层注入实现。 */
     var onFeedback: ((GestureFeedback) -> Unit)? = null
+
+    /** 三指滑动方向回调（0上 1下 2左 3右）：鼠标/无线链路 Windows 看不见手指，由外层转译组合键 */
+    var onThreeSwipe: ((Int) -> Unit)? = null
 
     var sensitivity = 1.0f
     var scrollStep = 1
@@ -347,12 +351,31 @@ class GestureEngine(private val sink: TouchpadSink) {
                 sink.send(TouchpadFrame(0, 0, pendingButtons, wheel = w, pan = p, tsNs = ev.eventTime * 1_000_000L))
             }
             3 -> {
-                // (d) 三指**有位移**才发中键按下；静止三指留给「三指点按」，
-                //     由 ACTION_POINTER_UP 的 3→2 抬起沿补发中键按下+抬起。
-                if (pendingButtons and 0x04 == 0 && threeDownTime > 0L) {
+                // 三指阶梯判定（反馈#8：旧实现 moved≥12px 一律进中键，三指滑动全被吃掉）：
+                //   ≥ SWIPE_MIN      → 三指滑动（单次，转译组合键；Windows 鼠标链路看不见手指）
+                //   [TAP_SLOP, 60)   → 中键按住（原行为保留，中键拖拽仍可用）
+                //   < TAP_SLOP       → 静止三指，留给「三指点按」由 3→2 抬起沿补发
+                if (threeDownTime > 0L) {
                     val (cx, cy) = centroid(ev)
-                    val moved3 = hypot((cx - threeDownX).toDouble(), (cy - threeDownY).toDouble())
-                    if (moved3 >= TAP_SLOP) {
+                    val dx3 = cx - threeDownX
+                    val dy3 = cy - threeDownY
+                    val dist = hypot(dx3.toDouble(), dy3.toDouble())
+                    if (dist >= SWIPE_MIN) {
+                        if (pendingButtons and 0x04 != 0) {
+                            pendingButtons = pendingButtons and 0x04.inv()
+                            sink.send(TouchpadFrame(0, 0, pendingButtons, tsNs = ev.eventTime * 1_000_000L))
+                        }
+                        val dir = if (Math.abs(dx3) >= Math.abs(dy3)) {
+                            if (dx3 > 0f) 3 else 2
+                        } else {
+                            if (dy3 > 0f) 1 else 0
+                        }
+                        onThreeSwipe?.invoke(dir)
+                        onFeedback?.invoke(GestureFeedback.THREE_SWIPE)
+                        gestureConsumed = true
+                        threeDownTime = 0L
+                        com.allperiph.shared.util.Log.i("GestureEngine", "3-finger swipe dir=$dir")
+                    } else if (dist >= TAP_SLOP && pendingButtons and 0x04 == 0 && !gestureConsumed) {
                         pendingButtons = pendingButtons or 0x04
                         sink.send(TouchpadFrame(0, 0, pendingButtons, tsNs = ev.eventTime * 1_000_000L))
                         onFeedback?.invoke(GestureFeedback.MIDDLE)
@@ -380,6 +403,8 @@ class GestureEngine(private val sink: TouchpadSink) {
 
     companion object {
         private const val TAP_SLOP = 12f
+        /** 三指滑动起步阈值：与点按(12)/中键拖拽拉开档次，60px 主轴明确才触发 */
+        private const val SWIPE_MIN = 60f
         private const val TAP_MS = 350L
         private const val LONG_PRESS_MS = 550L
     }

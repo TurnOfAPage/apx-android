@@ -6,6 +6,7 @@ import com.allperiph.core.ModuleContext
 import com.allperiph.core.ModuleId
 import com.allperiph.core.ModuleState
 import com.allperiph.core.Uplink
+import com.allperiph.hid.HidKeys
 
 /**
  * 触控板模块：USB 有线 Precision Touchpad + 无线（蓝牙 HID TLC）触控板。
@@ -148,6 +149,16 @@ class TouchpadModule : Module {
             override fun send(f: TouchpadFrame) { dispatch(ctx, f) }
         })
         eng.onFeedback = { kind -> onGestureFeedback(kind) }
+        // 反馈#8：三指滑动 → Windows 手势组合键（鼠标报告链路看不见手指，只能端上转译）
+        eng.onThreeSwipe = { dir ->
+            val combo = when (dir) {
+                0 -> HidKeys.Combo("3指上", HidKeys.MOD_ALT, 0x2B)                       // Alt+Tab 切换应用
+                1 -> HidKeys.Combo("3指下", HidKeys.MOD_WIN, 0x07)                       // Win+D 显示桌面
+                2 -> HidKeys.Combo("3指左", HidKeys.MOD_CTRL or HidKeys.MOD_WIN, 0x50)   // Ctrl+Win+← 切桌面
+                else -> HidKeys.Combo("3指右", HidKeys.MOD_CTRL or HidKeys.MOD_WIN, 0x4F)
+            }
+            HidKeys.combo(combo)
+        }
         engineRef.set(eng)
         state = ModuleState.RUNNING
         Log.i(TAG, "触控板模块已启动")
@@ -202,6 +213,31 @@ class TouchpadModule : Module {
             android.view.MotionEvent.ACTION_CANCEL ->
                 sendDigitizerReport(ctx, false, 0f, 0f)
         }
+    }
+
+    // ———— 反馈#8：物理触摸板指针直通（蓝牙触摸板 → 本机 → 电脑） ————
+    private var ptrFracX = 0f
+    private var ptrFracY = 0f
+    private var ptrWheelAcc = 0f
+    private var ptrPanAcc = 0f
+    private var ptrButtons = 0
+
+    /**
+     * 物理触摸板（BT 指针设备）的相对位移/按键/滚轮直通：由 PhysKeyBridge
+     * 在 dispatchGenericMotionEvent 里喂入，直接走 [dispatch] 三出口（与手势同链路）。
+     * 不经 GestureEngine —— 指针是设备已归一化好的，端上不再做手势识别（除滚轮轴累加）。
+     */
+    fun feedPointer(dx: Float, dy: Float, buttons: Int, wheel: Float, pan: Float, tsNs: Long) {
+        val ctx = ctxRef ?: return
+        ptrFracX += dx; ptrFracY += dy
+        ptrWheelAcc += wheel; ptrPanAcc += pan
+        val idx = ptrFracX.toInt().coerceIn(-127, 127); ptrFracX -= idx
+        val idy = ptrFracY.toInt().coerceIn(-127, 127); ptrFracY -= idy
+        val w = ptrWheelAcc.toInt().coerceIn(-127, 127); ptrWheelAcc -= w
+        val p = ptrPanAcc.toInt().coerceIn(-127, 127); ptrPanAcc -= p
+        if (idx == 0 && idy == 0 && w == 0 && p == 0 && buttons == ptrButtons) return
+        ptrButtons = buttons
+        dispatch(ctx, TouchpadFrame(idx, idy, buttons, wheel = w, pan = p, tsNs = tsNs))
     }
 
     /**

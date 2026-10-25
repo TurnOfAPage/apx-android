@@ -22,6 +22,10 @@
   无 root 降级本进程日志
 - **各端平台客户端与功能总表**：新增 `docs/CLIENTS.md`（反馈#5），README 文档表已挂链
 - **本文件回填 v212~v217**（反馈#6）；CI 新增常驻 `repo-edit` 大文件锚点编辑器
+- **物理触摸板指针映射（反馈#8 Q1）**：蓝牙触摸板 → 电脑，hover 相对化 + 按键 + 滚轮
+  直通三出口（PhysKeyBridge 增拦 dispatchGenericMotionEvent，TouchpadModule 增 feedPointer）
+- **三指滑动手势（反馈#8 Q2）**：GestureEngine 三指阶梯判定 —— ≥60px 主轴明确为滑动
+  （上=Alt+Tab、下=Win+D、左右=Ctrl+Win+←/→），[12,60) 保留中键按住、点按仍为中键
 
 ---
 

@@ -62,6 +62,10 @@ internal class PhysKeyBridge(private val act: Activity) {
     private inner class Wrapper(private val delegate: Window.Callback) : Window.Callback by delegate {
         override fun dispatchKeyEvent(event: KeyEvent): Boolean =
             if (forward(event)) true else delegate.dispatchKeyEvent(event)
+
+        // 反馈#8：物理触摸板也桥接 —— hover=移动、click=按键、滚轮轴=滚动（Q1）
+        override fun dispatchGenericMotionEvent(event: android.view.MotionEvent): Boolean =
+            if (forwardPointer(event)) true else delegate.dispatchGenericMotionEvent(event)
     }
 
     /** @return true = 已转发/已消费；false = 放行给手机本地 */
@@ -95,6 +99,48 @@ internal class PhysKeyBridge(private val act: Activity) {
         if (action == KeyEvent.ACTION_DOWN) {
             HidKeys.combo(HidKeys.Combo("", heldMods or metaMod(event.metaState), usage))
         }
+        return true
+    }
+
+    // ———— 反馈#8：物理触摸板指针状态 ————
+    private var lastGX = Float.NaN
+    private var lastGY = Float.NaN
+
+    /**
+     * Q1 触摸板映射：Android 把 BT 指针设备读成系统光标，窗口收到的是
+     * **绝对 hover 坐标 + buttonState + 滚轮轴**；这里换算相对位移直通
+     * [com.allperiph.touchpad.TouchpadModule.feedPointer]（三出口与手势同链路）。
+     * 注：光标离开本窗口（分屏/悬浮球未开）时收不到 hover，回到窗口再续上，
+     * 800px 跳变按「重入」处理不转发，避免甩屏误动。
+     * @return true = 已消费（系统光标照常移动，App 内不再做本地 hover 响应）
+     */
+    private fun forwardPointer(event: android.view.MotionEvent): Boolean {
+        val src = event.source
+        val isPointer = src and android.view.InputDevice.SOURCE_MOUSE != 0 ||
+            src and android.view.InputDevice.SOURCE_TOUCHPAD != 0
+        if (!isPointer) return false
+        if (act.currentFocus is EditText) return false   // 本地输入态：触摸板先伺候手机
+        if (!ready()) return false                        // 没连电脑：就是普通触摸板/鼠标
+        val mod = AgentController.module(ModuleId.TOUCHPAD) as? com.allperiph.touchpad.TouchpadModule
+            ?: return false
+        val x = event.x
+        val y = event.y
+        var dx = 0f
+        var dy = 0f
+        if (!lastGX.isNaN()) {
+            dx = x - lastGX; dy = y - lastGY
+            if (kotlin.math.abs(dx) > 800f || kotlin.math.abs(dy) > 800f) { dx = 0f; dy = 0f } // 重入不甩
+        }
+        lastGX = x; lastGY = y
+        // buttonState 位与 TouchpadFrame 约定天然一致：primary=1 secondary=2 tertiary=4
+        val btn = event.buttonState and 0x07
+        val v = event.getAxisValue(android.view.MotionEvent.AXIS_VSCROLL)
+        val h = event.getAxisValue(android.view.MotionEvent.AXIS_HSCROLL)
+        val moving = dx != 0f || dy != 0f || v != 0f || h != 0f
+        val clicked = event.actionMasked == android.view.MotionEvent.ACTION_DOWN ||
+            event.actionMasked == android.view.MotionEvent.ACTION_UP
+        if (!moving && !clicked) return true
+        mod.feedPointer(dx, dy, btn, v, h, event.eventTime * 1_000_000L)
         return true
     }
 
