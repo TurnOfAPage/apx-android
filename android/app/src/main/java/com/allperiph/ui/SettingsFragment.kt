@@ -557,6 +557,20 @@ class SettingsFragment : Fragment() {
         tvBox.addView(settingRow(getString(R.string.ui_main_label_log_view), getString(R.string.ui_common_open), accent) { showLogs() })
         // 反馈#4：环形缓冲只留「日志级别」，信息量不够 —— 这里给全进程/内核 tag 的真 logcat
         tvBox.addView(settingRow(getString(R.string.ui_main_label_logcat), getString(R.string.ui_common_open), accent) { showLogcat() })
+        // 反馈#7：悬浮球 —— 独立 overlay 触控板（绕开 HyperOS 小窗失焦不能输入）；无权限先跳授权
+        tvBox.addView(
+            settingRow(
+                getString(R.string.ui_main_label_floating_ball),
+                getString(
+                    if (FloatingBallService.isRunning) R.string.ui_main_floating_ball_on
+                    else R.string.ui_main_floating_ball_off,
+                ),
+                accent,
+            ) {
+                FloatingBallService.requestToggle(it.context)
+                renderTv()
+            },
+        )
         // 最近连过的设备（ConnectHistory 持久化，v196）：点一下直接重连，不用重新挑设备。
         //   这段曾加在 MainActivity.renderTv() 里，而那个方法后来改成转发到本 Fragment ——
         //   随之被一起丢掉了（ConnectHistory 只写不读、文案零引用），现在补在真正的渲染方。

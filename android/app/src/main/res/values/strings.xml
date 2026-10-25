@@ -334,4 +334,10 @@
     <string name="ui_main_btn_settings_entry">设置</string>
     <string name="ui_main_btn_settings_back">返回</string>
     <string name="ui_main_label_logcat">Logcat 系统日志</string>
+    <string name="ui_main_label_floating_ball">悬浮球</string>
+    <string name="ui_main_floating_ball_on">已开启</string>
+    <string name="ui_main_floating_ball_off">未开启</string>
+    <string name="ui_main_floating_ball_note">单击展开触控板，长按关闭</string>
+    <string name="ui_main_floating_ball_hint">单指移动 · 双指滚动 · 三指滑动</string>
+    <string name="ui_main_floating_ball_collapse">收起</string>
 </resources>

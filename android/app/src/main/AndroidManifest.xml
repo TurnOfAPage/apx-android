@@ -186,6 +186,13 @@
             android:stopWithTask="false"
             android:foregroundServiceType="connectedDevice" />
 
+        <!-- 反馈#7：悬浮球 —— 独立 overlay 触控板窗口（HyperOS 小窗失焦不派发输入的绕行） -->
+        <service
+            android:name=".ui.FloatingBallService"
+            android:exported="false"
+            android:stopWithTask="false"
+            android:foregroundServiceType="connectedDevice" />
+
         <!--
           ⑦ HID 绑定（v1.19）：被电脑绑定后弹授权弹窗。
         -->
