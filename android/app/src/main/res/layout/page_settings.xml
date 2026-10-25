@@ -145,7 +145,7 @@
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
                 android:text="触摸板光标锁定
-开启后系统光标不随触控板移动，仅转发到电脑（Pad 防误触）"
+连上电脑后本窗隐藏系统光标，触控板点击只转发到电脑（Pad 防误触）"
                 android:textColor="#DD000000"
                 android:textSize="14sp" />
 

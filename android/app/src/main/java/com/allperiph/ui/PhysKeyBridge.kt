@@ -64,8 +64,14 @@ internal class PhysKeyBridge(private val act: Activity) {
             if (forward(event)) true else delegate.dispatchKeyEvent(event)
 
         // 反馈#8：物理触摸板也桥接 —— hover=移动、click=按键、滚轮轴=滚动（Q1）
-        override fun dispatchGenericMotionEvent(event: android.view.MotionEvent): Boolean =
-            if (forwardPointer(event)) true else delegate.dispatchGenericMotionEvent(event)
+        // 批F：光标锁定（issue#44）——已转发（连上+在管）时隐藏本窗系统光标，放行即恢复
+        override fun dispatchGenericMotionEvent(event: android.view.MotionEvent): Boolean {
+            val handled = forwardPointer(event)
+            val isPointer = event.source and android.view.InputDevice.SOURCE_MOUSE != 0 ||
+                event.source and android.view.InputDevice.SOURCE_TOUCHPAD != 0
+            if (isPointer) applyCursorLock(handled)
+            return if (handled) true else delegate.dispatchGenericMotionEvent(event)
+        }
     }
 
     /** @return true = 已转发/已消费；false = 放行给手机本地 */
@@ -105,6 +111,18 @@ internal class PhysKeyBridge(private val act: Activity) {
     // ———— 反馈#8：物理触摸板指针状态 ————
     private var lastGX = Float.NaN
     private var lastGY = Float.NaN
+
+    /** 批F：光标锁定（issue#44）——已转发（连上+在管）→ 本窗隐藏系统光标；状态边沿才 setter */
+    private var lastLockApplied: Boolean? = null
+    private fun applyCursorLock(lock: Boolean) {
+        val on = lock && act.getSharedPreferences("apx", android.content.Context.MODE_PRIVATE)
+            .getBoolean("cursor_lock", true)
+        if (lastLockApplied == on) return
+        lastLockApplied = on
+        act.window.decorView.pointerIcon =
+            if (on) android.view.PointerIcon.getSystemIcon(act, android.view.PointerIcon.TYPE_NULL)
+            else null
+    }
 
     /**
      * Q1 触摸板映射：Android 把 BT 指针设备读成系统光标，窗口收到的是
