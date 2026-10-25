@@ -87,6 +87,10 @@
   摇杆与手柄按钮全走降级路径。修法：`project(apx_jni LANGUAGES C CXX)`（tv 工程本来就是 C，
   所以只有手机端中招）。并新增 CI 关卡「Verify native JNI symbols in APKs」——
   构建完直接拆 APK 验符号，这类"编译通过但产物缺东西"的问题以后拦在 CI 里
+- **悬浮球面板深色取色（issue#44）**：展开的触控板面板底色是 `bg_card`（= `md_surface`，
+  深色下变暗），而标题/提示/收起三处文字写死 `#DD000000` / `#66000000` / `#88000000` ——
+  深色模式下黑字压深底，整块面板看不清。改用 `md_on_surface` / `md_on_surface_variant` /
+  `md_primary` 令牌
 - **深色模式取色修复（issue#44）**：副屏 / 手柄 / 文件 / 快捷 / 本地发送 / 被控输入
   6 个 Activity 与悬浮球此前**没接** `ThemePref`，用户选「深色」时它们仍按系统 uiMode
   取色（亮底亮字看不清）——现在全部接上同一套注入，悬浮球配色也令牌化

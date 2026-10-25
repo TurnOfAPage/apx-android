@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- 悬浮球展开态：底部 300dp 半透触控板面板（反馈#7）。
-     面板外屏幕区域不受影响（窗口 FLAG_NOT_TOUCH_MODAL），Pad 可一边用别的应用一边触控。 -->
+     面板外屏幕区域不受影响（窗口 FLAG_NOT_TOUCH_MODAL），Pad 可一边用别的应用一边触控。
+     ⚠️ 配色一律走 @color/md_* 令牌：面板底是 @drawable/bg_card（= md_surface，
+     深色下变暗），此前文字写死 #DD000000 / #66000000 / #88000000 —— 深色模式里
+     黑字压深底，整块面板看不清（issue#44「悬浮球深色取色异常」）。 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
@@ -26,7 +29,7 @@
             android:text="@string/ui_main_label_floating_ball"
             android:textSize="14sp"
             android:textStyle="bold"
-            android:textColor="#DD000000" />
+            android:textColor="@color/md_on_surface" />
 
         <TextView
             android:id="@+id/tvPanelHint"
@@ -35,7 +38,7 @@
             android:layout_marginStart="10dp"
             android:text="@string/ui_main_floating_ball_hint"
             android:textSize="12sp"
-            android:textColor="#66000000" />
+            android:textColor="@color/md_on_surface_variant" />
 
         <View
             android:layout_width="0dp"
@@ -49,7 +52,7 @@
             android:padding="10dp"
             android:text="@string/ui_main_floating_ball_collapse"
             android:textSize="13sp"
-            android:textColor="#88000000"
+            android:textColor="@color/md_primary"
             android:clickable="true"
             android:focusable="true" />
     </LinearLayout>
