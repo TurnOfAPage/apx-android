@@ -188,6 +188,13 @@ class SettingsFragment : Fragment() {
     fun setupSettingsTabs() {
         if (!ensureViews()) return
         val act = activity ?: return
+        // 批E：触摸板光标锁定开关（issue#44）；默认开，写 apx prefs 供触控板链路读取
+        val cursorLockSwitch = act.findViewById<android.widget.Switch>(R.id.switchCursorLock)
+        val apxPrefs = act.getSharedPreferences("apx", android.content.Context.MODE_PRIVATE)
+        cursorLockSwitch?.isChecked = apxPrefs.getBoolean("cursor_lock", true)
+        cursorLockSwitch?.setOnCheckedChangeListener { _, isChecked ->
+            apxPrefs.edit().putBoolean("cursor_lock", isChecked).apply()
+        }
         // 反馈#10 批 B（方案 B）：首页 = 分类列表，点行进二级页，返回行回首屏。
         // 分组容器复用原四个 group*，另加帮助组 groupHelp；原四分段 tab 已删。
         val categories = listOf(

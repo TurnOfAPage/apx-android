@@ -43,6 +43,9 @@
   原文搬进帮助组新卡（功能说明 / 三步上手）；boxIdleFeatures 保留透明空壳
   （Kotlin 整卡引用：找不到会 ensureViews 失败 / lateinit NPE），三步卡无 id 直接删；
   单行提示与运行时诊断语境文字保留
+- **触摸板光标锁定（批 E · issue#44）**：设置页新增「触摸板光标锁定」开关
+  （默认开启，pref=cursor_lock），Pad 上系统光标不再随触控板移动、防误触；
+  仅关本地 pointer，PC 转发不受影响
 - **Header 标题防挤竖排（issue#43 图1 · 批 D）**：顶栏标题/副说明加
   singleLine+ellipsize——右侧按钮拥挤时不再逐字竖排（v218 散落字符根因，
   v219 已删 segPages 分页钮大幅缓解，本条为防复发双保险）

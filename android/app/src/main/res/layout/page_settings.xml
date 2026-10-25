@@ -129,6 +129,33 @@
             android:layout_height="wrap_content"
             android:orientation="vertical">
 
+        <!-- 批E：触摸板光标锁定（issue#44 · pad 光标跟随误触）；默认开 + 自动保存 -->
+        <LinearLayout
+            android:id="@+id/rowCursorLock"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:padding="12dp"
+            android:background="@drawable/bg_card"
+            android:layout_marginBottom="6dp">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="触摸板光标锁定
+开启后系统光标不随触控板移动，仅转发到电脑（Pad 防误触）"
+                android:textColor="#DD000000"
+                android:textSize="14sp" />
+
+            <Switch
+                android:id="@+id/switchCursorLock"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:checked="true" />
+        </LinearLayout>
+
         <!-- 快捷键模板：默认折叠，只显示当前这一套 -->
         <TextView
             style="@style/APSectionTitle"
