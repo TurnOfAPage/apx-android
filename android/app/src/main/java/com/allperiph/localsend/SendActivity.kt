@@ -12,6 +12,7 @@ import android.widget.ArrayAdapter
 import android.widget.ListView
 import android.widget.TextView
 import android.widget.Toast
+import com.allperiph.R
 
 /**
  * LocalSend 发送页（MVP2 · issue#45）：
