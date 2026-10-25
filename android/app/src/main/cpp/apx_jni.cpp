@@ -10,6 +10,7 @@
 #include <cerrno>
 #include <cstdint>
 #include <cstring>
+#include <time.h>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -178,7 +179,7 @@ Java_com_allperiph_core_ApxNative_packImuBatch(JNIEnv* env, jobject, jint sensor
     jfloat* src = env->GetFloatArrayElements(xyz, nullptr);
     if (src == nullptr) return nullptr;
     std::vector<float> vals(static_cast<size_t>(need));
-    for (jsize i = 0; i < need; ++i) vals[static_cast<size_t>(i)] = static_cast<float>(src[i]);
+    for (jsize i = 0; i < need; ++i) vals[static_cast<size_t>(i)] = src[i];
     env->ReleaseFloatArrayElements(xyz, src, JNI_ABORT);
 
     std::vector<uint8_t> buf(apx::kSizeImuBatchReport);
@@ -291,8 +292,8 @@ Java_com_allperiph_core_ApxNative_crc32(JNIEnv* env, jobject, jbyteArray data) {
 // **读与写必须用两个 fd**：FFS 的端点方向在描述符里就固定（IN / OUT），单个 epN
 // 文件只能单向使用；而上层 BulkTransport 要求同一通道既能收 video（读）又能发
 // touch（写）。因此：
-//   rx = FFS 的 OUT 端点 → PC 下行（video / ctrl）
-//   tx = FFS 的 IN  端点 → 手机上行（touch / telemetry）
+//   rx = FfsChannel 的 OUT 端点 → PC 下行（video / ctrl）
+//   tx = FfsChannel 的 IN  端点 → 手机上行（touch / telemetry）
 //
 // 默认路径 /dev/usb-ffs/apx/ep1（rx）与 ep2（tx），与 FfsChannel 写入的描述符一致；
 // 可用 nativeSetPaths 覆盖。所有 streamId 复用同一对物理端点，按 §3 帧头里的
@@ -576,7 +577,7 @@ int alsaOpenStream(const char* path, bool playback, unsigned rate, unsigned chan
 
     struct snd_pcm_hw_params hw;
     // 先整体置「任意」再覆写目标值。理由见 alsaParamsAny 注释：
-    // 只 memset(0) 会把 SAMPLE_BITS/FRAME_BITS 等未涉及的参数约束成 0，
+    // 只 memset(0) 会让 SAMPLE_BITS/FRAME_BITS 等未涉及的参数约束成 0，
     // HW_PARAMS 逐个校验时判定不可满足 → EINVAL。
     alsaParamsAny(&hw);
     alsaSetMask(&hw.masks[SNDRV_PCM_HW_PARAM_ACCESS - SNDRV_PCM_HW_PARAM_FIRST_MASK],
@@ -651,13 +652,26 @@ Java_com_allperiph_core_AlsaPcm_nativeWrite(JNIEnv* env, jobject, jint fd, jbyte
     if (n <= 0) return 0;
     std::vector<uint8_t> buf(static_cast<size_t>(n));
     env->GetByteArrayRegion(src, 0, n, reinterpret_cast<jbyte*>(buf.data()));
+    // 缓冲满（主机未取走）时 EAGAIN 必须**节流后重试**：原实现 `EAGAIN → continue`
+    // 是零等待自旋 —— 主机不读 USB 麦克风流时，apx-audio-tx 线程把一个大核钉在全频
+    // （v217 实测「USB 模式锁 2 个大核满载」之其二，另一处在 nativeRead）。
+    // 1ms 一次、总预算 100ms（10 帧）；超预算返回 -EAGAIN 丢掉本帧，
+    // 既让出 CPU 也保证 stop() 的 join(800) 能及时收掉线程。
     ssize_t off = 0;
+    int eagainSleeps = 0;
     while (off < n) {
         const ssize_t w = ::write(fd, buf.data() + off, static_cast<size_t>(n) - off);
         if (w < 0) {
-            if (errno == EAGAIN || errno == EINTR) continue;
+            if (errno == EINTR) continue;
+            if (errno == EAGAIN) {
+                if (++eagainSleeps > 100) return -EAGAIN;
+                struct timespec ts = {0, 1000000L};  // 1ms
+                nanosleep(&ts, nullptr);
+                continue;
+            }
             return -errno;
         }
+        eagainSleeps = 0;
         off += w;
     }
     return static_cast<jint>(off);
@@ -670,9 +684,14 @@ Java_com_allperiph_core_AlsaPcm_nativeRead(JNIEnv* env, jobject, jint fd, jbyteA
     if (cap <= 0) return 0;
     std::vector<uint8_t> buf(static_cast<size_t>(cap));
     ssize_t n;
+    // EAGAIN（暂无数据）**立即返回**，绝不自旋重试：fd 是 O_NONBLOCK，
+    // 主机不发流时 read 恒 EAGAIN，原实现 `while (n<0 && (EAGAIN||EINTR))`
+    // 让 apx-audio-rx 线程在 native 里零等待空转，一个大核被钉满
+    // （v217 实测「USB 模式锁 2 个大核满载」之其一）。
+    // 改由 Kotlin 侧收到 -EAGAIN 后节流休眠（AudioModule rx 循环）。
     do {
         n = ::read(fd, buf.data(), static_cast<size_t>(cap));
-    } while (n < 0 && (errno == EAGAIN || errno == EINTR));
+    } while (n < 0 && errno == EINTR);
     if (n < 0) return -errno;
     if (n > 0) {
         env->SetByteArrayRegion(dst, 0, static_cast<jsize>(n),
@@ -691,13 +710,13 @@ Java_com_allperiph_core_AlsaPcm_nativeClose(JNIEnv*, jobject, jint fd) {
 
 #endif  // APX_HAVE_ALSA_UAPI
 
-// ========================== core.FfsChannel ===============================
+// =============================== core.FfsChannel ===============================
 // FunctionFS：副屏的 bulk 数据面（video 下行 / touch 上行）。
 //
 // 与 f_hid / f_acm 的本质差异：FFS 在 configfs 里**不自带** interface 与 endpoint
 // 声明 —— 接口/端点描述符必须由**用户态写 ep0** 提供。内核在 `ffs_func_bind()` 里
 // 会等待描述符就绪（`wait_event_interruptible`），因此 `write(ep0)` 会**阻塞到
-// UDC 绑定完成**才返回。必须放独立线程里调用，绝不能挡在挂载流程中间。
+// UDC 绑定完成**才返回。必须放独立线程里执行，绝不能挡在挂载流程中间。
 //
 // 端点分配（2 个 bulk 端点，各 streamId 复用，按 §3 帧头的 streamId 字段分流）：
 //   ep1 = OUT（PC → 手机）：video / ctrl 下行
@@ -859,4 +878,3 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM*, void*) {
 }
 
 }  // extern "C"
-
