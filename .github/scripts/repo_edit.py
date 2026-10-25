@@ -1,110 +1,87 @@
 #!/usr/bin/env python3
 """repo-edit：大文件锚点替换编辑器。
 
-本批（批 G · 接线）：LocalSend 互传 MVP1 接入（issue#45）。
-  - Manifest：CHANGE_WIFI_MULTICAST_STATE + FOREGROUND_SERVICE_DATA_SYNC 权限；
-    LocalSendService 注册（dataSync 类型，紧随 FloatingBallService 块）
-  - page_settings：groupRemote（遥控·工具二级页）尾部加「互传（LocalSend）」开关行
-  - SettingsFragment：开关读写 pref localsend_enabled，开=启动服务关=停止（复用批E apxPrefs）
-  - CHANGELOG 补条
-新文件三件套已直推：LocalSendProtocol / LocalSendHttpServer / LocalSendService。
+本批（批 H）：LocalSend MVP2 接线（issue#45 发送端）。
+  - Manifest：SendActivity 注册（紧随 LocalSendService 块）
+  - LocalSendService.onAnnounce：dedup 前回填 LocalSendClient 设备表（每次 announce 刷 lastSeen）
+  - SettingsFragment：rowLocalSend 点行 → 打开发送页（Switch 独立管开关）
+  - page_settings：互传行副题更新（开关=接收；点行=发送）
+  - CHANGELOG 补 MVP2 条
+新文件已直推：LocalSendClient / SendActivity / page_localsend_send.xml。
 
-⚠ 锚点铁律（run#5/#14 实锤）：锚点以双引号收尾必须先换行再闭三引号。
+⚠ 锚点铁律：锚点以双引号收尾必须先换行再闭三引号。
 两阶段：①按期望次数全量校验；②全过才写盘。
 """
 import sys
 
-LOCALSEND_ROW = """        <!-- 互传（LocalSend）：局域网跨生态收文件（issue#45 · MVP1），默认关 -->
-        <LinearLayout
-            android:id="@+id/rowLocalSend"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical"
-            android:padding="12dp"
-            android:background="@drawable/bg_card"
-            android:layout_marginBottom="6dp">
-
-            <TextView
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="互传（LocalSend）\n电脑/其他平台 LocalSend 直发，文件落 Download/LocalSend"
-                android:textColor="#DD000000"
-                android:textSize="14sp" />
-
-            <Switch
-                android:id="@+id/switchLocalSend"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:checked="false" />
-        </LinearLayout>
-
-"""
-
-KOTLIN_LS = """        // 批G：LocalSend 互传开关（issue#45）——开=启动接收前台服务，关=停止
-        val localSendSwitch = act.findViewById<android.widget.Switch>(R.id.switchLocalSend)
-        localSendSwitch?.isChecked = apxPrefs.getBoolean("localsend_enabled", false)
-        localSendSwitch?.setOnCheckedChangeListener { _, isChecked ->
-            apxPrefs.edit().putBoolean("localsend_enabled", isChecked).apply()
-            if (isChecked) com.allperiph.localsend.LocalSendService.start(act)
-            else com.allperiph.localsend.LocalSendService.stop(act)
-        }
-"""
-
 EDITS = [
     ("android/app/src/main/AndroidManifest.xml", [
-        ("""    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
-""",
-         """    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
-
-    <!-- LocalSend 互传：UDP 多播需 MulticastLock，否则 Wi-Fi 省电丢 announce -->
-    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
-    <!-- LocalSend 接收前台服务（Android 14+ dataSync 类型必需） -->
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
-""", 1),
-        ("""        <service
-            android:name=".ui.FloatingBallService"
-            android:exported="false"
-            android:stopWithTask="false"
-            android:foregroundServiceType="connectedDevice" />
-""",
-         """        <service
-            android:name=".ui.FloatingBallService"
-            android:exported="false"
-            android:stopWithTask="false"
-            android:foregroundServiceType="connectedDevice" />
-
-        <!-- LocalSend 互传接收（issue#45 MVP1）：UDP 发现 + HTTP 接收，落 Download/LocalSend -->
+        ("""        <!-- LocalSend 互传接收（issue#45 MVP1）：UDP 发现 + HTTP 接收，落 Download/LocalSend -->
         <service
             android:name=".localsend.LocalSendService"
             android:exported="false"
             android:stopWithTask="false"
             android:foregroundServiceType="dataSync" />
+""",
+         """        <!-- LocalSend 互传接收（issue#45 MVP1）：UDP 发现 + HTTP 接收，落 Download/LocalSend -->
+        <service
+            android:name=".localsend.LocalSendService"
+            android:exported="false"
+            android:stopWithTask="false"
+            android:foregroundServiceType="dataSync" />
+
+        <!-- LocalSend 发送页（issue#45 MVP2） -->
+        <activity
+            android:name=".localsend.SendActivity"
+            android:exported="false"
+            android:label="LocalSend 发送" />
 """, 1),
     ]),
-    ("android/app/src/main/res/layout/page_settings.xml", [
-        ("        </LinearLayout><!-- /groupRemote -->\n",
-         LOCALSEND_ROW + """        </LinearLayout><!-- /groupRemote -->
+    ("android/app/src/main/java/com/allperiph/localsend/LocalSendService.kt", [
+        ("""        if (msg.optString("fingerprint") == LocalSendProtocol.fingerprint) return
+        if (msg.optString("protocol", "http") != "http") return
+        val port = msg.optInt("port", 0); if (port !in 1..65535) return
+        val fp = msg.optString("fingerprint", ip)
+""",
+         """        if (msg.optString("fingerprint") == LocalSendProtocol.fingerprint) return
+        if (msg.optString("protocol", "http") != "http") return
+        val port = msg.optInt("port", 0); if (port !in 1..65535) return
+        // 批H：每次 announce 都刷新发送端设备表（置于 dedup 前，lastSeen 才不过期）
+        LocalSendClient.onAnnounce(msg, ip)
+        val fp = msg.optString("fingerprint", ip)
 """, 1),
     ]),
     ("android/app/src/main/java/com/allperiph/ui/SettingsFragment.kt", [
-        ("""        cursorLockSwitch?.setOnCheckedChangeListener { _, isChecked ->
-            apxPrefs.edit().putBoolean("cursor_lock", isChecked).apply()
+        ("""            if (isChecked) com.allperiph.localsend.LocalSendService.start(act)
+            else com.allperiph.localsend.LocalSendService.stop(act)
         }
 """,
-         """        cursorLockSwitch?.setOnCheckedChangeListener { _, isChecked ->
-            apxPrefs.edit().putBoolean("cursor_lock", isChecked).apply()
+         """            if (isChecked) com.allperiph.localsend.LocalSendService.start(act)
+            else com.allperiph.localsend.LocalSendService.stop(act)
         }
-""" + KOTLIN_LS, 1),
+        // 批H：点行主体 → 发送页（与 Switch 开关互不干扰）
+        act.findViewById<android.view.View>(R.id.rowLocalSend)?.setOnClickListener { v ->
+            v.context.startActivity(android.content.Intent(v.context, com.allperiph.localsend.SendActivity::class.java))
+        }
+""", 1),
+    ]),
+    ("android/app/src/main/res/layout/page_settings.xml", [
+        ("""                android:text="互传（LocalSend）\n电脑/其他平台 LocalSend 直发，文件落 Download/LocalSend"
+                android:textColor="#DD000000"
+                android:textSize="14sp" />
+""",
+         """                android:text="互传（LocalSend）\n开关=接收文件；点行=发送文件到电脑/其他平台"
+                android:textColor="#DD000000"
+                android:textSize="14sp" />
+""", 1),
     ]),
     ("docs/CHANGELOG.md", [
-        ("  行为，App 无权干预（根治需 root evdev grab，后续另立批次）\n",
-         """  行为，App 无权干预（根治需 root evdev grab，后续另立批次）
-- **LocalSend 互传接入（批 G · issue#45 MVP1）**：新模块 localsend（协议参数层/
-  极简 HTTP server/接收端前台服务），UDP 多播 224.0.0.167:53317 发现 + register 应答，
-  与官方 LocalSend 各平台互通；设置→遥控·工具 新增「互传」开关（默认关），
-  文件落系统 Download/LocalSend（MediaStore，免权限），完成/失败均有通知
+        ("  文件落系统 Download/LocalSend（MediaStore，免权限），完成/失败均有通知\n",
+         """  文件落系统 Download/LocalSend（MediaStore，免权限），完成/失败均有通知
+- **LocalSend 发送端（批 H · MVP2）**：新增 LocalSendClient（三步推送 register→
+  prepare-upload（预算 sha256）→ 逐文件流式 upload）与 SendActivity 发送页；
+  互传行点行进发送页（设备列表来自 announce，2s 刷新，点设备选文件多选）；
+  触控开关保留为接收开关——开关=接收、点行=发送
 """, 1),
     ]),
 ]
