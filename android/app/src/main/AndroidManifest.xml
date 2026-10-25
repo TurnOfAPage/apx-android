@@ -156,14 +156,15 @@
 
         <!--
           ④ 游戏手柄（双摇杆，v1.19）
-          结构：底栏（十字键/摇杆切换）+ 摇杆区域 + 功能键区。
-          横屏布局见 res/layout-land/activity_gamepad.xml（沉浸全屏）。
+          结构：双摇杆 + A/B/X/Y + 肩键；UI 全部由代码构建，没有对应的 layout 文件。
+          坐标按 **800×360dp 横屏**核算（见 GamepadActivity 里 A/B/X/Y 的 setMargins 注释），
+          所以强制横屏 —— 此前写的 sensor，竖屏进来时那套坐标会挤成一团。
         -->
         <activity
             android:name=".ui.GamepadActivity"
             android:exported="false"
             android:launchMode="singleTask"
-            android:screenOrientation="sensor"
+            android:screenOrientation="landscape"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|density|keyboardHidden|uiMode"
             android:windowSoftInputMode="stateHidden|adjustResize"
             android:theme="@style/Theme.AllPeriph.Miuix.Fullscreen" />

@@ -129,6 +129,28 @@
             android:layout_height="wrap_content"
             android:orientation="vertical">
 
+            <!-- 链路诊断（原状态块「连接状态」卡内容）：root / USB 速度 / UDC / 服务 /
+                 电池白名单五行，行的构建在 StatusFragment.buildLinkRows。 -->
+            <LinearLayout
+                style="@style/APCard"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/card_link"
+                    android:textAppearance="@style/APTextSubtitle" />
+
+                <LinearLayout
+                    android:id="@+id/rowsLinkHost"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:paddingTop="@dimen/space_6" />
+            </LinearLayout>
+
         <!-- 批E：触摸板光标锁定（issue#44 · pad 光标跟随误触）；默认开 + 自动保存 -->
         <LinearLayout
             android:id="@+id/rowCursorLock"

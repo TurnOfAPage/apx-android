@@ -104,6 +104,18 @@
   同时把构建失败的错误上报从 check-runs API 改成 **workflow command**（`::error::`）：
   原实现先用 gh api 查 check-run id 再 POST，实测在 job 进行中返回 404、annotation 一直没写上去；
   workflow command 由 GitHub 自动收集成 annotation，不需要任何 token 权限
+- **状态块瘦身 + 传输开关改按钮 + 手柄页强制横屏（实机反馈）**：
+  ① 撤掉「运行摘要 / 连接状态 / 跟手程度」三张卡（信息并入顶部一行），
+     首屏让给真正的操作入口；链路诊断五行搬进「通用」分组的 `rowsLinkHost`（逻辑一行没改）
+  ② 无线 / 蓝牙 / USB 从「标签 + Switch」大卡片行改成三个胶囊按钮，点一下开关，
+     开启 = 主色实底、关闭 = 中性描边；「开哪个弹哪个」的功能分组逻辑保持不动
+     新状态从 `isTransportEnabled` **回读**（开 USB 可能失败，取反会骗人）
+  ③ 手柄页 `screenOrientation` 由 `sensor` 改 `landscape` —— 它的坐标本来就是按
+     800×360dp 横屏核算的，竖屏进来会挤成一团；manifest 里那条指向
+     `layout-land/activity_gamepad.xml` 的注释也一并改对（该文件并不存在）
+- **新增 R.id 引用关卡**：代码里 `R.id.xxx` 必须在布局里有 `@+id/xxx`。
+  这类问题编译器不报，只在运行时 `findViewById` 返回 null 后炸/永不刷新 ——
+  本次瘦身就真踩了一次（删了 rowsLink 字段却在 buildLinkRows 里继续用）
 - **修旋屏崩溃：横屏转回竖屏必崩（真机复现）**：`TouchpadSplit.restore()` 里
   `page.removeAllViews()` 只摘直接子节点（left/divider/right），而 topRow/touchArea/
   chipSection/scroll 仍挂在 left/right **内部**，紧接着 `page.addView(topRow)` 抛

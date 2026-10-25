@@ -69,6 +69,14 @@
    横竖屏来回切（`TouchpadSplit` 那种运行时重排）最容易踩，2026-10 真机崩过一次。
    写法：`(v.parent as? ViewGroup)?.removeView(v)` 先摘，再挂。
 
+## 三·补二、删改视图时（最容易漏的一类）
+
+11.2 **删/改一个视图，要连带清理它的全部引用**：布局里的 id、Kotlin 里的
+   `findViewById` 与字段、以及**仍在用它的方法**。编译器不报这类问题，
+   运行时才以 `findViewById` 返回 null → NPE 或「这块 UI 永不刷新」暴露。
+   关卡 `scripts/check_ui_tokens.py` 已加「`R.id.xxx` 必须在布局里有定义」自查，
+   但「字段删了、方法还在用」仍需人眼过一遍。
+
 ## 四、对话框
 
 12. **按钮位固定**：否定在左、肯定在右。`AlertDialog` 里 `setNeutralButton` 显示在最左、

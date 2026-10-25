@@ -78,13 +78,11 @@ class StatusFragment : Fragment() {
         val act = activity ?: return false
         tvOverall = act.findViewById(R.id.tvOverall) ?: return false
         tvOverallSub = act.findViewById(R.id.tvOverallSub) ?: return false
-        swWifi = act.findViewById(R.id.swWifi) ?: return false
-        swBt = act.findViewById(R.id.swBt) ?: return false
-        swUsb = act.findViewById(R.id.swUsb) ?: return false
-        rowsLink = act.findViewById(R.id.rowsLink) ?: return false
-        tvLinkRtt = act.findViewById(R.id.tvLinkRtt) ?: return false
-        boxRunning = act.findViewById(R.id.boxRunning) ?: return false
-        tvRunningSummary = act.findViewById(R.id.tvRunningSummary) ?: return false
+        // 链路诊断行挂在设置页「通用」分组里（原状态块那张卡已撤），id 见 page_settings.xml
+        rowsLink = act.findViewById(R.id.rowsLinkHost) ?: return false
+        btnTransportWifi = act.findViewById(R.id.btnTransportWifi) ?: return false
+        btnTransportBt = act.findViewById(R.id.btnTransportBt) ?: return false
+        btnTransportUsb = act.findViewById(R.id.btnTransportUsb) ?: return false
         tvIdleHint = act.findViewById(R.id.tvIdleHint) ?: return false
         boxIdleFeatures = act.findViewById(R.id.boxIdleFeatures) ?: return false
         groupWifi = act.findViewById(R.id.groupWifi) ?: return false
@@ -109,14 +107,10 @@ class StatusFragment : Fragment() {
     // --- Status page views (in page_status.xml) ---
     private lateinit var tvOverall: TextView
     private lateinit var tvOverallSub: TextView
-    private lateinit var swWifi: Switch
-    private lateinit var swBt: Switch
-    private lateinit var swUsb: Switch
-    private lateinit var rowsLink: LinearLayout
-    private lateinit var tvLinkRtt: TextView
-    private lateinit var boxRunning: LinearLayout
-    private lateinit var tvRunningSummary: TextView
     private lateinit var tvIdleHint: TextView
+    private lateinit var btnTransportWifi: TextView
+    private lateinit var btnTransportBt: TextView
+    private lateinit var btnTransportUsb: TextView
     private lateinit var boxIdleFeatures: LinearLayout
 
     // --- Module rows (in page_settings.xml, controlled by transport toggles) ---
@@ -127,9 +121,12 @@ class StatusFragment : Fragment() {
     private lateinit var rowsBt: LinearLayout
     private lateinit var rowsUsb: LinearLayout
 
-    // --- Link status rows ---
+    // --- Link status rows（挂在设置页「通用」分组的 rowsLinkHost 里） ---
+    private lateinit var rowsLink: LinearLayout
     private lateinit var linkRows: StatusRows
     private val rowHandles = LinkedHashMap<String, StatusRows.Row>()
+
+    // --- Module rows ---
     private val moduleRows = LinkedHashMap<String, ModuleRow>()
 
     private class ModuleRow(
@@ -386,20 +383,39 @@ class StatusFragment : Fragment() {
     fun bindActions() {
         if (!ensureViews()) return
         val h = host ?: return
-        swWifi.isChecked = h.isTransportEnabled("wifi")
-        swBt.isChecked = h.isTransportEnabled("bt")
-        swUsb.isChecked = h.isTransportEnabled("usb")
-        swWifi.setOnCheckedChangeListener { _, c ->
-            Feedback.tap(swWifi)
-            onTransportToggle("wifi", c)
+        renderTransportButtons()
+        // 传输开关改成按钮：点一下翻转。
+        // 新状态从 h.isTransportEnabled **回读**，不靠本地取反 —— 开 USB 可能失败
+        // （没 root / 口被调试占用），回读才能如实反映。
+        for ((btn, kind) in transportButtons()) {
+            btn.setOnClickListener {
+                Feedback.tap(it)
+                onTransportToggle(kind, !h.isTransportEnabled(kind))
+                renderTransportButtons()
+            }
         }
-        swBt.setOnCheckedChangeListener { _, c ->
-            Feedback.tap(swBt)
-            onTransportToggle("bt", c)
-        }
-        swUsb.setOnCheckedChangeListener { _, c ->
-            Feedback.tap(swUsb)
-            onTransportToggle("usb", c)
+    }
+
+    private fun transportButtons(): List<Pair<TextView, String>> = listOf(
+        btnTransportWifi to "wifi",
+        btnTransportBt to "bt",
+        btnTransportUsb to "usb",
+    )
+
+    /**
+     * 传输按钮选中态：开启 = 主色实底 + onPrimary 文字；关闭 = 中性描边胶囊。
+     * 三处（bindActions / refresh / 点按后）都走这里，避免各写一份色值。
+     */
+    private fun renderTransportButtons() {
+        val h = host ?: return
+        val act = activity ?: return
+        for ((btn, kind) in transportButtons()) {
+            val on = h.isTransportEnabled(kind)
+            btn.setTextColor(act.getColor(if (on) R.color.md_on_primary else R.color.md_primary))
+            btn.setBackgroundResource(
+                if (on) R.drawable.bg_btn_primary else R.drawable.bg_btn_ghost
+            )
+            btn.isSelected = on
         }
     }
 
@@ -483,7 +499,9 @@ class StatusFragment : Fragment() {
             )
         }
 
-        // 设置页按传输类分组显示
+        // 传输按钮选中态（USB 可能在外部被拔掉/被系统关，每秒跟一次）
+        renderTransportButtons()
+        // 设置页按传输类分组显示：**开哪个弹哪个**（分组随按钮状态出现/消失）
         groupWifi.visibility = if (h.isTransportEnabled("wifi")) View.VISIBLE else View.GONE
         groupBt.visibility = if (h.isTransportEnabled("bt")) View.VISIBLE else View.GONE
         groupUsb.visibility = if (h.isTransportEnabled("usb")) View.VISIBLE else View.GONE
@@ -503,17 +521,9 @@ class StatusFragment : Fragment() {
 
         tvOverallSub.text = h.getEnvSummary()
 
-        // 运行摘要
-        val btRunning = AgentController.module(ModuleId.BTHID)?.state?.isActive == true
+        // 运行摘要卡已撤（那行信息并进顶部 tvOverallSub）；这里只需拿到 env 给下面的
+        // 链路行刷新用。
         val env = h.getLastEnv()
-        val usbSpeed = env?.linkSpeed ?: LinkSpeed.UNKNOWN
-        val linkText = when {
-            usbSpeed.isSuperSpeed -> getString(R.string.hint_usb_ok)
-            usbSpeed != LinkSpeed.UNKNOWN -> getString(R.string.hint_usb2)
-            btRunning -> "蓝牙已就绪，在电脑上配对后就能用"
-            else -> getString(R.string.common_unknown)
-        }
-        tvRunningSummary.text = "${h.getEnvSummary()} · $linkText"
 
         // 链路行
         rowHandles["root"]?.setValue(

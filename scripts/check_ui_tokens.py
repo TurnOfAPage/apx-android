@@ -21,7 +21,8 @@ UI 上的这些问题**编译器都不报**，只在真机上以「深色看不�
 3. 布局里 padding / layout_margin 写 dp 字面量 → 失败（0dp 与 `?attr` 放行）。
    梯度在 `values/dimens.xml`。
 4. 用了 `R.*` 却没 `import <模块 namespace>.R` → 失败（`android.R` 不算）。
-5. Kotlin/Java 里的中文文案存量 → **棘轮**：只统计 + 超基线告警，不让 CI 变红。
+5. 代码里 `R.id.xxx` 必须在布局里有对应 `@+id/xxx` → 失败（`android.R.id.*` 跳过）。
+6. Kotlin/Java 里的中文文案存量 → **棘轮**：只统计 + 超基线告警，不让 CI 变红。
    这 500+ 处分散在 UI 与各模块（模块状态串、LocalSend 结果串所在类没有 Context，
    要资源化得先注入 App 级 Context），属独立重构，不适合顺手塞进某一批。
 
@@ -134,6 +135,43 @@ def check_r_import(problems):
                                 % (os.path.relpath(p, ROOT), ns))
 
 
+def check_view_refs(problems):
+    """代码里 `R.id.xxx` 引用的 id 必须真的在布局里定义过。
+
+    为什么需要：删视图时很容易只删布局、或改错 id —— 这类问题**编译器不报**
+    （`R.id.xxx` 只要有定义就合法），运行时 `findViewById` 返回 null，接着就是 NPE
+    或「这块 UI 永远不刷新」。本仓刚发生过一次：精简状态块时删掉了 rowsLink/tvLinkRtt
+    的字段与绑定，但 buildLinkRows() 还在用 rowsLink。
+
+    只查本包自己的 `R.id.*`；`android.R.id.content` 这类系统 id 天然不在布局里，跳过。
+    """
+    res = os.path.join(ROOT, "android", "app", "src", "main", "res")
+    defined = set()
+    for sub in ("layout", "layout-land"):
+        d = os.path.join(res, sub)
+        if not os.path.isdir(d):
+            continue
+        for f in os.listdir(d):
+            if f.endswith(".xml"):
+                txt = open(os.path.join(d, f), encoding="utf-8").read()
+                defined |= set(re.findall(r'android:id="@\+id/(\w+)"', txt))
+
+    java_root = os.path.join(ROOT, "android", "app", "src", "main", "java")
+    for dirpath, _d, files in os.walk(java_root):
+        for f in files:
+            if not f.endswith(".kt"):
+                continue
+            path = os.path.join(dirpath, f)
+            for i, line in enumerate(open(path, encoding="utf-8"), 1):
+                safe = line.replace("android.R.id.", "ANDROID_R_ID.")
+                for m in re.finditer(r'(?<![\w.])R\.id\.(\w+)', safe):
+                    vid = m.group(1)
+                    if vid not in defined:
+                        problems.append(
+                            "%s:%d R.id.%s 在布局里没有定义（findViewById 会返回 null）"
+                            % (os.path.relpath(path, ROOT), i, vid))
+
+
 def count_chinese_literals():
     """main 源码里的中文字面量（排除注释行与日志行）。`src/test` 的测试数据不算。"""
     hits, per_file = 0, {}
@@ -167,6 +205,7 @@ def main():
     checked = check_literals_and_text(problems)
     check_spacing(problems)
     check_r_import(problems)
+    check_view_refs(problems)
     hits, per_file = count_chinese_literals()
 
     print("检查 %d 个布局/资源文件" % checked)
@@ -190,7 +229,7 @@ def main():
               "文案进 values/strings.xml 并改引 @string/；间距引用 @dimen/space_*。")
         return 1
 
-    print("通过：布局无字面色值、无硬编码文案、无 dp 字面量间距；R 引用均有 import。")
+    print("通过：布局无字面色值、无硬编码文案、无 dp 字面量间距；R 引用均有 import 且 id 都在布局里。")
     return 0
 
 

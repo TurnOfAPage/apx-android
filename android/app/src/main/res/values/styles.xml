@@ -53,6 +53,23 @@
         <item name="android:stateListAnimator">@null</item>
     </style>
 
+    <!--
+      传输开关按钮（无线 / 蓝牙 / USB）：胶囊描边，点一下开/关。
+      选中态（= 该类传输已开）由代码改造成实底 + onPrimary 文字，
+      未选中保持中性描边 —— 不用 Switch，省掉「标签 + 开关」两列。
+    -->
+    <style name="APTransportButton" parent="@style/APButtonGhost">
+        <item name="android:layout_width">0dp</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_weight">1</item>
+        <item name="android:gravity">center</item>
+        <item name="android:paddingStart">@dimen/space_8</item>
+        <item name="android:paddingEnd">@dimen/space_8</item>
+        <item name="android:minHeight">48dp</item>
+        <item name="android:singleLine">true</item>
+        <item name="android:ellipsize">end</item>
+    </style>
+
     <!-- 状态徽章：胶囊（底色浅，文字由代码按语义色着色） -->
     <style name="APBadge">
         <item name="android:background">@drawable/bg_badge</item>

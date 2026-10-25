@@ -85,11 +85,6 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
 
     private lateinit var tvOverall: TextView
     private lateinit var tvOverallSub: TextView
-    private lateinit var swWifi: Switch
-    private lateinit var swBt: Switch
-    private lateinit var swUsb: Switch
-    private lateinit var rowsLink: LinearLayout
-    private lateinit var tvLinkRtt: TextView
     private lateinit var badgeStatus: TextView
     private lateinit var groupWifi: LinearLayout
     private lateinit var groupBt: LinearLayout
@@ -109,8 +104,6 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
     private var pickDeviceThenReturn = false
 
     // 启动后才显示的区域（状态页）
-    private lateinit var boxRunning: LinearLayout
-    private lateinit var tvRunningSummary: TextView
     private lateinit var tvIdleHint: TextView
     private lateinit var boxIdleFeatures: LinearLayout
 
@@ -170,8 +163,6 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
     private var fourFingerStartX = -1f
     private var fourFingerSwiped = false
 
-    private lateinit var linkRows: StatusRows
-    private val rowHandles = LinkedHashMap<String, StatusRows.Row>()
     private val moduleRows = LinkedHashMap<String, ModuleRow>()
 
     /** 触控板页的快捷键（HotkeyStore 的内存副本，编辑后回写） */
@@ -341,11 +332,6 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
 
         tvOverall = findViewById(R.id.tvOverall)
         tvOverallSub = findViewById(R.id.tvOverallSub)
-        swWifi = findViewById(R.id.swWifi)
-        swBt = findViewById(R.id.swBt)
-        swUsb = findViewById(R.id.swUsb)
-        rowsLink = findViewById(R.id.rowsLink)
-        tvLinkRtt = findViewById(R.id.tvLinkRtt)
         groupWifi = findViewById(R.id.groupWifi)
         groupBt = findViewById(R.id.groupBt)
         groupUsb = findViewById(R.id.groupUsb)
@@ -356,8 +342,6 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
         btnBattery = findViewById(R.id.btnBattery)
         btnRefresh = findViewById(R.id.btnRefresh)
 
-        boxRunning = findViewById(R.id.boxRunning)
-        tvRunningSummary = findViewById(R.id.tvRunningSummary)
         tvIdleHint = findViewById(R.id.tvIdleHint)
         boxIdleFeatures = findViewById(R.id.boxIdleFeatures)
 
@@ -1615,9 +1599,6 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
         // 这些入口仍由 Activity 绑定 —— StatusFragment 不管它们。
         // 初始状态直接问自己（Host 实现）；StatusFragment.bindActions() 里也会设一次，
         // 两处同源不会打架 —— 传输开关的**监听**只在 Fragment 侧绑，避免双触发。
-        swWifi.isChecked = isTransportEnabled("wifi")
-        swBt.isChecked = isTransportEnabled("bt")
-        swUsb.isChecked = isTransportEnabled("usb")
         btnBattery.setOnClickListener { requestBatteryWhitelist() }
         // 快捷键「编辑」入口：一屏管理所有快捷键（上移 / 下移 / 改 / 删 / 新建）
         findViewById<TextView>(R.id.btnEditChips).setOnClickListener { hotkeyBoard.managerDialog() }
@@ -1993,32 +1974,6 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
             btRunning -> "蓝牙已就绪，在电脑上配对后就能用"
             else -> getString(R.string.common_unknown)
         }
-        tvRunningSummary.text = "$envSummary · $linkText"
-
-        // 链路行
-        val env = lastEnv
-        rowHandles["root"]?.setValue(
-            if (env?.rooted == true) getString(R.string.value_root_ok) else getString(R.string.value_root_missing),
-            linkRows.color(ok = env?.rooted == true, error = env?.rooted == false)
-        )
-        val speed = env?.linkSpeed ?: LinkSpeed.UNKNOWN
-        rowHandles["speed"]?.setValue(
-            if (env?.rawSpeed.isNullOrBlank()) speed.label else "${env?.rawSpeed}（${speed.label}）",
-            linkRows.color(ok = speed.isSuperSpeed, warn = !speed.isSuperSpeed)
-        )
-        rowHandles["udc"]?.setValue(
-            env?.udc ?: getString(R.string.common_unknown),
-            linkRows.color(ok = !env?.udc.isNullOrBlank())
-        )
-        rowHandles["service"]?.setValue(
-            if (serviceRunning) getString(R.string.common_on) else getString(R.string.common_off),
-            linkRows.color(ok = serviceRunning)
-        )
-        val batteryOk = env?.batteryOptimized == false
-        rowHandles["battery"]?.setValue(
-            if (batteryOk) getString(R.string.value_battery_ok) else getString(R.string.value_battery_limited),
-            linkRows.color(ok = batteryOk, warn = !batteryOk)
-        )
 
         // 模块行（只反映真实状态，不用状态回写开关，避免"启动失败 → 开关回弹 → 再启动"循环）
         for ((id, row) in moduleRows) {
