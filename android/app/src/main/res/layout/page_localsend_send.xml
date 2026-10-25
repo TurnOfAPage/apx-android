@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- LocalSend 发送页（MVP2）：说明行 + 设备列表 + 空态提示 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="12dp">
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingBottom="8dp"
+        android:text="点设备 → 选文件（可多选）→ 推送。列表来自局域网 announce，设备需与手机同一 Wi-Fi，且手机侧已开「互传」开关。"
+        android:textColor="#99000000"
+        android:textSize="12sp" />
+
+    <ListView
+        android:id="@+id/lsDeviceList"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:divider="#22000000"
+        android:dividerHeight="1dp" />
+
+    <TextView
+        android:id="@+id/lsEmpty"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:gravity="center"
+        android:padding="24dp"
+        android:text="还没有发现设备\n\n1. 手机：设置 → 遥控·工具 → 打开「互传」\n2. 电脑：打开 LocalSend，确保同一 Wi-Fi\n3. 等几秒自动出现"
+        android:textColor="#66000000"
+        android:textSize="14sp"
+        android:visibility="gone" />
+
+</LinearLayout>
