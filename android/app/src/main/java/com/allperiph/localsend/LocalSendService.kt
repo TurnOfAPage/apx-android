@@ -1,0 +1,330 @@
+package com.allperiph.localsend
+
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.app.Service
+import android.content.ContentValues
+import android.content.Context
+import android.content.Intent
+import android.content.res.Configuration
+import android.net.Uri
+import android.net.wifi.WifiManager
+import android.os.Build
+import android.os.Environment
+import android.os.Handler
+import android.os.IBinder
+import android.os.Looper
+import android.provider.MediaStore
+import androidx.core.app.NotificationCompat
+import org.json.JSONObject
+import java.io.File
+import java.io.OutputStream
+import java.net.DatagramPacket
+import java.net.HttpURLConnection
+import java.net.InetSocketAddress
+import java.net.MulticastSocket
+import java.net.URL
+import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
+
+/**
+ * LocalSend 互传接收端前台服务（MVP1）：
+ *  - UDP 多播监听 224.0.0.167:53317 + 周期 announce（让桌面端看见本机）
+ *  - 收到他人 announce → HTTP POST register 应答（对端加入本机列表；同时本机也向对端登记）
+ *  - 本地 HTTP server 服务 info/register/prepare/upload/cancel，文件落系统 Download/LocalSend/
+ */
+class LocalSendService : Service() {
+
+    companion object {
+        const val ACTION_START = "com.allperiph.localsend.START"
+        const val ACTION_STOP = "com.allperiph.localsend.STOP"
+        private const val CHAN_ID = "localsend_rx"
+        private const val NOTIFY_FGS = 0x105E
+        private const val ANNOUNCE_PERIOD_MS = 30_000L
+        private const val REGISTER_DEDUP_MS = 30_000L
+        fun start(context: Context) = context.startForegroundService(Intent(context, LocalSendService::class.java).setAction(ACTION_START))
+        fun stop(context: Context) = context.startService(Intent(context, LocalSendService::class.java).setAction(ACTION_STOP))
+    }
+
+    private class PendingFile(
+        val fileId: String, val fileName: String, val size: Long, val sender: String,
+        var uri: Uri? = null, var stream: OutputStream? = null, var written: Long = 0L,
+    )
+    private class Session(val id: String, val sender: String) {
+        val files = ConcurrentHashMap<String, PendingFile>()
+        var done = 0
+    }
+
+    private var multicast: MulticastSocket? = null
+    private var multicastLock: WifiManager.MulticastLock? = null
+    private var httpServer: LocalSendHttpServer? = null
+    private var running = false
+    private val sessions = ConcurrentHashMap<String, Session>()
+    private val registeredRecently = ConcurrentHashMap<String, Long>()
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private var announceTick = 0
+    private val announceRunnable = object : Runnable {
+        override fun run() {
+            if (!running) return
+            sendAnnounce()
+            mainHandler.postDelayed(this, ANNOUNCE_PERIOD_MS)
+        }
+    }
+
+    private val alias: String get() = Build.MODEL ?: "Android"
+    private val deviceType: String
+        get() = if (resources.configuration.smallestScreenWidthDp >= 600) "tablet" else "phone"
+
+    override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onCreate() {
+        super.onCreate()
+        ensureChannel()
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        when (intent?.action) {
+            ACTION_STOP -> { teardown(); stopSelf(); return START_NOT_STICKY }
+            else -> if (!running) startAll()
+        }
+        return START_NOT_STICKY
+    }
+
+    override fun onDestroy() { teardown(); super.onDestroy() }
+
+    private fun startAll() {
+        running = true
+        // 1. 前台通知
+        val n = NotificationCompat.Builder(this, CHAN_ID)
+            .setSmallIcon(android.R.drawable.stat_sys_download)
+            .setContentTitle("LocalSend 互传")
+            .setContentText("等待局域网设备发送文件…")
+            .setOngoing(true).build()
+        startForeground(NOTIFY_FGS, n)
+
+        // 2. MulticastLock（否则 Wi-Fi 省电会丢多播报文）
+        try {
+            val wm = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+            multicastLock = wm.createMulticastLock("apx-localsend").apply { setReferenceCounted(false); acquire() }
+        } catch (_: Throwable) {}
+
+        // 3. HTTP server（端口被占则换随机端口，announce 会带真实端口）
+        val httpPort = try {
+            val s = LocalSendHttpServer(LocalSendProtocol.HTTP_PORT, handler)
+            s.start(); httpServer = s; LocalSendProtocol.HTTP_PORT
+        } catch (_: Throwable) {
+            val s = LocalSendHttpServer(0, handler)
+            s.start(); httpServer = s
+            (s.boundPort())
+        }
+
+        // 4. UDP 多播监听 + announce 突发（100/500/2000ms）与周期广播
+        Thread {
+            try {
+                val ms = MulticastSocket(LocalSendProtocol.MULTICAST_PORT)
+                ms.timeToLive = 1
+                ms.reuseAddress = true
+                ms.joinGroup(InetSocketAddress(LocalSendProtocol.MULTICAST_GROUP, LocalSendProtocol.MULTICAST_PORT), null)
+                multicast = ms
+                repeat(3) { i ->
+                    mainHandler.postDelayed({ sendAnnounce() }, longArrayOf(100, 500, 2000)[i])
+                }
+                mainHandler.postDelayed(announceRunnable, ANNOUNCE_PERIOD_MS)
+                val buf = ByteArray(64 * 1024)
+                while (running) {
+                    val packet = DatagramPacket(buf, buf.size)
+                    ms.receive(packet)
+                    val text = String(packet.data, 0, packet.length, Charsets.UTF_8)
+                    val ip = packet.address?.hostAddress ?: continue
+                    onAnnounce(text, ip)
+                }
+            } catch (_: Throwable) {}
+        }.apply { isDaemon = true; start() }
+    }
+
+    private fun teardown() {
+        running = false
+        mainHandler.removeCallbacksAndMessages(null)
+        try { multicast?.leaveGroup(InetSocketAddress(LocalSendProtocol.MULTICAST_GROUP, LocalSendProtocol.MULTICAST_PORT), null) } catch (_: Throwable) {}
+        try { multicast?.close() } catch (_: Throwable) {}
+        multicast = null
+        try { httpServer?.stop() } catch (_: Throwable) {}
+        httpServer = null
+        try { if (multicastLock?.isHeld == true) multicastLock?.release() } catch (_: Throwable) {}
+        multicastLock = null
+        try { if (Build.VERSION.SDK_INT >= 26) stopForeground(STOP_FOREGROUND_REMOVE) } catch (_: Throwable) {}
+    }
+
+    private fun sendAnnounce() {
+        val ms = multicast ?: return
+        val httpPort = httpServer?.boundPort() ?: return
+        try {
+            val payload = LocalSendProtocol.announce(alias, deviceType, true, httpPort).toString().toByteArray(Charsets.UTF_8)
+            val packet = DatagramPacket(payload, payload.size, InetSocketAddress(LocalSendProtocol.MULTICAST_GROUP, LocalSendProtocol.MULTICAST_PORT))
+            ms.send(packet)
+        } catch (_: Throwable) {}
+    }
+
+    /** 收到他人 announce：去重后 HTTP register 应答（对端因此把本机加入列表） */
+    private fun onAnnounce(text: String, ip: String) {
+        val msg = try { JSONObject(text) } catch (_: Throwable) { return }
+        if (msg.optString("fingerprint") == LocalSendProtocol.fingerprint) return
+        if (msg.optString("protocol", "http") != "http") return // https 对端需 TLS，MVP 不支持
+        val port = msg.optInt("port", 0); if (port !in 1..65535) return
+        val fp = msg.optString("fingerprint", ip)
+        val now = System.currentTimeMillis()
+        val last = registeredRecently[fp]
+        if (last != null && now - last < REGISTER_DEDUP_MS) return
+        registeredRecently[fp] = now
+        postRegister(ip, port)
+    }
+
+    private fun postRegister(ip: String, port: Int) {
+        Thread {
+            try {
+                val conn = URL("http://$ip:$port${LocalSendProtocol.PATH_REGISTER}").openConnection() as HttpURLConnection
+                conn.requestMethod = "POST"
+                conn.connectTimeout = 3000; conn.readTimeout = 3000; conn.doOutput = true
+                conn.setRequestProperty("Content-Type", "application/json")
+                conn.outputStream.use { it.write(handler.deviceInfo().toString().toByteArray(Charsets.UTF_8)) }
+                conn.responseCode
+                conn.disconnect()
+            } catch (_: Throwable) {}
+        }.apply { isDaemon = true; start() }
+    }
+
+    private val handler = object : LocalSendHttpServer.Handler {
+        override fun deviceInfo(): JSONObject =
+            LocalSendProtocol.deviceInfo(alias, deviceType, true)
+
+        override fun prepareUpload(body: JSONObject): JSONObject {
+            val info = body.optJSONObject("info")
+            val sender = info?.optString("alias") ?: "未知设备"
+            val session = Session(UUID.randomUUID().toString(), sender)
+            val respFiles = JSONObject()
+            val files = body.optJSONObject("files") ?: return JSONObject().put("sessionId", session.id)
+            files.keys().forEach { key ->
+                val f = files.optJSONObject(key) ?: return@forEach
+                val pf = PendingFile(
+                    fileId = key,
+                    fileName = sanitize(f.optString("fileName", "file_$key")),
+                    size = f.optLong("size", -1L),
+                    sender = sender,
+                )
+                session.files[key] = pf
+                respFiles.put(key, key) // token = fileId
+            }
+            sessions[session.id] = session
+            return JSONObject().put("sessionId", session.id).put("files", respFiles)
+        }
+
+        override fun openUpload(sessionId: String, fileId: String): OutputStream? {
+            val session = sessions[sessionId] ?: return null
+            val pf = session.files[fileId] ?: return null
+            synchronized(pf) {
+                if (pf.stream != null) return pf.stream
+                val created = try { createTarget(pf.fileName) } catch (_: Throwable) { return null }
+                pf.uri = created.first; pf.stream = created.second
+                return created.second
+            }
+        }
+
+        override fun finishUpload(sessionId: String, fileId: String, ok: Boolean) {
+            val session = sessions[sessionId] ?: return
+            val pf = session.files[fileId] ?: return
+            val sizeOk = pf.size < 0 || pf.written == pf.size
+            if (ok && sizeOk) {
+                markComplete(pf)
+                session.done++
+                if (session.done >= session.files.size) {
+                    notifyDone(session)
+                    sessions.remove(sessionId)
+                }
+            } else {
+                discard(pf)
+                sessions.remove(sessionId)
+                notifyFailed(pf)
+            }
+        }
+
+        override fun cancel(sessionId: String?) {
+            val session = sessionId?.let { sessions.remove(it) } ?: return
+            session.files.values.forEach { discard(it) }
+        }
+    }
+
+    private fun sanitize(name: String): String {
+        val cleaned = name.replace('/', '_').replace('\\', '_').trim().ifEmpty { "file" }
+        return if (cleaned.length > 180) cleaned.takeLast(180) else cleaned
+    }
+
+    /** 创建落盘目标：API29+ 走 MediaStore Downloads/LocalSend（免权限），低版本写公共 Download */
+    private fun createTarget(fileName: String): Pair<Uri?, OutputStream> {
+        if (Build.VERSION.SDK_INT >= 29) {
+            val values = ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+                put(MediaStore.MediaColumns.MIME_TYPE,
+                    URLConnection.guessContentTypeFromName(fileName) ?: "application/octet-stream")
+                put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/LocalSend")
+                put(MediaStore.MediaColumns.IS_PENDING, 1)
+            }
+            val uri = contentResolver.insert(MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), values)
+                ?: throw IllegalStateException("insert failed")
+            val os = contentResolver.openOutputStream(uri) ?: throw IllegalStateException("open failed")
+            return uri to os
+        }
+        @Suppress("DEPRECATION")
+        val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "LocalSend")
+        dir.mkdirs()
+        var target = File(dir, fileName)
+        if (target.exists()) {
+            val base = fileName.substringBeforeLast('.', fileName)
+            val ext = if ('.' in fileName) ".${fileName.substringAfterLast('.')}" else ""
+            var i = 1
+            while (target.exists()) target = File(dir, "${base} (${i++})${ext}")
+        }
+        return null to target.outputStream()
+    }
+
+    private fun markComplete(pf: PendingFile) {
+        pf.uri?.let { uri ->
+            try {
+                val v = ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }
+                contentResolver.update(uri, v, null, null)
+            } catch (_: Throwable) {}
+        }
+    }
+    private fun discard(pf: PendingFile) {
+        try { pf.stream?.close() } catch (_: Throwable) {}
+        pf.stream = null
+        pf.uri?.let { try { contentResolver.delete(it, null, null) } catch (_: Throwable) {} }
+    }
+
+    private fun ensureChannel() {
+        if (Build.VERSION.SDK_INT >= 26) {
+            val nm = getSystemService(NotificationManager::class.java)
+            if (nm.getNotificationChannel(CHAN_ID) == null) {
+                nm.createNotificationChannel(NotificationChannel(CHAN_ID, "LocalSend 互传", NotificationManager.IMPORTANCE_LOW))
+            }
+        }
+    }
+    private fun notifyDone(session: Session) {
+        val names = session.files.values.joinToString("、") { it.fileName }
+        notify("LocalSend 已接收 ${session.files.size} 个文件（来自 ${session.sender}）", names.take(120))
+    }
+    private fun notifyFailed(pf: PendingFile) {
+        notify("LocalSend 接收失败", pf.fileName)
+    }
+    private fun notify(title: String, text: String) {
+        try {
+            val nm = getSystemService(NotificationManager::class.java)
+            val pending = PendingIntent.getActivity(this, 0, Intent(), PendingIntent.FLAG_IMMUTABLE)
+            val n = NotificationCompat.Builder(this, CHAN_ID)
+                .setSmallIcon(android.R.drawable.stat_sys_download_done)
+                .setContentTitle(title).setContentText(text)
+                .setContentIntent(pending).setAutoCancel(true).build()
+            nm.notify((System.currentTimeMillis() and 0xFFFFL).toInt(), n)
+        } catch (_: Throwable) {}
+    }
+}
