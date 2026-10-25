@@ -219,12 +219,7 @@ class SettingsFragment : Fragment() {
                         "没有可导出的日志内容"
                     } else {
                         val stamp = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())
-                        val head = "=== AllPeriph 运行日志导出 ===
-时间: $stamp
-设备: ${android.os.Build.MODEL} / SDK ${android.os.Build.VERSION.SDK_INT}
-说明: 仅含本进程最近 5000 行 logcat
-
-"
+                        val head = "=== AllPeriph 运行日志导出 ===\n时间: $stamp\n设备: ${android.os.Build.MODEL} / SDK ${android.os.Build.VERSION.SDK_INT}\n说明: 仅含本进程最近 5000 行 logcat\n\n"
                         val body = head + raw.takeLast(890_000)
                         val fileName = "log_${System.currentTimeMillis()}.txt"
                         val values = android.content.ContentValues().apply {
