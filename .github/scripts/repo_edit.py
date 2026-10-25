@@ -2,7 +2,8 @@
 """repo-edit：大文件锚点替换编辑器。
 
 主会话无法整文件回传（MainActivity.kt ~111KB），把小而精确的改动交给 Actions 云端执行。
-每个锚点断言**全文件唯一命中**（count==1），不匹配立即退出非零 → 工作流失败、不产生提交。
+两阶段：①先对全部锚点做唯一性校验（count==1），任何失配一次性全部列出；②全部通过才写盘。
+任何失配 → 退出非零 → 工作流失败 → 不产生提交。
 """
 import sys
 
@@ -33,12 +34,7 @@ EDITS = [
     ("android/app/src/main/java/com/allperiph/ui/MainActivity.kt", [
         # 1) 锁定中：布局钉在锁定方向，不再跟随系统旋转配置（Pad 反馈#2）
         ("""    override fun onConfigurationChanged(newConfig: Configuration) {
-        super.onConfigurationChanged(newConfig)
-        // 配置变化时用新配置校准 landscape（与 orientListener 的物理朝向判断互为兑底）
-        landscape = newConfig.orientation == Configuration.ORIENTATION_LANDSCAPE
-        applyOrientationLayout()
-        handler.post { snapIndicator() }
-    }""",
+        super.onConfigurationChanged(newConfig)""",
          """    override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         if (orientLocked) {
@@ -51,19 +47,12 @@ EDITS = [
             }
             handler.post { snapIndicator() }
             return
-        }
-        // 配置变化时用新配置校准 landscape（与 orientListener 的物理朝向判断互为兑底）
-        landscape = newConfig.orientation == Configuration.ORIENTATION_LANDSCAPE
-        applyOrientationLayout()
-        handler.post { snapIndicator() }
-    }"""),
-        # 2) onResume：锁定中不开方向传感器
-        ("""        // 物理朝向检测启动：竖持=触控板 横持=键盘（无视系统方向锁）
-        setupOrientListener()
+        }"""),
+        # 2) onResume：锁定中不开方向传感器（old 只用纯代码行，避开中文字差）
+        ("""        setupOrientListener()
         orientListener?.enable()""",
-         """        // 物理朝向检测启动：竖持=触控板 横持=键盘（无视系统方向锁）；
+         """        setupOrientListener()
         // 锁定中不使能传感器（反馈#2：锁定后仍绑陀螺仪 → 从源头停掉）
-        setupOrientListener()
         if (!orientLocked) orientListener?.enable()"""),
         # 3) setOrientLock：锁定即停物理检测，解锁恢复
         ("""        if (lock) {
@@ -211,18 +200,31 @@ EDITS = [
 ]
 
 def main() -> int:
+    # 阶段①：全量校验，一次性报出所有失配
+    loaded = {}
+    errors = []
     for path, pairs in EDITS:
         try:
             with open(path, encoding="utf-8") as f:
                 text = f.read()
         except OSError as e:
-            print(f"FAIL {path}: {e}")
-            return 1
-        for old, new in pairs:
+            errors.append(f"{path}: open failed: {e}")
+            continue
+        loaded[path] = (text, pairs)
+        for i, (old, _new) in enumerate(pairs, 1):
             n = text.count(old)
             if n != 1:
-                print(f"FAIL {path}: anchor count={n} (expect 1)\n---anchor---\n{old[:400]}")
-                return 1
+                errors.append(
+                    f"{path} edit#{i}: anchor count={n} (expect 1)\n---anchor---\n{old[:400]}\n---"
+                )
+    if errors:
+        print("VALIDATION FAILED：")
+        for e in errors:
+            print(e)
+        return 1
+    # 阶段②：全部通过，统一替换写盘
+    for path, (text, pairs) in loaded.items():
+        for old, new in pairs:
             text = text.replace(old, new, 1)
         with open(path, "w", encoding="utf-8") as f:
             f.write(text)
