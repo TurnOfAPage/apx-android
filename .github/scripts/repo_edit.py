@@ -1,55 +1,54 @@
 #!/usr/bin/env python3
 """repo-edit：大文件锚点替换编辑器。
 
-本批（批 M' · 修 run#25 失配重发）：悬浮球实体化。
-  修：①view锚2 属性缩进 16→8 空格（原文 8）；②CHANGELOG 锚改批K 尾（批L 未落库的连锁依赖解除）
-  - bg_floating_ball：35% 黑半透明 → 95% 白实底 + 20% 黑描边
-  - view：48→56dp；中心 ● 白字 → 深色；注释同步
+本批（批 L' · 修 run#24 失配重发）：诊断日志包。
+  修：forwardPointer 签名参数是全限定 android.view.MotionEvent（文件未 import 短名）
+  修：CHANGELOG 锚改批M 条目尾（批L 首跑未写入的连锁依赖解除）
+  - forward 包装：每键打 keyCode/action/usage/mod/EditText焦点/结果
+  - forwardPointer 包装：source/action/坐标/双指轴/焦点/结果
+  - motion Wrapper：isPointer/handled
+  - 全部 android.util.Log；诊断期临时，下版移除
 
 两阶段：①按期望次数全量校验；②全过才写盘。
 """
 import sys
 
 EDITS = [
-    ("android/app/src/main/res/drawable/bg_floating_ball.xml", [
-        ("""    <solid android:color="#59000000" />
-    <stroke
-        android:width="1dp"
-        android:color="#66FFFFFF" />
+    ("android/app/src/main/java/com/allperiph/ui/PhysKeyBridge.kt", [
+        ("""    private fun forward(event: KeyEvent): Boolean {
 """,
-         """    <solid android:color="#F2FFFFFF" />
-    <stroke
-        android:width="1dp"
-        android:color="#33000000" />
+         """    private fun forward(event: KeyEvent): Boolean {
+        val ret = forwardImpl(event)
+        android.util.Log.d("ApxBridge", "KEY kc=${event.keyCode} act=${event.action} rep=${event.repeatCount} usage=${usageOf(event.keyCode)} mod=${modBit(event.keyCode)} etFocus=${act.currentFocus is EditText} ret=$ret")
+        return ret
+    }
+
+    private fun forwardImpl(event: KeyEvent): Boolean {
 """, 1),
-    ]),
-    ("android/app/src/main/res/layout/view_floating_ball.xml", [
-        ("""<!-- 悬浮球：48dp 半透明圆球（反馈#7） -->
-<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:layout_width="48dp"
-    android:layout_height="48dp"
-    android:background="@drawable/bg_floating_ball"
+        ("""    private fun forwardPointer(event: android.view.MotionEvent): Boolean {
 """,
-         """<!-- 悬浮球：56dp 白实底圆球（反馈#7 + 实测改版） -->
-<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:layout_width="56dp"
-    android:layout_height="56dp"
-    android:background="@drawable/bg_floating_ball"
+         """    private fun forwardPointer(event: android.view.MotionEvent): Boolean {
+        val ret = forwardPointerImpl(event)
+        android.util.Log.d("ApxBridge", "PTR src=${event.source} act=${event.actionMasked} x=${event.x} y=${event.y} v=${event.getAxisValue(android.view.MotionEvent.AXIS_VSCROLL)} h=${event.getAxisValue(android.view.MotionEvent.AXIS_HSCROLL)} etFocus=${act.currentFocus is EditText} ret=$ret")
+        return ret
+    }
+
+    private fun forwardPointerImpl(event: android.view.MotionEvent): Boolean {
 """, 1),
-        ("""        android:text="●"
-        android:textSize="14sp"
-        android:textColor="#FFFFFFFF" />
+        ("""            if (isPointer) applyCursorLock(handled)
+            return if (handled) true else delegate.dispatchGenericMotionEvent(event)
 """,
-         """        android:text="●"
-        android:textSize="16sp"
-        android:textColor="#CC000000" />
+         """            if (isPointer) applyCursorLock(handled)
+            android.util.Log.d("ApxBridge", "MOTION isPointer=$isPointer handled=$handled src=${event.source} act=${event.actionMasked}")
+            return if (handled) true else delegate.dispatchGenericMotionEvent(event)
 """, 1),
     ]),
     ("docs/CHANGELOG.md", [
-        ("  校准）——修深色下黑字看不清；悬浮球字体问题随球体样式批一并修\n",
-         """  校准）——修深色下黑字看不清；悬浮球字体问题随球体样式批一并修
-- **悬浮球实体化（批 M）**：球体 35% 黑半透明 → 95% 白实底 + 描边（深浅背景都醒目），
-  48dp→56dp（触控目标更好点），中心点改深色；修实测「太小/像一个点」
+        ("  48dp→56dp（触控目标更好点），中心点改深色；修实测「太小/像一个点」\n",
+         """  48dp→56dp（触控目标更好点），中心点改深色；修实测「太小/像一个点」
+- **诊断日志包（批 L · 临时，下版移除）**：键盘/指针/motion 三入口逐事件打点
+  （keyCode/usage/mod、source/action/双指轴、焦点与分支结果）——用于定位实体键盘
+  功能键、双指手势、触控板点击误触三类实测问题（logcat tag=ApxBridge）
 """, 1),
     ]),
 ]
