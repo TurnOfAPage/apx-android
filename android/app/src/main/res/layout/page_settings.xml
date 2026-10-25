@@ -648,6 +648,34 @@
                 android:layout_marginTop="8dp"
                 android:text="@string/action_refresh" />
         </LinearLayout>
+        <!-- 手动导出 log.txt（issue 实测建议）：logcat 自进程 → Download/AllPeriph/ -->
+        <LinearLayout
+            android:id="@+id/rowExportLog"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:padding="12dp"
+            android:background="@drawable/bg_card"
+            android:layout_marginBottom="6dp">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="导出运行日志
+一键保存 log.txt 到 Download/AllPeriph（反馈问题时附上）"
+                android:textColor="@color/md_on_surface"
+                android:textSize="14sp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="›"
+                android:textColor="@color/md_on_surface_variant"
+                android:textSize="18sp" />
+        </LinearLayout>
+
         </LinearLayout><!-- /groupAbout -->
 
         <!-- 帮助与说明（反馈#10 批 B）：文字性说明集中地，各分类只留一行式条目 -->

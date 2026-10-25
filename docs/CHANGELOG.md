@@ -66,6 +66,9 @@
 - **诊断日志包（批 L · 临时，下版移除）**：键盘/指针/motion 三入口逐事件打点
   （keyCode/usage/mod、source/action/双指轴、焦点与分支结果）——用于定位实体键盘
   功能键、双指手势、触控板点击误触三类实测问题（logcat tag=ApxBridge）
+- **手动导出日志（批 O · issue 建议）**：设置→关于与维护 新增「导出运行日志」，
+  一键把本进程最近 5000 行 logcat + 设备头存为 Download/AllPeriph/log_时间戳.txt，
+  反馈问题随 issue 附上即可，免接线 logcat
 - **Header 标题防挤竖排（issue#43 图1 · 批 D）**：顶栏标题/副说明加
   singleLine+ellipsize——右侧按钮拥挤时不再逐字竖排（v218 散落字符根因，
   v219 已删 segPages 分页钮大幅缓解，本条为防复发双保险）

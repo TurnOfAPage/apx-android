@@ -207,6 +207,50 @@ class SettingsFragment : Fragment() {
         act.findViewById<android.view.View>(R.id.rowLocalSend)?.setOnClickListener { v ->
             v.context.startActivity(android.content.Intent(v.context, com.allperiph.localsend.SendActivity::class.java))
         }
+        // 批O：手动导出运行日志（issue 建议）——自进程 logcat → Download/AllPeriph/
+        act.findViewById<android.view.View>(R.id.rowExportLog)?.setOnClickListener { v ->
+            android.widget.Toast.makeText(v.context, "正在收集日志…", android.widget.Toast.LENGTH_SHORT).show()
+            Thread {
+                val msg = try {
+                    val pid = android.os.Process.myPid()
+                    val p = Runtime.getRuntime().exec(arrayOf("logcat", "-d", "-v", "time", "-t", "5000", "--pid=$pid"))
+                    val raw = p.inputStream.bufferedReader().readText()
+                    if (raw.isBlank()) {
+                        "没有可导出的日志内容"
+                    } else {
+                        val stamp = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())
+                        val head = "=== AllPeriph 运行日志导出 ===
+时间: $stamp
+设备: ${android.os.Build.MODEL} / SDK ${android.os.Build.VERSION.SDK_INT}
+说明: 仅含本进程最近 5000 行 logcat
+
+"
+                        val body = head + raw.takeLast(890_000)
+                        val fileName = "log_${System.currentTimeMillis()}.txt"
+                        val values = android.content.ContentValues().apply {
+                            put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+                            put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "text/plain")
+                            put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS + "/AllPeriph")
+                            put(android.provider.MediaStore.MediaColumns.IS_PENDING, 1)
+                        }
+                        val uri = v.context.contentResolver.insert(
+                            android.provider.MediaStore.Downloads.getContentUri(android.provider.MediaStore.VOLUME_EXTERNAL_PRIMARY), values,
+                        ) ?: throw IllegalStateException("insert failed")
+                        v.context.contentResolver.openOutputStream(uri)!!.use { it.write(body.toByteArray(Charsets.UTF_8)) }
+                        val fin = android.content.ContentValues().apply {
+                            put(android.provider.MediaStore.MediaColumns.IS_PENDING, 0)
+                        }
+                        v.context.contentResolver.update(uri, fin, null, null)
+                        "已保存到 Download/AllPeriph/$fileName"
+                    }
+                } catch (e: Throwable) {
+                    "导出失败: ${e.message}"
+                }
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    android.widget.Toast.makeText(v.context, msg, android.widget.Toast.LENGTH_LONG).show()
+                }
+            }.apply { isDaemon = true; start() }
+        }
         // 反馈#10 批 B（方案 B）：首页 = 分类列表，点行进二级页，返回行回首屏。
         // 分组容器复用原四个 group*，另加帮助组 groupHelp；原四分段 tab 已删。
         val categories = listOf(
