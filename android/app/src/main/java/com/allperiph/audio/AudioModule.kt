@@ -36,6 +36,11 @@ import kotlin.concurrent.thread
  *
  * v1.13：采集侧挂硬件 AEC/降噪/自动增益（设备支持才启用），收发线程提实时优先级；
  * 播放侧启用低延迟通路（PERFORMANCE_MODE_LOW_LATENCY）并收紧缓冲。
+ *
+ * v218 修复（USB 模式锁 2 个大核全频满载）：ALSA 两个 fd 都是 O_NONBLOCK，
+ * native 侧读到 EAGAIN 原本会零等待自旋 —— 现 native 立即返回 / 节流重试，
+ * 下面两条搬运循环在无数据、采集异常、写入被限流时都必须**节流休眠**，
+ * 否则一条线程就是一个被钉满的大核。
  */
 class AudioModule(private val app: Context) : Module {
 
@@ -246,11 +251,25 @@ class AudioModule(private val app: Context) : Module {
                 }
                 rec.startRecording()
                 val buf = ByteArray(FRAME_BYTES)
+                var lastWriteErrLog = 0L
                 while (micRun) {
                     val n = rec.read(buf, 0, buf.size)
-                    if (n <= 0) continue
+                    if (n <= 0) {
+                        // 采集侧异常/空读（-3 ERROR_INVALID_OPERATION 等）时同样必须节流，
+                        // 否则错误态下 `continue` 会退化成自旋，把一个大核钉满。
+                        if (micRun) sleepQuiet(TX_IDLE_SLEEP_MS)
+                        continue
+                    }
                     val rc = stream.write(if (n == buf.size) buf else buf.copyOf(n))
-                    if (rc < 0) Log.w(TAG, "ALSA playback 写入失败 rc=$rc")
+                    if (rc < 0) {
+                        // 主机未取走 USB 麦克风流时 native 会节流 100ms 后返回 -EAGAIN（-11）丢本帧；
+                        // 这里限频打日志，避免 10ms 一条刷屏。
+                        val now = SystemClock.elapsedRealtime()
+                        if (now - lastWriteErrLog > 5000) {
+                            lastWriteErrLog = now
+                            Log.w(TAG, "ALSA playback 写入失败 rc=$rc")
+                        }
+                    }
                 }
             } catch (t: Throwable) {
                 Log.w(TAG, "mic→PC 线程异常：${t.message}")
@@ -318,6 +337,12 @@ class AudioModule(private val app: Context) : Module {
                             lastDiag = now
                             Log.i(TAG, "PC→spk 收流中：累计 ${total / 1024}KB")
                         }
+                    } else {
+                        // capture 是 O_NONBLOCK：无数据时 native 立即返回 -EAGAIN，
+                        // 这里必须节流休眠，否则本循环（连同原生读）就是一次零等待自旋，
+                        // 一个大核被钉在全频 —— v217 实测「USB 模式锁 2 个大核满载」的主因。
+                        // 2ms = 1/5 个 10ms 帧：延迟与 CPU 占用取平衡。
+                        sleepQuiet(RX_IDLE_SLEEP_MS)
                     }
                 }
             } catch (t: Throwable) {
@@ -329,6 +354,15 @@ class AudioModule(private val app: Context) : Module {
             }
         }
         return true
+    }
+
+    /** 节流休眠：被中断时恢复中断标记并返回（由外层循环的 run 标志决定是否退出） */
+    private fun sleepQuiet(ms: Long) {
+        try {
+            Thread.sleep(ms)
+        } catch (e: InterruptedException) {
+            Thread.currentThread().interrupt()
+        }
     }
 
     companion object {
@@ -355,5 +389,11 @@ class AudioModule(private val app: Context) : Module {
 
         /** 10ms 一帧：48000Hz × 2ch × 2B ÷ 100 */
         private const val FRAME_BYTES = 48000 * 2 * 2 / 100
+
+        /** rx 侧无数据时的节流间隔（capture O_NONBLOCK → -EAGAIN 后休眠） */
+        private const val RX_IDLE_SLEEP_MS = 2L
+
+        /** tx 侧采集异常/空读时的节流间隔，防止错误态自旋 */
+        private const val TX_IDLE_SLEEP_MS = 5L
     }
 }
