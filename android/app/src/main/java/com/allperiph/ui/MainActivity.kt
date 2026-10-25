@@ -896,6 +896,8 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
         tvPageTitle.text = getString(PAGE_TITLES[i])
         tvPageSub.text = getString(PAGE_SUBS[i])
         if (i == PAGE_TOUCHPAD) renderChips()
+        // 反馈#10 批 B：进设置页一律落回分类首页（setupSettingsTabs 内部 showHome）
+        if (i == PAGE_SETTINGS) settingsFragment?.setupSettingsTabs()
         val activeTab = tabIndexFor(i)
         tabViews.indices.forEach { k ->
             val on = k == activeTab

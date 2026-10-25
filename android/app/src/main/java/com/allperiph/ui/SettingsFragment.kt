@@ -188,31 +188,40 @@ class SettingsFragment : Fragment() {
     fun setupSettingsTabs() {
         if (!ensureViews()) return
         val act = activity ?: return
-        val tabs = listOf(
-            act.findViewById<TextView>(R.id.tabSegGeneral),
-            act.findViewById<TextView>(R.id.tabSegLook),
-            act.findViewById<TextView>(R.id.tabSegRemote),
-            act.findViewById<TextView>(R.id.tabSegAbout),
+        // 反馈#10 批 B（方案 B）：首页 = 分类列表，点行进二级页，返回行回首屏。
+        // 分组容器复用原四个 group*，另加帮助组 groupHelp；原四分段 tab 已删。
+        val categories = listOf(
+            act.findViewById<View>(R.id.catGeneral) to R.id.groupGeneral,
+            act.findViewById<View>(R.id.catLook) to R.id.groupLook,
+            act.findViewById<View>(R.id.catRemote) to R.id.groupRemote,
+            act.findViewById<View>(R.id.catAbout) to R.id.groupAbout,
+            act.findViewById<View>(R.id.catHelp) to R.id.groupHelp,
         )
-        val groups = listOf(
-            act.findViewById<LinearLayout>(R.id.groupGeneral),
-            act.findViewById<LinearLayout>(R.id.groupLook),
-            act.findViewById<LinearLayout>(R.id.groupRemote),
-            act.findViewById<LinearLayout>(R.id.groupAbout),
-        )
-        fun select(i: Int) {
-            tabs.forEachIndexed { j, t ->
-                val on = i == j
-                t.setBackgroundResource(if (on) R.drawable.bg_btn_primary else 0)
-                t.setTextColor(
-                    if (on) resources.getColor(R.color.md_on_primary)
-                    else resources.getColor(R.color.md_on_surface_variant)
-                )
-            }
-            groups.forEachIndexed { j, g -> g.visibility = if (i == j) View.VISIBLE else View.GONE }
+        val home = act.findViewById<View>(R.id.categoryHome)
+        val back = act.findViewById<View>(R.id.btnBackHome)
+        fun hideAllGroups() {
+            categories.forEach { (_, gid) -> act.findViewById<View>(gid)?.visibility = View.GONE }
         }
-        tabs.forEachIndexed { j, t -> t.setOnClickListener { select(j) } }
-        select(0)
+        fun scrollTop() {
+            (act.findViewById<View>(R.id.pageSettings) as? android.widget.ScrollView)?.fullScroll(View.FOCUS_UP)
+        }
+        fun showHome() {
+            home?.visibility = View.VISIBLE
+            back?.visibility = View.GONE
+            hideAllGroups()
+            scrollTop()
+        }
+        categories.forEach { (row, gid) ->
+            row?.setOnClickListener {
+                home?.visibility = View.GONE
+                back?.visibility = View.VISIBLE
+                hideAllGroups()
+                act.findViewById<View>(gid)?.visibility = View.VISIBLE
+                scrollTop()
+            }
+        }
+        back?.setOnClickListener { showHome() }
+        showHome()
     }
 
     // ==================== Templates ====================
