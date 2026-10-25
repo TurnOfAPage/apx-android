@@ -567,7 +567,7 @@ class SettingsFragment : Fragment() {
                 ),
                 accent,
             ) {
-                FloatingBallService.requestToggle(it.context)
+                activity?.let { ctx -> FloatingBallService.requestToggle(ctx) }
                 renderTv()
             },
         )
