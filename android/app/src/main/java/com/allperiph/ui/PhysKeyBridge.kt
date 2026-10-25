@@ -70,12 +70,19 @@ internal class PhysKeyBridge(private val act: Activity) {
             val isPointer = event.source and android.view.InputDevice.SOURCE_MOUSE != 0 ||
                 event.source and android.view.InputDevice.SOURCE_TOUCHPAD != 0
             if (isPointer) applyCursorLock(handled)
+            android.util.Log.d("ApxBridge", "MOTION isPointer=$isPointer handled=$handled src=${event.source} act=${event.actionMasked}")
             return if (handled) true else delegate.dispatchGenericMotionEvent(event)
         }
     }
 
     /** @return true = 已转发/已消费；false = 放行给手机本地 */
     private fun forward(event: KeyEvent): Boolean {
+        val ret = forwardImpl(event)
+        android.util.Log.d("ApxBridge", "KEY kc=${event.keyCode} act=${event.action} rep=${event.repeatCount} usage=${usageOf(event.keyCode)} mod=${modBit(event.keyCode)} etFocus=${act.currentFocus is EditText} ret=$ret")
+        return ret
+    }
+
+    private fun forwardImpl(event: KeyEvent): Boolean {
         val action = event.action
         if (action != KeyEvent.ACTION_DOWN && action != KeyEvent.ACTION_UP) return false
 
@@ -133,6 +140,12 @@ internal class PhysKeyBridge(private val act: Activity) {
      * @return true = 已消费（系统光标照常移动，App 内不再做本地 hover 响应）
      */
     private fun forwardPointer(event: android.view.MotionEvent): Boolean {
+        val ret = forwardPointerImpl(event)
+        android.util.Log.d("ApxBridge", "PTR src=${event.source} act=${event.actionMasked} x=${event.x} y=${event.y} v=${event.getAxisValue(android.view.MotionEvent.AXIS_VSCROLL)} h=${event.getAxisValue(android.view.MotionEvent.AXIS_HSCROLL)} etFocus=${act.currentFocus is EditText} ret=$ret")
+        return ret
+    }
+
+    private fun forwardPointerImpl(event: android.view.MotionEvent): Boolean {
         val src = event.source
         val isPointer = src and android.view.InputDevice.SOURCE_MOUSE != 0 ||
             src and android.view.InputDevice.SOURCE_TOUCHPAD != 0
