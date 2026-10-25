@@ -1,129 +1,127 @@
 #!/usr/bin/env python3
 """repo-edit：大文件锚点替换编辑器。
 
-本批（批 P · 横屏操作条，issue 实测）：
-  - 撤回反馈#9 的无条件底栏常驻 → 恢复对称式（横屏隐藏、竖屏显示）——
-    实测底栏碍事；切页改由右上 pill 条显式按键
-  - layout-land 新增 pill 容器（触控板/键盘/锁定/设置四键，gone 起始）
-  - btnSettingsFloat 永隐（pill 的 btnLandSettings 接管，避免重叠）
-  - MainActivity：pill 可见性随 landscape + 四键 listener（showPage/toggleOrientLock）
+本批（批 Q · 设置页重排 B1a，issue 实测「文字说明太长」）：
+  - 删 4 个说明 caption（模板/配色/背景/诊断提示），**原文引用**搬进帮助页对应卡：
+      配色+背景 → 「功能说明」卡尾（批C 结构）
+      诊断提示 → 「链路与延迟」卡尾
+      模板用法 → 「手势与操作」卡尾（模板操作与手势同属操作类）
+  - 保留：诊断输出 tvDiag（动态内容）、全部内嵌选择器（功能本体不动，避免长按插入手势丢失）
   - CHANGELOG 补条
 
-⚠ 铁律④（run#28/构建实锤）：python 三引号会把字符串里单反斜杠 n 转成真实换行——
-  Kotlin/Java 字符串内的 \\n 必须写 \\\\n（python 双反斜杠）；XML 属性值内真换行虽合法但语义同转义。
-⚠ 铁律（run#5/#14 实锤）：锚点以双引号收尾必须先换行再闭三引号。
+⚠ 铁律④：python 三引号会把单反斜杠 n 转成真实换行——Kotlin/Java 串内 \\n 写 \\\\n。
+⚠ 铁律：锚点以双引号收尾必须先换行再闭三引号。
 两阶段：①按期望次数全量校验；②全过才写盘。
 """
 import sys
 
-PILL_XML = """    <!-- 批P：横屏操作条 pill（issue 实测）——触控板/键盘切换 + 方向锁 + 设置，替代四指滑唯一路径 -->
-    <LinearLayout
-        android:id="@+id/pillLandActions"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_gravity="top|end"
-        android:layout_marginTop="12dp"
-        android:layout_marginEnd="12dp"
-        android:background="@drawable/bg_card"
-        android:gravity="center_vertical"
-        android:orientation="horizontal"
-        android:padding="4dp"
-        android:visibility="gone">
+CAP_TEMPLATE = """            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/lay_settings_text_hotkey_template_touchpad"
+                android:textAppearance="@style/APTextCaption" />
+"""
+CAP_THEME = """            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/lay_settings_text_hotkey_theme_touchpad_keyboard"
+                android:textAppearance="@style/APTextCaption" />
+"""
+CAP_BG = """            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/lay_settings_text_background_2"
+                android:textAppearance="@style/APTextCaption" />
+"""
+CAP_DIAG = """            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/lay_settings_diag_hint"
+                android:textAppearance="@style/APTextCaption" />
+"""
 
-        <TextView
-            android:id="@+id/btnLandTouchpad"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:paddingStart="10dp"
-            android:paddingEnd="6dp"
-            android:paddingTop="6dp"
-            android:paddingBottom="6dp"
-            android:text="触控板"
-            android:textColor="@color/md_on_surface"
-            android:textSize="13sp" />
+MOVED_HINT = "        <!-- 批Q：说明文字已收编帮助页（issue 实测「文字说明太长」） -->\n"
 
-        <TextView
-            android:id="@+id/btnLandKeyboard"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:paddingStart="6dp"
-            android:paddingEnd="6dp"
-            android:paddingTop="6dp"
-            android:paddingBottom="6dp"
-            android:text="键盘"
-            android:textColor="@color/md_on_surface"
-            android:textSize="13sp" />
+HELP_CAP_THEME = """                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/lay_settings_text_hotkey_theme_touchpad_keyboard"
+                    android:textAppearance="@style/APTextCaption" />
 
-        <TextView
-            android:id="@+id/btnLandLock"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:paddingStart="6dp"
-            android:paddingEnd="6dp"
-            android:paddingTop="6dp"
-            android:paddingBottom="6dp"
-            android:text="锁定"
-            android:textColor="@color/md_on_surface"
-            android:textSize="13sp" />
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/lay_settings_text_background_2"
+                    android:textAppearance="@style/APTextCaption" />
+"""
 
-        <TextView
-            android:id="@+id/btnLandSettings"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:paddingStart="6dp"
-            android:paddingEnd="10dp"
-            android:paddingTop="6dp"
-            android:paddingBottom="6dp"
-            android:text="设置"
-            android:textColor="@color/md_on_surface"
-            android:textSize="13sp" />
-    </LinearLayout>
+HELP_CAP_TEMPLATE = """                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/lay_settings_text_hotkey_template_touchpad"
+                    android:textAppearance="@style/APTextCaption" />
 
 """
 
-PILL_KOTLIN = """        // 批P：横屏操作条 pill——触控板/键盘切换 + 方向锁 + 设置（issue 实测：底栏碍事、四指滑不直观）
-        findViewById<View>(R.id.pillLandActions)?.visibility = if (landscape) View.VISIBLE else View.GONE
-        findViewById<TextView>(R.id.btnLandTouchpad)?.setOnClickListener { Feedback.tap(it); showPage(PAGE_TOUCHPAD) }
-        findViewById<TextView>(R.id.btnLandKeyboard)?.setOnClickListener { Feedback.tap(it); showPage(PAGE_KEYBOARD) }
-        findViewById<TextView>(R.id.btnLandLock)?.setOnClickListener { Feedback.tap(it); toggleOrientLock() }
-        findViewById<TextView>(R.id.btnLandSettings)?.setOnClickListener { Feedback.tap(it); showPage(PAGE_SETTINGS) }
+HELP_CAP_DIAG = """
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/lay_settings_diag_hint"
+                    android:textAppearance="@style/APTextCaption" />
 """
 
 EDITS = [
-    ("android/app/src/main/java/com/allperiph/ui/MainActivity.kt", [
-        # 1. 撤回#9：无条件 VISIBLE → 对称式（横屏藏、竖屏显，竖屏底栏不受影响）
-        ("""        // 反馈#9：横屏也常驻底部分页栏（原：沉浸隐藏 → 只能四指滑，从通知栏进来切页不方便）
-        tabBarView.visibility = View.VISIBLE
+    ("android/app/src/main/res/layout/page_settings.xml", [
+        # 1-4. 删四张说明 caption（各 text 引用唯一）→ 注释占位
+        (CAP_TEMPLATE, MOVED_HINT, 1),
+        (CAP_THEME, MOVED_HINT, 1),
+        (CAP_BG, MOVED_HINT, 1),
+        (CAP_DIAG, MOVED_HINT, 1),
+        # 5. 配色+背景 caption 原文搬进「功能说明」卡尾（批C 结构锚）
+        ("""                android:text="@string/lay_status_text_hotkey_touchpad_keyboard"
+                android:textAppearance="@style/APTextCaption" />
+            </LinearLayout>
+
+            <!-- 批C：三步上手（原状态页常显卡搬来，原文零改动） -->
 """,
-         """        // 批P：撤回反馈#9（实测横屏底栏碍事）→ 恢复对称式隐藏；切页改走右上 pill 条
-        tabBarView.visibility = if (landscape) View.GONE else View.VISIBLE
+         """                android:text="@string/lay_status_text_hotkey_touchpad_keyboard"
+                android:textAppearance="@style/APTextCaption" />
+
+""" + HELP_CAP_THEME + """            </LinearLayout>
+
+            <!-- 批C：三步上手（原状态页常显卡搬来，原文零改动） -->
 """, 1),
-        # 2. btnSettingsFloat 永隐（pill 接管，避免与 pill 重叠；apply 块后续对 GONE 无害）
-        ("""        findViewById<TextView>(R.id.btnSettingsFloat)?.apply {
-            visibility = if (landscape) View.VISIBLE else View.GONE
+        # 6. 模板用法 caption 搬进「手势与操作」卡尾（卡内 FAQ 前）
+        ("""                android:text="@string/ui_help_gesture"
+                android:textColor="@color/md_on_surface_variant"
+                android:textSize="13sp" />
+            </LinearLayout>
 """,
-         """        findViewById<TextView>(R.id.btnSettingsFloat)?.apply {
-            visibility = View.GONE // 批P：横屏操作条 pill（btnLandSettings）接管
+         """                android:text="@string/ui_help_gesture"
+                android:textColor="@color/md_on_surface_variant"
+                android:textSize="13sp" />
+
+""" + HELP_CAP_TEMPLATE + """            </LinearLayout>
 """, 1),
-        # 3. pill 初始化段（插在「#2 常驻入口」注释前；landscape 此处已在作用域）
-        ("""        // 右上角设置入口常驻（反馈#2）：竖屏顶栏 btnSettingsEntry、横屏悬浮 btnSettingsFloat，
+        # 7. 诊断提示 caption 搬进「链路与延迟」卡尾
+        ("""                android:text="@string/ui_help_link"
+                android:textColor="@color/md_on_surface_variant"
+                android:textSize="13sp" />
+            </LinearLayout>
 """,
-         PILL_KOTLIN + """        // 右上角设置入口常驻（反馈#2）：竖屏顶栏 btnSettingsEntry、横屏悬浮 btnSettingsFloat，
-""", 1),
-    ]),
-    ("android/app/src/main/res/layout-land/activity_main.xml", [
-        # 4. pill 容器插入浮键注释前（path 限定 layout-land，竖屏同文不误伤）
-        ("""    <!-- 横屏沉浸右上角悬浮设置入口（反馈#2）：横屏 chrome 全隐时的常驻入口 -->
-""",
-         PILL_XML + """    <!-- 横屏沉浸右上角悬浮设置入口（反馈#2）：横屏 chrome 全隐时的常驻入口 -->
+         """                android:text="@string/ui_help_link"
+                android:textColor="@color/md_on_surface_variant"
+                android:textSize="13sp" />
+""" + HELP_CAP_DIAG + """            </LinearLayout>
 """, 1),
     ]),
     ("docs/CHANGELOG.md", [
-        ("  双指滚动、点击不再因背压丢失\n",
-         """  双指滚动、点击不再因背压丢失
-- **横屏操作条 pill（批 P · issue 实测）**：撤回#9 底栏常驻（恢复对称隐藏，竖屏不受
-  影响）；右上新增 pill 条——触控板/键盘显式切换 + 方向锁 + 设置，替代「四指滑是
-  唯一换页方式」；原悬浮设置键并入 pill（永隐防重叠）
+        ("  唯一换页方式」；原悬浮设置键并入 pill（永隐防重叠）\n",
+         """  唯一换页方式」；原悬浮设置键并入 pill（永隐防重叠）
+- **设置页长文收编（批 Q · issue 实测「文字说明太长」）**：通用/外观/工具组的 4 个
+  说明 caption（模板/配色/背景/诊断提示）原文搬进帮助页对应卡（功能说明/手势/链路），
+  分组页只留控件本体；诊断输出与内嵌选择器保留（功能不减）
 """, 1),
     ]),
 ]
