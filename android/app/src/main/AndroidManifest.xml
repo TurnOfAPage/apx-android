@@ -73,6 +73,11 @@
     -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
+    <!-- LocalSend 互传：UDP 多播需 MulticastLock，否则 Wi-Fi 省电丢 announce -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+    <!-- LocalSend 接收前台服务（Android 14+ dataSync 类型必需） -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+
     <!--
       Wi-Fi 控制：读/写系统设置（锁定/解锁 AP 限制）
     -->
@@ -192,6 +197,13 @@
             android:exported="false"
             android:stopWithTask="false"
             android:foregroundServiceType="connectedDevice" />
+
+        <!-- LocalSend 互传接收（issue#45 MVP1）：UDP 发现 + HTTP 接收，落 Download/LocalSend -->
+        <service
+            android:name=".localsend.LocalSendService"
+            android:exported="false"
+            android:stopWithTask="false"
+            android:foregroundServiceType="dataSync" />
 
         <!--
           ⑦ HID 绑定（v1.19）：被电脑绑定后弹授权弹窗。

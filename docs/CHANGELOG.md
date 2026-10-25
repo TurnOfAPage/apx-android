@@ -50,6 +50,10 @@
   （PointerIcon.TYPE_NULL，状态边沿去重），断开/关开关自动恢复；连上时触摸板事件
   本就全消费、不落本 app 控件；窗口外（其他 app/桌面）的系统光标与点击为系统级
   行为，App 无权干预（根治需 root evdev grab，后续另立批次）
+- **LocalSend 互传接入（批 G · issue#45 MVP1）**：新模块 localsend（协议参数层/
+  极简 HTTP server/接收端前台服务），UDP 多播 224.0.0.167:53317 发现 + register 应答，
+  与官方 LocalSend 各平台互通；设置→遥控·工具 新增「互传」开关（默认关），
+  文件落系统 Download/LocalSend（MediaStore，免权限），完成/失败均有通知
 - **Header 标题防挤竖排（issue#43 图1 · 批 D）**：顶栏标题/副说明加
   singleLine+ellipsize——右侧按钮拥挤时不再逐字竖排（v218 散落字符根因，
   v219 已删 segPages 分页钮大幅缓解，本条为防复发双保险）

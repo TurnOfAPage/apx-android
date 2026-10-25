@@ -195,6 +195,14 @@ class SettingsFragment : Fragment() {
         cursorLockSwitch?.setOnCheckedChangeListener { _, isChecked ->
             apxPrefs.edit().putBoolean("cursor_lock", isChecked).apply()
         }
+        // 批G：LocalSend 互传开关（issue#45）——开=启动接收前台服务，关=停止
+        val localSendSwitch = act.findViewById<android.widget.Switch>(R.id.switchLocalSend)
+        localSendSwitch?.isChecked = apxPrefs.getBoolean("localsend_enabled", false)
+        localSendSwitch?.setOnCheckedChangeListener { _, isChecked ->
+            apxPrefs.edit().putBoolean("localsend_enabled", isChecked).apply()
+            if (isChecked) com.allperiph.localsend.LocalSendService.start(act)
+            else com.allperiph.localsend.LocalSendService.stop(act)
+        }
         // 反馈#10 批 B（方案 B）：首页 = 分类列表，点行进二级页，返回行回首屏。
         // 分组容器复用原四个 group*，另加帮助组 groupHelp；原四分段 tab 已删。
         val categories = listOf(
