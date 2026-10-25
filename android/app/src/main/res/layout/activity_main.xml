@@ -187,4 +187,22 @@
         layout="@layout/nav_tabs"
         android:layout_width="match_parent"
         android:layout_height="wrap_content" />
+
+    <!-- 横屏沉浸右上角悬浮设置入口（反馈#2）：横屏 chrome 全隐时的常驻入口 -->
+    <TextView
+        android:id="@+id/btnSettingsFloat"
+        style="@style/APTextButton"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|end"
+        android:layout_marginTop="10dp"
+        android:layout_marginEnd="16dp"
+        android:background="@drawable/bg_card"
+        android:elevation="4dp"
+        android:paddingStart="14dp"
+        android:paddingEnd="14dp"
+        android:paddingTop="8dp"
+        android:paddingBottom="8dp"
+        android:text="@string/ui_main_btn_settings_entry"
+        android:visibility="gone" />
 </FrameLayout>

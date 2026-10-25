@@ -274,7 +274,8 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
         handler.post(ticker)
         // 物理朝向检测启动：竖持=触控板 横持=键盘（无视系统方向锁）
         setupOrientListener()
-        orientListener?.enable()
+        // 锁定中不使能传感器（反馈#2：锁定后仍绑陀螺仪 → 从源头停掉）
+        if (!orientLocked) orientListener?.enable()
         // 剪贴板同步：前台才监听（v196 接线 —— 此前 ClipboardSync 从未被注册，
         // 「手机复制 → 电脑粘贴」功能等于不存在）。onPause 注销。
         ClipboardSync.register(this)
@@ -455,6 +456,17 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
      */
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
+        if (orientLocked) {
+            // 锁定中（反馈#2，Pad 实测）：布局钉在锁定方向，不再跟随系统配置翻面 ——
+            // 部分 ROM/Pad 仍会派发旋转配置，布局跟着转 = 设置页被翻走、没法操作。
+            val want = lockedOrient == 1
+            if (landscape != want) {
+                landscape = want
+                applyOrientationLayout()
+            }
+            handler.post { snapIndicator() }
+            return
+        }
         // 配置变化时用新配置校准 landscape（与 orientListener 的物理朝向判断互为兜底）
         landscape = newConfig.orientation == Configuration.ORIENTATION_LANDSCAPE
         applyOrientationLayout()
@@ -519,6 +531,7 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
         if (landscape) navGlass.setIndicator(null)
         applyImmersive()
         applyNavBarWidth()
+        updateSettingsEntry()
     }
 
     /**
@@ -650,11 +663,13 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
         if (lock) {
             lockedOrient = if (resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) 1 else 2
             requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LOCKED
+            orientListener?.disable() // 锁定即停物理检测（反馈#2：锁定≠只冻 requestedOrientation）
             Log.i(TAG, "方向锁定：orient=$lockedOrient")
         } else {
             requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
             forcedOrient = 0
             lockedOrient = 0
+            orientListener?.enable()  // 解锁恢复检测（onResume 同款幂等）
             Log.i(TAG, "方向解锁：交还系统，物理检测恢复")
         }
         getSharedPreferences(PREF_ORIENT, MODE_PRIVATE).edit().putBoolean(KEY_LOCK, lock).apply()
@@ -673,6 +688,24 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
             }
         }
         findViewById<Switch>(R.id.swOrientLock)?.isChecked = orientLocked
+    }
+
+    /**
+     * 右上角设置入口显隐（反馈#2）。
+     *  - 竖屏：顶栏按钮常驻（设置页自身隐藏，避免与顶栏分段/底栏页签重复）
+     *  - 横屏：顶栏与底栏整条隐藏 → 悬浮按钮常驻；设置页上文案改「返回」
+     */
+    private fun updateSettingsEntry() {
+        val onSettings = ::pager.isInitialized && pager.displayedChild == PAGE_SETTINGS
+        findViewById<TextView>(R.id.btnSettingsEntry)?.visibility =
+            if (!landscape && !onSettings) View.VISIBLE else View.GONE
+        findViewById<TextView>(R.id.btnSettingsFloat)?.apply {
+            visibility = if (landscape) View.VISIBLE else View.GONE
+            text = getString(
+                if (onSettings) R.string.ui_main_btn_settings_back
+                else R.string.ui_main_btn_settings_entry,
+            )
+        }
     }
 
     /** orientPoll 上次 re-request 方向的时刻（3s 冷却，防每秒请求风暴） */
@@ -887,6 +920,7 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
                 setTypeface(null, if (i == PAGE_SETTINGS) Typeface.BOLD else Typeface.NORMAL)
             }
         }
+        updateSettingsEntry()
         // 横屏沉浸模式：没有底栏，靠四指左右滑换页
         if (landscape) return
         // 新页布局完成后再滑动胶囊（否则取到的还是上一页的坐标）
@@ -1626,6 +1660,21 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
         findViewById<Switch>(R.id.swOrientLock)?.apply {
             isChecked = orientLocked
             setOnCheckedChangeListener { _, on -> setOrientLock(on) }
+        }
+        // 右上角设置入口常驻（反馈#2）：竖屏顶栏 btnSettingsEntry、横屏悬浮 btnSettingsFloat，
+        // 不再依赖「四指滑 / 底栏页签」才能进设置页。
+        findViewById<TextView>(R.id.btnSettingsEntry)?.setOnClickListener {
+            Feedback.tap(it)
+            showPage(PAGE_SETTINGS)
+        }
+        findViewById<TextView>(R.id.btnSettingsFloat)?.setOnClickListener {
+            Feedback.tap(it)
+            // 横屏设置页上它当「返回」用（四指滑之外再给一条退路），其余页面进设置
+            showPage(
+                if (::pager.isInitialized && pager.displayedChild == PAGE_SETTINGS)
+                    PAGE_TOUCHPAD
+                else PAGE_SETTINGS
+            )
         }
         // 状态 ↔ 设置 页内分页（状态页已并入设置 tab，两页经顶栏分段互切）
         findViewById<TextView>(R.id.segGoStatus)?.setOnClickListener {

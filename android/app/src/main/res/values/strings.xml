@@ -331,4 +331,6 @@
     <string name="lay_settings_status_local">未连接（触摸板控本机）· %1$s</string>
     <string name="lay_settings_group_diag">诊断</string>
     <string name="lay_settings_diag_hint">环境摘要；通道自检与日志在上方 TV 控制卡的「工具」小节</string>
+    <string name="ui_main_btn_settings_entry">设置</string>
+    <string name="ui_main_btn_settings_back">返回</string>
 </resources>

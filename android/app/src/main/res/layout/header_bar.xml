@@ -77,4 +77,14 @@
         android:layout_marginStart="12dp"
         android:text="@string/ui_main_btn_orient_lock"
         android:contentDescription="@string/ui_main_cd_orient_lock" />
+
+    <!-- 设置入口常驻右上角（反馈#2）：任何页面一点即达 -->
+    <TextView
+        android:id="@+id/btnSettingsEntry"
+        style="@style/APTextButton"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="12dp"
+        android:text="@string/ui_main_btn_settings_entry"
+        android:contentDescription="@string/ui_main_btn_settings_entry" />
 </LinearLayout>
