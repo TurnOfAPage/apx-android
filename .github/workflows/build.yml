@@ -384,6 +384,12 @@ jobs:
       - name: 跨端协议一致性校验
         run: python3 scripts/check_protocol.py
 
+      # 清单里的类名写错了**不会**让构建变红（清单合并只认字符串），只会静默失效：
+      # 本仓库已踩过 4 次（AppxImeService / AppxAccessibilityService / KeepAliveReceiver
+      # 包名错误 / ExternalSendActivity 从未实现）。这里按 namespace 拼全限定名核对。
+      - name: Manifest 声明 vs 源文件
+        run: python3 scripts/check_manifest_classes.py
+
   # ------------------------------------------------ Release（仅 tag v*）
   # 跑在 windows-latest 上 —— Inno Setup 编译器只在 Windows 上有
   # macOS 资产由 macos.yml 的 tag 构建独立上传（两边对同一 Release 幂等协作：
