@@ -1,106 +1,80 @@
 #!/usr/bin/env python3
 """repo-edit：大文件锚点替换编辑器。
 
-本批（批 Q'' · 修 run#34 失配重发，B1a）：
-  修：锚6/7 缩进 16→20 空格（search fragment 实证帮助卡属性区=20，上版凭手感写16）。
-  编辑1-5（caption 单行 gone + 功能说明承接）已在 run#34 验证通过，原样保留。
+本批（批 S-1 · IME 输入法核心对，issue 实测「app 失焦无法用键盘输入法」）：
+  PhysKeyBridge：
+    - companion 挂 current 全局引用 + attach 登记
+    - forward/forwardImpl 加 imeBypass 参数（IME 场景跳过「本地输入态放行」）
+    - 新增 forwardFromIme 公开入口（转发状态与窗口转发共用，无电脑时返回 false 自然放行本地）
+  新文件 ApxImeService：InputMethodService——物理键 onKeyDown/onKeyUp 全量转发 PC，
+    没连电脑/未登记时走 super 自然降级为本地输入；极简面板说明文案。
+  接线（manifest 声明 + 设置引导）在批 S-2。
 
-⚠ 教训：search 实证到的缩进必须逐字节进 payload，禁止手感。
-⚠ 铁律④：Kotlin/Java 串内 \\n 写 \\\\n。铁律：锚以双引号收尾先换行。
+⚠ 铁律④：Kotlin 串内换行用字面 \\n（双反斜杠），本批新文件文案已规避换行。
+⚠ 铁律：锚以双引号收尾先换行。铁律⑤：实证缩进逐字节进 payload。
 两阶段：①按期望次数全量校验；②全过才写盘。
 """
 import sys
 
-CAP = [
-    ("android:text=\"@string/lay_settings_text_hotkey_template_touchpad\"",
-     "android:text=\"@string/lay_settings_text_hotkey_template_touchpad\"\n                android:visibility=\"gone\""),
-    ("android:text=\"@string/lay_settings_text_hotkey_theme_touchpad_keyboard\"",
-     "android:text=\"@string/lay_settings_text_hotkey_theme_touchpad_keyboard\"\n                android:visibility=\"gone\""),
-    ("android:text=\"@string/lay_settings_text_background_2\"",
-     "android:text=\"@string/lay_settings_text_background_2\"\n                android:visibility=\"gone\""),
-    ("android:text=\"@string/lay_settings_diag_hint\"",
-     "android:text=\"@string/lay_settings_diag_hint\"\n                android:visibility=\"gone\""),
-]
-
-HELP_CAP_THEME = """                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="@string/lay_settings_text_hotkey_theme_touchpad_keyboard"
-                    android:textAppearance="@style/APTextCaption" />
-
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="@string/lay_settings_text_background_2"
-                    android:textAppearance="@style/APTextCaption" />
-"""
-
-HELP_CAP_TEMPLATE = """                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="@string/lay_settings_text_hotkey_template_touchpad"
-                    android:textAppearance="@style/APTextCaption" />
-
-"""
-
-HELP_CAP_DIAG = """
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="@string/lay_settings_diag_hint"
-                    android:textAppearance="@style/APTextCaption" />
-"""
-
 EDITS = [
-    ("android/app/src/main/res/layout/page_settings.xml", [
-        (CAP[0][0], CAP[0][1], 1),
-        (CAP[1][0], CAP[1][1], 1),
-        (CAP[2][0], CAP[2][1], 1),
-        (CAP[3][0], CAP[3][1], 1),
-        # 5. 配色+背景 caption 搬「功能说明」卡尾（run#34 已验过）
-        ("""                android:text="@string/lay_status_text_hotkey_touchpad_keyboard"
-                android:textAppearance="@style/APTextCaption" />
-            </LinearLayout>
+    ("android/app/src/main/java/com/allperiph/ui/PhysKeyBridge.kt", [
+        # 1. companion 全局引用（插类首）
+        ("""internal class PhysKeyBridge(private val act: Activity) {
 
-            <!-- 批C：三步上手（原状态页常显卡搬来，原文零改动） -->
+    private var wrapper: Window.Callback? = null
 """,
-         """                android:text="@string/lay_status_text_hotkey_touchpad_keyboard"
-                android:textAppearance="@style/APTextCaption" />
+         """internal class PhysKeyBridge(private val act: Activity) {
 
-""" + HELP_CAP_THEME + """            </LinearLayout>
+    companion object {
+        /** 批S：IME 全局入口（attach 时登记，ApxImeService 复用键盘转发状态与 heldMods） */
+        var current: PhysKeyBridge? = null
+    }
 
-            <!-- 批C：三步上手（原状态页常显卡搬来，原文零改动） -->
+    private var wrapper: Window.Callback? = null
 """, 1),
-        # 6. 模板用法 caption 搬「手势与操作」卡尾 —— 缩进 20（实证）
-        ("""                    android:text="@string/ui_help_gesture"
-                    android:textColor="@color/md_on_surface_variant"
-                    android:textSize="13sp" />
-            </LinearLayout>
+        # 2. attach 登记
+        ("""    fun attach(window: Window) {
+        if (wrapper != null) return
 """,
-         """                    android:text="@string/ui_help_gesture"
-                    android:textColor="@color/md_on_surface_variant"
-                    android:textSize="13sp" />
-
-""" + HELP_CAP_TEMPLATE + """            </LinearLayout>
+         """    fun attach(window: Window) {
+        current = this
+        if (wrapper != null) return
 """, 1),
-        # 7. 诊断提示 caption 搬「链路与延迟」卡尾 —— 缩进 20（实证）
-        ("""                    android:text="@string/ui_help_link"
-                    android:textColor="@color/md_on_surface_variant"
-                    android:textSize="13sp" />
-            </LinearLayout>
+        # 3. forward 签名加 imeBypass 默认参
+        ("    private fun forward(event: KeyEvent): Boolean {\n",
+         "    private fun forward(event: KeyEvent, imeBypass: Boolean = false): Boolean {\n", 1),
+        # 4. 包装层透传
+        ("        val ret = forwardImpl(event)\n",
+         "        val ret = forwardImpl(event, imeBypass)\n", 1),
+        # 5. 规则①加 imeBypass 豁免（锚带①注释，pointer 版注释不同天然唯一）
+        ("""        // ① 手机本地输入中：修饰键也放行（否则本地 Shift+方向选字会坏）
+        if (act.currentFocus is EditText) return false
 """,
-         """                    android:text="@string/ui_help_link"
-                    android:textColor="@color/md_on_surface_variant"
-                    android:textSize="13sp" />
-""" + HELP_CAP_DIAG + """            </LinearLayout>
+         """        // ① 手机本地输入中：修饰键也放行（否则本地 Shift+方向选字会坏）；IME 场景强制转发
+        if (!imeBypass && act.currentFocus is EditText) return false
+""", 1),
+        # 6. forwardFromIme 公开入口 + forwardImpl 签名（合并锚，带 forwardImpl 上下文唯一）
+        ("""        return ret
+    }
+
+    private fun forwardImpl(event: KeyEvent): Boolean {
+""",
+         """        return ret
+    }
+
+    /** 批S：IME 转发入口——焦点在输入框也转发（IME 就是要接管打字）；状态与窗口转发共用 */
+    fun forwardFromIme(event: KeyEvent): Boolean = forward(event, imeBypass = true)
+
+    private fun forwardImpl(event: KeyEvent, imeBypass: Boolean): Boolean {
 """, 1),
     ]),
     ("docs/CHANGELOG.md", [
-        ("  唯一换页方式」；原悬浮设置键并入 pill（永隐防重叠）\n",
-         """  唯一换页方式」；原悬浮设置键并入 pill（永隐防重叠）
-- **设置页长文收编（批 Q · issue 实测「文字说明太长」）**：通用/外观/工具组的 4 个
-  说明 caption（模板/配色/背景/诊断提示）置为不可见并**原文搬进**帮助页对应卡
-  （功能说明/手势/链路），分组页只留控件本体；诊断输出与内嵌选择器保留（功能不减）
+        ("  （功能说明/手势/链路），分组页只留控件本体；诊断输出与内嵌选择器保留（功能不减）\n",
+         """  （功能说明/手势/链路），分组页只留控件本体；诊断输出与内嵌选择器保留（功能不减）
+- **全能外设输入法（批 S · issue 实测失焦输入）**：新增 InputMethodService
+  （ApxImeService）——切到本输入法后物理键盘在任意界面打字全量转发到电脑
+  （forwardFromIme 跳过本地输入态放行），没连电脑自然降级为手机打字；
+  manifest 声明与设置引导入口随批 S-2
 """, 1),
     ]),
 ]
