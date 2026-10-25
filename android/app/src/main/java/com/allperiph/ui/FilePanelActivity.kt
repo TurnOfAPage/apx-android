@@ -107,7 +107,7 @@ class FilePanelActivity : Activity() {
 
         // 说明（v205）：文件存哪 + 行内按钮怎么用（用户反馈"说明也没写，文件在哪"）
         root.addView(TextView(this).apply {
-            text = "收到的文件保存在：${recvDir().absolutePath}\n点「转发」发到目标设备；点「删除」移除本机文件。"
+            text = getString(R.string.ui_filepanel_where, recvDir().absolutePath)
             textSize = 11f
             setTextColor(resources.getColor(R.color.md_on_surface_variant))
             setPadding(0, 0, 0, dp(4f))
@@ -186,7 +186,7 @@ class FilePanelActivity : Activity() {
         })
         // 行内「删除」（v205）：子视图可点击会先消费触摸事件，不会误触发整行的转发
         row.addView(TextView(this).apply {
-            text = "删除"
+            text = getString(R.string.ui_common_delete)
             textSize = 14f
             setTypeface(null, Typeface.BOLD)
             setTextColor(Color.parseColor("#B3261E"))
@@ -199,11 +199,11 @@ class FilePanelActivity : Activity() {
     /** 行内「删除」：文件删除不可恢复，必须弹确认（用户反馈"文件管理里没有删除"） */
     private fun confirmDelete(f: File) {
         AlertDialog.Builder(this, R.style.Theme_AllPeriph_Miuix_Dialog)
-            .setTitle("删除文件")
-            .setMessage("确定删除「${f.name}」？删除后无法恢复。")
-            .setPositiveButton("删除") { _, _ ->
+            .setTitle(getString(R.string.ui_filepanel_delete_title))
+            .setMessage(getString(R.string.ui_filepanel_delete_msg, f.name))
+            .setPositiveButton(getString(R.string.ui_common_delete)) { _, _ ->
                 val ok = runCatching { f.delete() }.getOrDefault(false)
-                status(if (ok) "已删除 ${f.name}" else "删除失败：${f.name}", !ok)
+                status(if (ok) getString(R.string.ui_filepanel_deleted, f.name) else getString(R.string.ui_filepanel_delete_failed, f.name), !ok)
                 if (ok) refreshList()
             }
             .setNegativeButton(getString(R.string.ui_common_cancel), null)
@@ -260,7 +260,7 @@ class FilePanelActivity : Activity() {
         status(getString(R.string.ui_filepanel_status_send, f.name), false)
         Thread({
             val ok = FileSender.send(this, host, Uri.fromFile(f)) { p ->
-                mainHandler.post { status("发送中 ${p}% · ${f.name}", false) }
+                mainHandler.post { status(getString(R.string.ui_filepanel_sending_detail, p, f.name), false) }
             }
             mainHandler.post {
                 busy.set(false)
@@ -295,7 +295,7 @@ class FilePanelActivity : Activity() {
         status(getString(R.string.ui_filepanel_status_send_2), false)
         Thread({
             val ok = FileSender.send(this, host, uri) { p ->
-                mainHandler.post { status("发送中 ${p}%", false) }
+                mainHandler.post { status(getString(R.string.ui_filepanel_sending, p), false) }
             }
             mainHandler.post {
                 busy.set(false)

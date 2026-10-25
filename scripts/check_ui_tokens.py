@@ -17,8 +17,10 @@
    白名单：`<vector>` 图标内的 `fillColor`/`strokeColor` —— 单色图标本来就是**遮罩**，
    颜色由使用处 `android:tint` / `setColorFilter` 决定，写黑是惯例（本仓 `ic_apx_*` 即如此）。
 2. 布局里 `android:text|hint|contentDescription` 含中文 → 失败（应移入 `strings.xml`）。
-3. Kotlin 里 `set*Button("中文")`、`text = "中文"` 这类 → 只**统计并提示**，不让 CI 变红。
-   历史存量较大，先可视化再逐步收敛；数量下降说明在改善。
+3. Kotlin 里 `set*Button("中文")`、`setTitle`、`makeText`、`text = "中文"` 这类 → 只**统计并提示**，
+   不让 CI 变红（历史上存量较大，先可视化再逐步收敛）。统计分两类：
+   **UI 层**（有 Context，可资源化，目标 0）与**数据层**（`core/` `wireless/` `gadget/` `hid/` `audio/`
+   没有 Context，那里的中文是设备名与状态串，取不到 `R.string`，属已知例外）。
 
 注释行（`<!-- ... -->`）不参与判定 —— 文档里举例提到色值是正常的。
 """
@@ -82,20 +84,37 @@ def main():
                     problems.append("%s:%d 硬编码文案（应移入 strings.xml）：%s=\"%s…\""
                                     % (rel, i, m.group(1), m.group(2)[:24]))
 
-    # Kotlin 侧存量统计（只提示）
-    kt_hits = 0
+    # Kotlin 侧存量统计（只提示，不判失败）：UI 调用点上的中文字面量。
+    # 只认“会进界面”的调用点，Log/println 的中文不算（那是日志，不是文案）。
+    # 分两类：UI 层可资源化；core/wireless/gadget/hid/audio 是**数据层**（无 Context），
+    # 那里的中文是设备名/状态串（如 ControlTarget.label），技术上取不到 R.string，属已知例外。
+    UI_CALL = re.compile(
+        r"(?:set(Positive|Negative|Neutral)Button|setTitle|setMessage|setHint|setText"
+        r"|makeText|\.text\s*=|hint\s*=|label|status)\s*[\(=]")
+    DATA_LAYER = ("/core/", "/wireless/", "/gadget/", "/hid/", "/audio/")
+    kt_ui, kt_data = 0, 0
     java = os.path.join(ROOT, "android", "app", "src", "main", "java")
     for dirpath, _d, files in os.walk(java):
         for f in files:
             if not f.endswith(".kt"):
                 continue
+            rel = dirpath.replace(os.sep, "/") + "/"
+            bucket_data = any(mark in rel for mark in DATA_LAYER)
             for line in open(os.path.join(dirpath, f), encoding="utf-8"):
-                m = re.search(r'(?:set(Positive|Negative|Neutral)Button|text\s*=)\s*"([^"]*)"', line)
-                if m and CJK.search(m.group(2)):
-                    kt_hits += 1
+                if "Log." in line or "println" in line or line.lstrip().startswith(("//", "*", "/*")):
+                    continue
+                if not UI_CALL.search(line):
+                    continue
+                for m in re.finditer(r'"([^"]*)"', line):
+                    if CJK.search(m.group(1)):
+                        if bucket_data:
+                            kt_data += 1
+                        else:
+                            kt_ui += 1
 
     print("检查 %d 个布局/资源文件" % checked)
-    print("Kotlin 侧硬编码中文 UI 文案存量（不判失败）：%d 处" % kt_hits)
+    print("Kotlin 侧硬编码中文 UI 文案（不判失败）：UI 层 %d 处（目标是 0）、"
+          "数据层例外 %d 处（core/wireless/gadget/hid/audio 无 Context）" % (kt_ui, kt_data))
 
     if problems:
         print("\n========== UI 一致性违规 ==========")

@@ -209,7 +209,7 @@ class SettingsFragment : Fragment() {
         }
         // 批O：手动导出运行日志（issue 建议）——自进程 logcat → Download/AllPeriph/
         act.findViewById<android.view.View>(R.id.rowExportLog)?.setOnClickListener { v ->
-            android.widget.Toast.makeText(v.context, "正在收集日志…", android.widget.Toast.LENGTH_SHORT).show()
+            android.widget.Toast.makeText(v.context, v.context.getString(R.string.ui_log_collecting), android.widget.Toast.LENGTH_SHORT).show()
             Thread {
                 val msg = try {
                     val pid = android.os.Process.myPid()
@@ -379,7 +379,7 @@ class SettingsFragment : Fragment() {
         val act = activity ?: return
         val board = h.getHotkeyBoard()
         if (board.shortcuts.isEmpty()) {
-            Toast.makeText(act, "快捷键条还是空的，先在触控板页加几条", Toast.LENGTH_SHORT).show()
+            Toast.makeText(act, act.getString(R.string.ui_template_bar_empty), Toast.LENGTH_SHORT).show()
             return
         }
         val box = LinearLayout(act).apply {
@@ -716,7 +716,7 @@ class SettingsFragment : Fragment() {
     private fun showLogcat() {
         val dlg = AlertDialog.Builder(activity, R.style.Theme_AllPeriph_Miuix_Dialog)
             .setTitle(getString(R.string.ui_main_label_logcat))
-            .setMessage("读取中…")
+            .setMessage(getString(R.string.ui_loading))
             .setPositiveButton(getString(R.string.ui_common_close), null)
             .show()
         kotlin.concurrent.thread(name = "apx-logcat") {

@@ -366,4 +366,69 @@ TV/PC 控制 · 诊断 · 文件 · 自检/日志/悬浮球</string>
     <string name="ui_help_faq">① USB 模式需要 root（会提示授权）；② USB 模式仅支持 Windows，macOS 暂无副屏；③ 请把本应用加入电池优化白名单（设置→应用→电池→无限制），否则后台几十秒可能被杀、导致连不上；④ Windows 收 USB 麦克风/音箱、macOS 系统音频授权等进阶用法见仓库 docs/使用说明.md。</string>
     <string name="ui_help_title_features">功能说明</string>
     <string name="ui_help_title_howto">三步上手</string>
+    <!--
+      Kotlin 侧 UI 文案（原先写死在对话框 / 按钮 / Toast 里）。
+      命名沿用既有前缀：common 是按钮通用词，ui_<模块>_ 是局部文案。
+      注意：Android 资源里的百分号必须写 %%（单个 % 会被当格式符）。
+    -->
+    <string name="ui_common_clear">清空</string>
+    <string name="ui_common_new">新建</string>
+    <string name="ui_common_done">完成</string>
+    <string name="ui_common_restore">恢复</string>
+    <string name="ui_common_restore_default">恢复默认</string>
+    <string name="ui_common_send">发送</string>
+    <string name="common_device">设备</string>
+
+    <!-- 快捷设置磁贴（用户可见的系统级入口） -->
+    <string name="ui_tile_label_on">%1$s·已连接</string>
+    <string name="ui_tile_label_off">%1$s·未连接</string>
+    <string name="ui_tile_subtitle_on">%1$s · 点此进入</string>
+    <string name="ui_tile_subtitle_off">点此进入控制页</string>
+
+    <string name="ui_hotkey_title">快捷键管理</string>
+    <string name="ui_hotkey_title_new">新建快捷键</string>
+    <string name="ui_hotkey_title_edit">编辑快捷键</string>
+    <string name="ui_hotkey_empty">还没有快捷键，点下面「新建」加一条</string>
+    <string name="ui_hotkey_reset_msg">把快捷方式恢复为出厂预置？自建项会丢失。</string>
+    <string name="ui_hotkey_field_name">名称</string>
+    <string name="ui_hotkey_field_mods">修饰键</string>
+    <string name="ui_hotkey_field_key">按键</string>
+    <string name="ui_hotkey_name_hint">例如：复制</string>
+    <string name="ui_hotkey_pick_group">选择按键 · 分组</string>
+    <string name="ui_hotkey_pick_key">选择按键 · %1$s</string>
+
+    <string name="ui_keyboard_custom_empty">长按「自定义」页签编辑布局</string>
+    <string name="ui_keyboard_no_device">尚未连接受控设备</string>
+    <string name="ui_keyboard_power_title">%1$s 被控设备？</string>
+    <string name="ui_keyboard_power_msg">将直接%1$s 对端（需要被控端有 root；没有 root 只会退回待机）。</string>
+    <string name="ui_keyboard_power_sent">已发送%1$s 指令</string>
+
+    <string name="ui_custom_kbd_title">自定义键盘布局</string>
+    <string name="ui_custom_kbd_pick_group">选分组</string>
+
+    <string name="ui_filepanel_delete_title">删除文件</string>
+    <string name="ui_filepanel_delete_msg">确定删除「%1$s」？删除后无法恢复。</string>
+    <string name="ui_filepanel_deleted">已删除 %1$s</string>
+    <string name="ui_filepanel_delete_failed">删除失败：%1$s</string>
+    <string name="ui_filepanel_where">收到的文件保存在：%1$s\n点「转发」发到目标设备；点「删除」移除本机文件。</string>
+    <string name="ui_filepanel_sending_detail">发送中 %1$d%% · %2$s</string>
+    <string name="ui_filepanel_sending">发送中 %1$d%%</string>
+
+    <string name="ui_log_collecting">正在收集日志…</string>
+    <string name="ui_loading">读取中…</string>
+    <string name="ui_template_bar_empty">快捷键条还是空的，先在触控板页加几条</string>
+
+    <string name="ui_remoteinput_title">🔵 输入中</string>
+    <string name="ui_remoteinput_from">来自「%1$s」</string>
+    <string name="ui_remoteinput_hint">输入内容</string>
+    <string name="ui_remoteinput_touchpad">触控板 · 滑动移动光标 / 轻点左键 / 长按拖拽</string>
+    <string name="ui_remoteinput_need_text">先输入要发送的内容</string>
+    <string name="ui_remoteinput_sent">已发送</string>
+
+    <string name="ui_localsend_none">没有可发送的文件</string>
+    <string name="ui_localsend_sending">正在发送 %1$d 个文件到 %2$s…</string>
+
+    <string name="ui_remote_touchpad_hint">触摸控制\n单点 = 确认 · 按住滑动 = 移动光标</string>
+    <string name="ui_ime_panel_hint">已启用：物理键盘打字将发送到电脑；切回其他输入法可恢复手机打字</string>
+    <string name="ui_touchpad_send_progress">发送 %1$d%%</string>
 </resources>

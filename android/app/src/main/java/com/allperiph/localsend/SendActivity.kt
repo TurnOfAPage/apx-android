@@ -87,11 +87,11 @@ class SendActivity : Activity() {
         if (uris.isEmpty()) return
         val items = uris.mapNotNull { buildItem(it) }
         if (items.isEmpty()) {
-            Toast.makeText(this, "没有可发送的文件", Toast.LENGTH_SHORT).show(); return
+            Toast.makeText(this, getString(R.string.ui_localsend_none), Toast.LENGTH_SHORT).show(); return
         }
         val deviceType = if (resources.configuration.smallestScreenWidthDp >= 600) "tablet" else "phone"
         val selfInfo = LocalSendProtocol.deviceInfo(android.os.Build.MODEL, deviceType, true)
-        Toast.makeText(this, "正在发送 ${items.size} 个文件到 ${target.alias}…", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, getString(R.string.ui_localsend_sending, items.size, target.alias), Toast.LENGTH_SHORT).show()
         val pendingTmp = tmpFiles.toList()
         Thread {
             val r = LocalSendClient.send(target, selfInfo, items)

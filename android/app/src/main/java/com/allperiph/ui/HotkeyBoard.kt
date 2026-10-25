@@ -304,7 +304,7 @@ class HotkeyBoard(
             }
             if (shortcuts.isEmpty()) {
                 list.addView(TextView(act).apply {
-                    text = "还没有快捷键，点下面「新建」加一条"
+                    text = act.getString(R.string.ui_hotkey_empty)
                     textSize = 13f
                     setTextColor(s.textSecondary)
                     setPadding(0, dp(10), 0, dp(10))
@@ -314,11 +314,11 @@ class HotkeyBoard(
         rebuild()
 
         val dlg = AlertDialog.Builder(act, R.style.Theme_AllPeriph_Miuix_Dialog)
-            .setTitle("快捷键管理")
+            .setTitle(act.getString(R.string.ui_hotkey_title))
             .setView(box)
-            .setPositiveButton("新建", null)
-            .setNeutralButton("恢复默认", null)
-            .setNegativeButton("完成", null)
+            .setPositiveButton(act.getString(R.string.ui_common_new), null)
+            .setNeutralButton(act.getString(R.string.ui_common_restore_default), null)
+            .setNegativeButton(act.getString(R.string.ui_common_done), null)
             .create()
         dlg.setOnShowListener {
             dlg.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
@@ -359,16 +359,16 @@ class HotkeyBoard(
 
     private fun confirmReset() {
         AlertDialog.Builder(act, R.style.Theme_AllPeriph_Miuix_Dialog)
-            .setTitle("恢复默认")
-            .setMessage("把快捷方式恢复为出厂预置？自建项会丢失。")
-            .setPositiveButton("恢复") { _, _ ->
+            .setTitle(act.getString(R.string.ui_common_restore_default))
+            .setMessage(act.getString(R.string.ui_hotkey_reset_msg))
+            .setPositiveButton(act.getString(R.string.ui_common_restore)) { _, _ ->
                 shortcuts = HidKeys.DEFAULTS.toMutableList()
                 saveStore()
                 markCustomStore()
                 render()
                 onChanged?.invoke()
             }
-            .setNegativeButton("取消", null)
+            .setNegativeButton(act.getString(R.string.ui_common_cancel), null)
             .show()
     }
 
@@ -388,17 +388,17 @@ class HotkeyBoard(
             orientation = LinearLayout.VERTICAL
             setPadding(dp(20), dp(6), dp(20), dp(6))
         }
-        box.addView(label("名称", s))
+        box.addView(label(act.getString(R.string.ui_hotkey_field_name), s))
         val nameEt = EditText(act).apply {
             setText(cur.label)
-            hint = "例如：复制"
+            hint = act.getString(R.string.ui_hotkey_name_hint)
             textSize = 15f
             setSingleLine()
             setTextColor(s.textPrimary)
         }
         box.addView(nameEt, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
 
-        box.addView(label("修饰键", s), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(14) })
+        box.addView(label(act.getString(R.string.ui_hotkey_field_mods), s), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(14) })
         val modRow = LinearLayout(act).apply { orientation = LinearLayout.HORIZONTAL }
         val boxes = LinkedHashMap<Int, CheckBox>()
         HidKeys.MOD_LABELS.forEach { (text, bit) ->
@@ -414,7 +414,7 @@ class HotkeyBoard(
         box.addView(modRow)
 
         // 按键：先选组再选键（79 项平铺的 Spinner 太难滑）
-        box.addView(label("按键", s), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(6) })
+        box.addView(label(act.getString(R.string.ui_hotkey_field_key), s), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(6) })
         val keyBtn = TextView(act).apply {
             text = picked.first
             textSize = 15f
@@ -436,11 +436,11 @@ class HotkeyBoard(
         box.addView(keyBtn, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
 
         val dlg = AlertDialog.Builder(act, R.style.Theme_AllPeriph_Miuix_Dialog)
-            .setTitle(if (editing) "编辑快捷键" else "新建快捷键")
+            .setTitle(act.getString(if (editing) R.string.ui_hotkey_title_edit else R.string.ui_hotkey_title_new))
             .setView(box)
-            .setPositiveButton("保存", null)
-            .setNegativeButton("取消", null)
-            .apply { if (editing) setNeutralButton("删除", null) }
+            .setPositiveButton(act.getString(R.string.ui_common_save), null)
+            .setNegativeButton(act.getString(R.string.ui_common_cancel), null)
+            .apply { if (editing) setNeutralButton(act.getString(R.string.ui_common_delete), null) }
             .create()
 
         dlg.setOnShowListener {
@@ -476,16 +476,16 @@ class HotkeyBoard(
     private fun pickKey(onPicked: (Pair<String, Int>) -> Unit) {
         val groups = HidKeys.KEY_GROUPS.map { it.first }.toTypedArray()
         AlertDialog.Builder(act, R.style.Theme_AllPeriph_Miuix_Dialog)
-            .setTitle("选择按键 · 分组")
+            .setTitle(act.getString(R.string.ui_hotkey_pick_group))
             .setItems(groups) { _, gi ->
                 val (groupName, keys) = HidKeys.KEY_GROUPS[gi]
                 AlertDialog.Builder(act, R.style.Theme_AllPeriph_Miuix_Dialog)
-                    .setTitle("选择按键 · $groupName")
+                    .setTitle(act.getString(R.string.ui_hotkey_pick_key, groupName))
                     .setItems(keys.map { it.first }.toTypedArray()) { _, ki -> onPicked(keys[ki]) }
-                    .setNegativeButton("返回", null)
+                    .setNegativeButton(act.getString(R.string.ui_common_back), null)
                     .show()
             }
-            .setNegativeButton("取消", null)
+            .setNegativeButton(act.getString(R.string.ui_common_cancel), null)
             .show()
     }
 

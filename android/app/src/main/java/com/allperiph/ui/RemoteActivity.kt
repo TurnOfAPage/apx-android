@@ -397,7 +397,7 @@ class RemoteActivity : Activity() {
      * 只做「移动 + 确认」两个动作，不带拖拽 / 滚动 / 右键 —— 遥控器场景用不上。
      */
     private fun touchPad(): TextView = TextView(this).apply {
-        text = "触摸控制\n单点 = 确认 · 按住滑动 = 移动光标"
+        text = getString(R.string.ui_remote_touchpad_hint)
         textSize = 12f
         gravity = Gravity.CENTER
         setTextColor(getColor(R.color.md_on_surface_variant))

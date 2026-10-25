@@ -27,14 +27,14 @@ object CustomKeyboardDialog {
         val rows = KeyPref.customRows(act)?.map { it.toMutableList() }?.toMutableList()
             ?: defaultRows()
         AlertDialog.Builder(act, R.style.Theme_AllPeriph_Miuix_Dialog)
-            .setTitle("自定义键盘布局")
+            .setTitle(act.getString(R.string.ui_custom_kbd_title))
             .setView(buildView(act, rows))
-            .setPositiveButton("保存") { _, _ ->
+            .setPositiveButton(act.getString(R.string.ui_common_save)) { _, _ ->
                 KeyPref.setCustomRows(act, rows.map { it.toList() })
                 onDone()
             }
-            .setNegativeButton("取消", null)
-            .setNeutralButton("清空") { _, _ ->
+            .setNegativeButton(act.getString(R.string.ui_common_cancel), null)
+            .setNeutralButton(act.getString(R.string.ui_common_clear)) { _, _ ->
                 KeyPref.setCustomRows(act, null)
                 onDone()
             }
@@ -130,7 +130,7 @@ object CustomKeyboardDialog {
     private fun pickKey(act: Activity, onPick: (String) -> Unit) {
         val groups = HidKeys.KEY_GROUPS
         AlertDialog.Builder(act, R.style.Theme_AllPeriph_Miuix_Dialog)
-            .setTitle("选分组")
+            .setTitle(act.getString(R.string.ui_custom_kbd_pick_group))
             .setItems(groups.map { it.first }.toTypedArray()) { d1, gi ->
                 d1.dismiss()
                 AlertDialog.Builder(act, R.style.Theme_AllPeriph_Miuix_Dialog)

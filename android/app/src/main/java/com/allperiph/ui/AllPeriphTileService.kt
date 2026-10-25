@@ -37,12 +37,17 @@ class AllPeriphTileService : TileService() {
         val tile = qsTile ?: return
         val connected = ControlTarget.isControlling()
         tile.state = if (connected) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE
-        tile.label = if (connected) "全能外设·已连接" else "全能外设·未连接"
+        val appName = getString(R.string.app_name)
+        tile.label = if (connected) getString(R.string.ui_tile_label_on, appName)
+        else getString(R.string.ui_tile_label_off, appName)
         // 副标题写清「点它会发生什么」—— 原来写"点击刷新状态"（点了也只是自己刷新自己）
         tile.subtitle = if (connected) {
-            "${ControlTarget.label.ifBlank { "设备" }} · 点此进入"
+            getString(
+                R.string.ui_tile_subtitle_on,
+                ControlTarget.label.ifBlank { getString(R.string.common_device) },
+            )
         } else {
-            "点此进入控制页"
+            getString(R.string.ui_tile_subtitle_off)
         }
         tile.updateTile()
     }

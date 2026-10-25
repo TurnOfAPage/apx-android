@@ -161,7 +161,7 @@ class KeyboardPanels(private val act: Activity) {
         val rows = KeyPref.customRows(act)
         if (rows.isNullOrEmpty()) {
             return TextView(act).apply {
-                text = "长按「自定义」页签编辑布局"
+                text = act.getString(R.string.ui_keyboard_custom_empty)
                 gravity = Gravity.CENTER
                 setTextColor(cText2)
                 textSize = 14f
@@ -312,17 +312,17 @@ class KeyboardPanels(private val act: Activity) {
     private fun confirmPower(action: Int, label: String) {
         val c = com.allperiph.wireless.ControlTarget.controlClient
         if (c == null) {
-            android.widget.Toast.makeText(act, "尚未连接受控设备", android.widget.Toast.LENGTH_SHORT).show()
+            android.widget.Toast.makeText(act, act.getString(R.string.ui_keyboard_no_device), android.widget.Toast.LENGTH_SHORT).show()
             return
         }
         android.app.AlertDialog.Builder(act)
-            .setTitle("$label 被控设备？")
-            .setMessage("将直接$label 对端（需要被控端有 root；没有 root 只会退回待机）。")
+            .setTitle(act.getString(R.string.ui_keyboard_power_title, label))
+            .setMessage(act.getString(R.string.ui_keyboard_power_msg, label))
             .setPositiveButton(label) { _, _ ->
                 c.power(action)
-                android.widget.Toast.makeText(act, "已发送$label 指令", android.widget.Toast.LENGTH_SHORT).show()
+                android.widget.Toast.makeText(act, act.getString(R.string.ui_keyboard_power_sent, label), android.widget.Toast.LENGTH_SHORT).show()
             }
-            .setNegativeButton("取消", null)
+            .setNegativeButton(act.getString(R.string.ui_common_cancel), null)
             .show()
     }
 

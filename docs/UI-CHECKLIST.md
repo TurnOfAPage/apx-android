@@ -82,7 +82,11 @@
 |------|------|
 | 布局/drawable 字面色值 | 0（除 vector 遮罩，已由关卡守护） |
 | 布局硬编码文案 | 0（已全部入 `strings.xml`） |
-| Kotlin 硬编码中文 UI 文案 | 12 处（关卡只统计不判失败，逐步收敛） |
+| Kotlin 硬编码中文 UI 文案（UI 层） | 0（对话框 / 按钮 / 标签 / Toast / 磁贴全部入资源） |
+| Kotlin 硬编码中文（数据层） | 2 处 —— `core/Uplink.kt` 的「出口：」前缀、`wireless/ControlTarget.kt` 的设备默认名「本机 / PC」 |
 
-> Kotlin 存量集中在对话框按钮与即时构造的视图上；要清的话，先把按钮词收进
-> `common_*` 系列，再逐页替换 —— 一次一页，别整仓扫。
+> 数据层这两处**技术上无法资源化**：`Uplink` 与 `ControlTarget` 都没有 `Context`，
+> 取不到 `R.string`；它们的中文是状态串与设备名，不是可本地化文案。
+> 关卡把它们单独计数，UI 层一旦冒出来就会显眼。
+
+`scripts/check_ui_tokens.py` 每次 CI 都会打印这两类数字 —— UI 层应恒为 0。

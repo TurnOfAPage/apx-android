@@ -26,7 +26,7 @@ class ApxImeService : InputMethodService() {
             setPadding(48, 32, 48, 32)
         }
         root.addView(TextView(this).apply {
-            text = "已启用：物理键盘打字将发送到电脑；切回其他输入法可恢复手机打字"
+            text = getString(R.string.ui_ime_panel_hint)
             textSize = 14f
         })
         return root

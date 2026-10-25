@@ -1240,7 +1240,7 @@ class TouchpadActivity : Activity() {
         Toast.makeText(this, getString(R.string.ui_main_toast_file_send), Toast.LENGTH_SHORT).show()
         Thread({
             val ok = FileSender.send(this, host, uri) { p ->
-                runOnUiThread { statusView?.text = "发送 $p%" }
+                runOnUiThread { statusView?.text = getString(R.string.ui_touchpad_send_progress, p) }
             }
             runOnUiThread {
                 Toast.makeText(this, if (ok) getString(R.string.ui_main_text_file_send_done) else getString(R.string.ui_touchpad_text_send_failed), Toast.LENGTH_SHORT).show()
