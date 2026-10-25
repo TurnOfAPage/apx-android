@@ -213,6 +213,69 @@
             android:visibility="gone" />
     </LinearLayout>
 
+    <!-- 批P：横屏操作条 pill（issue 实测）——触控板/键盘切换 + 方向锁 + 设置，替代四指滑唯一路径 -->
+    <LinearLayout
+        android:id="@+id/pillLandActions"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|end"
+        android:layout_marginTop="12dp"
+        android:layout_marginEnd="12dp"
+        android:background="@drawable/bg_card"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:padding="4dp"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/btnLandTouchpad"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:paddingStart="10dp"
+            android:paddingEnd="6dp"
+            android:paddingTop="6dp"
+            android:paddingBottom="6dp"
+            android:text="触控板"
+            android:textColor="@color/md_on_surface"
+            android:textSize="13sp" />
+
+        <TextView
+            android:id="@+id/btnLandKeyboard"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:paddingStart="6dp"
+            android:paddingEnd="6dp"
+            android:paddingTop="6dp"
+            android:paddingBottom="6dp"
+            android:text="键盘"
+            android:textColor="@color/md_on_surface"
+            android:textSize="13sp" />
+
+        <TextView
+            android:id="@+id/btnLandLock"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:paddingStart="6dp"
+            android:paddingEnd="6dp"
+            android:paddingTop="6dp"
+            android:paddingBottom="6dp"
+            android:text="锁定"
+            android:textColor="@color/md_on_surface"
+            android:textSize="13sp" />
+
+        <TextView
+            android:id="@+id/btnLandSettings"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:paddingStart="6dp"
+            android:paddingEnd="10dp"
+            android:paddingTop="6dp"
+            android:paddingBottom="6dp"
+            android:text="设置"
+            android:textColor="@color/md_on_surface"
+            android:textSize="13sp" />
+    </LinearLayout>
+
     <!-- 横屏沉浸右上角悬浮设置入口（反馈#2）：横屏 chrome 全隐时的常驻入口 -->
     <TextView
         android:id="@+id/btnSettingsFloat"

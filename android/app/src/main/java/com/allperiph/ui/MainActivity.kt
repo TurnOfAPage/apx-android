@@ -488,8 +488,8 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
         // 但 include 标签的 android:visibility 会被 LayoutInflater 忽略（只认 layout_* 和 id），
         // 所以顶栏/底栏的显隐只能在这里设。
         headerBar.visibility = if (landscape) View.GONE else View.VISIBLE
-        // 反馈#9：横屏也常驻底部分页栏（原：沉浸隐藏 → 只能四指滑，从通知栏进来切页不方便）
-        tabBarView.visibility = View.VISIBLE
+        // 批P：撤回反馈#9（实测横屏底栏碍事）→ 恢复对称式隐藏；切页改走右上 pill 条
+        tabBarView.visibility = if (landscape) View.GONE else View.VISIBLE
 
         // 反馈#9：横屏底部分页栏常驻后，底部留白两种朝向都保留 —— 空间正好被分页栏用掉，
         // 不再是 v217 那种“留白但栏被隐藏”的 300px 白带（横屏键盘/触控板下缘各让出栏位）。
@@ -700,7 +700,7 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
         findViewById<TextView>(R.id.btnSettingsEntry)?.visibility =
             if (!landscape && !onSettings) View.VISIBLE else View.GONE
         findViewById<TextView>(R.id.btnSettingsFloat)?.apply {
-            visibility = if (landscape) View.VISIBLE else View.GONE
+            visibility = View.GONE // 批P：横屏操作条 pill（btnLandSettings）接管
             text = getString(
                 if (onSettings) R.string.ui_main_btn_settings_back
                 else R.string.ui_main_btn_settings_entry,
@@ -1648,6 +1648,12 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
             isChecked = orientLocked
             setOnCheckedChangeListener { _, on -> setOrientLock(on) }
         }
+        // 批P：横屏操作条 pill——触控板/键盘切换 + 方向锁 + 设置（issue 实测：底栏碍事、四指滑不直观）
+        findViewById<View>(R.id.pillLandActions)?.visibility = if (landscape) View.VISIBLE else View.GONE
+        findViewById<TextView>(R.id.btnLandTouchpad)?.setOnClickListener { Feedback.tap(it); showPage(PAGE_TOUCHPAD) }
+        findViewById<TextView>(R.id.btnLandKeyboard)?.setOnClickListener { Feedback.tap(it); showPage(PAGE_KEYBOARD) }
+        findViewById<TextView>(R.id.btnLandLock)?.setOnClickListener { Feedback.tap(it); toggleOrientLock() }
+        findViewById<TextView>(R.id.btnLandSettings)?.setOnClickListener { Feedback.tap(it); showPage(PAGE_SETTINGS) }
         // 右上角设置入口常驻（反馈#2）：竖屏顶栏 btnSettingsEntry、横屏悬浮 btnSettingsFloat，
         // 不再依赖「四指滑 / 底栏页签」才能进设置页。
         findViewById<TextView>(R.id.btnSettingsEntry)?.setOnClickListener {
