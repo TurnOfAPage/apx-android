@@ -98,14 +98,18 @@ jobs:
           tail -80 /tmp/build.log 2>/dev/null || true
 
       # 失败可见性：workflow logs API 要求仓库 admin 权限，没 PAT 的会话（云端 AI 等）
-      # 根本读不到日志，只能靠猜。annotation 不一样 —— 公开仓库匿名就能读：
-      #   GET /repos/{owner}/{repo}/check-runs/{id}/annotations
-      # 所以把编译错误摘录原样塞进 annotation（同时打 summary + artifact 兜底）。
-      - name: Publish build errors (check annotation)
+      # 根本读不到日志，只能靠猜。
+      #
+      # 用 **workflow command**（`::error::`）而不是 check-runs API：GitHub 会把它
+      # 自动收集成该 job 的 annotation，公开仓库匿名可读，且不需要任何 token 权限
+      # —— 原先用 gh api 先查 check-run id 再 POST，实测在 job 进行中返回 404
+      # （Not Found），annotation 一直没写上去。
+      #
+      # 注意：GitHub 每个 step 最多保留 10 条 annotation、消息长度有限，所以取前 10 行
+      # 并截断；完整日志另有 job summary 与 artifact 两条路。
+      - name: Publish build errors (annotation + summary)
         if: failure()
         continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p ci-log
           grep -n -E "^e: |error: |FAILURE: |What went wrong|> Task .*FAILED|Execution failed" \
@@ -118,15 +122,17 @@ jobs:
             head -40 ci-log/errors.txt 2>/dev/null || true
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-          CR=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/check-runs?per_page=100" \
-                 --jq '[.check_runs[] | select(.name == "android")][0].id // empty' 2>/dev/null || true)
-          if [ -n "$CR" ]; then
-            jq -n --rawfile m ci-log/errors.txt \
-              '{annotations:[{path:".github/workflows/build.yml",start_line:1,end_line:1,annotation_level:"failure",message:(if ($m | length) > 0 then ($m[0:40000]) else "未捕获到 error 行，请下载 artifact build-log-android 查看完整日志" end)}]}' \
-              > ci-log/ann.json
-            gh api -X POST "repos/${GITHUB_REPOSITORY}/check-runs/${CR}/annotations" --input ci-log/ann.json
-          else
-            echo "check run 'android' 未找到，跳过 annotation"
+          # workflow command 需要转义 %、CR、LF（顺序：先 % 再换行）
+          n=0
+          while IFS= read -r line; do
+            [ -z "$line" ] && continue
+            msg=$(printf '%s' "$line" | sed -e 's/%/%25/g' -e 's/\r/%0D/g' -e 's/\n/%0A/g' | cut -c1-600)
+            echo "::error title=Android build error::${msg}"
+            n=$((n + 1))
+            [ "$n" -ge 10 ] && break
+          done < ci-log/errors.txt
+          if [ "$n" -eq 0 ]; then
+            echo "::error title=Android build error::未捕获到 error 行，请下载 artifact build-log-android 查看完整日志"
           fi
 
       - name: Upload build log (debug)

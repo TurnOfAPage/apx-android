@@ -60,6 +60,38 @@ def is_vector_masking(path):
     return "<vector" in head
 
 
+def check_r_import(problems):
+    """用了 R.* 却没 `import <namespace>.R` —— 本地没有 Android SDK，这类错误只有 CI 编译才暴露，
+    跑一轮要几分钟（run#594 三个文件漏 import，整轮构建白跑）。在这里提前挡掉。
+
+    判断依据是**调用点**而不是「文件在哪个包」：Android 的 R 类由 AGP 按模块 namespace 生成
+    （app=com.allperiph、tv=com.allperiph.tv），同包文件不用 import，其余都要。
+    `android.R`（系统资源）不算 —— 正则要求 R 前面不是点或标识符字符。
+    """
+    R_USE = re.compile(r"(?<![\w.])R\.(string|color|layout|id|drawable|style|array|dimen|raw|xml|anim|menu|plurals|mipmap|font|integer|bool)\b")
+    for mod, ns in (("app", "com.allperiph"), ("tv", "com.allperiph.tv")):
+        base = os.path.join(ROOT, "android", mod, "src", "main", "java")
+        if not os.path.isdir(base):
+            continue
+        for dirpath, _d, files in os.walk(base):
+            for f in files:
+                if not f.endswith((".kt", ".java")):
+                    continue
+                p = os.path.join(dirpath, f)
+                txt = open(p, encoding="utf-8", errors="replace").read()
+                if not R_USE.search(txt):
+                    continue
+                pkg = re.search(r"^\s*package\s+([\w.]+)", txt, re.M)
+                if pkg and pkg.group(1) == ns:
+                    continue
+                if re.search(r"^import\s+" + re.escape(ns) + r"\.R\s*$", txt, re.M):
+                    continue
+                if re.search(r"^import\s+" + re.escape(ns) + r"\.\*\s*$", txt, re.M):
+                    continue
+                problems.append("%s 用了 R.* 却没有 `import %s.R`（编译必炸）"
+                                % (os.path.relpath(p, ROOT), ns))
+
+
 def main():
     problems = []
     checked = 0
@@ -111,6 +143,8 @@ def main():
                             kt_data += 1
                         else:
                             kt_ui += 1
+
+    check_r_import(problems)
 
     print("检查 %d 个布局/资源文件" % checked)
     print("Kotlin 侧硬编码中文 UI 文案（不判失败）：UI 层 %d 处（目标是 0）、"

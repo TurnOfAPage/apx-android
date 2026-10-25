@@ -15,6 +15,7 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
+import com.allperiph.R
 import com.allperiph.shared.proto.ApxFrame
 import com.allperiph.shared.util.Log
 

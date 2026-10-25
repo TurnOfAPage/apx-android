@@ -97,6 +97,13 @@
   深色下变暗），而标题/提示/收起三处文字写死 `#DD000000` / `#66000000` / `#88000000` ——
   深色模式下黑字压深底，整块面板看不清。改用 `md_on_surface` / `md_on_surface_variant` /
   `md_primary` 令牌
+- **修 run#594 编译失败 + 失败可见性改进**：3 个文件（被控输入面板 / 磁贴 / 输入法面板）
+  引用了 `R.string.*` 却没 `import com.allperiph.R` —— 本地没有 Android SDK，这类错误只有
+  CI 编译才暴露。补 import，并在 `scripts/check_ui_tokens.py` 加关卡「用了 R.* 却没有
+  import <namespace>.R」（按模块 namespace 判定，`android.R` 不算）。
+  同时把构建失败的错误上报从 check-runs API 改成 **workflow command**（`::error::`）：
+  原实现先用 gh api 查 check-run id 再 POST，实测在 job 进行中返回 404、annotation 一直没写上去；
+  workflow command 由 GitHub 自动收集成 annotation，不需要任何 token 权限
 - **Kotlin 侧 UI 文案入资源**：对话框标题与按钮（快捷键管理 / 自定义键盘布局 / 删除文件 /
   恢复默认…）、字段标签、EditText hint、Toast 提示、被控输入面板说明、快捷设置磁贴标签
   共 55 处从硬编码中文改为 `strings.xml` 资源（按钮词复用既有 `ui_common_*`，百分号按

@@ -6,6 +6,7 @@ import android.view.View
 import android.view.inputmethod.EditorInfo
 import android.widget.LinearLayout
 import android.widget.TextView
+import com.allperiph.R
 import com.allperiph.shared.util.Log
 
 /**
