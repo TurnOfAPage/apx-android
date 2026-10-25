@@ -2,8 +2,8 @@
 <!-- 悬浮球背景：半透明圆（深底白点都看得清） -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
     android:shape="oval">
-    <solid android:color="#59000000" />
+    <solid android:color="#F2FFFFFF" />
     <stroke
         android:width="1dp"
-        android:color="#66FFFFFF" />
+        android:color="#33000000" />
 </shape>

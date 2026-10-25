@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 悬浮球：48dp 半透明圆球（反馈#7） -->
+<!-- 悬浮球：56dp 白实底圆球（反馈#7 + 实测改版） -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:layout_width="48dp"
-    android:layout_height="48dp"
+    android:layout_width="56dp"
+    android:layout_height="56dp"
     android:background="@drawable/bg_floating_ball"
     android:clickable="true"
     android:focusable="true">
@@ -13,7 +13,7 @@
         android:layout_height="wrap_content"
         android:layout_gravity="center"
         android:text="●"
-        android:textSize="14sp"
-        android:textColor="#FFFFFFFF" />
+        android:textSize="16sp"
+        android:textColor="#CC000000" />
 
 </FrameLayout>
