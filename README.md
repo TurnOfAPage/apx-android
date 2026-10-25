@@ -166,6 +166,7 @@ cmake --build build_display --config Release
 | [docs/REALDEVICE-NOTES.md](docs/REALDEVICE-NOTES.md) | 真机实测结论 |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | 能力现状与扩展点 |
 | [docs/CHANGELOG.md](docs/CHANGELOG.md) | 版本更新日志 |
+| [docs/CLIENTS.md](docs/CLIENTS.md) | 各端平台客户端与功能总表 |
 
 ---
 

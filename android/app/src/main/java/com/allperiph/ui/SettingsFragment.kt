@@ -555,6 +555,8 @@ class SettingsFragment : Fragment() {
         })
         tvBox.addView(settingRow(getString(R.string.ui_main_label_state_channel_inject), getString(R.string.ui_main_btn_selftest), accent) { showControlledCaps() })
         tvBox.addView(settingRow(getString(R.string.ui_main_label_log_view), getString(R.string.ui_common_open), accent) { showLogs() })
+        // 反馈#4：环形缓冲只留「日志级别」，信息量不够 —— 这里给全进程/内核 tag 的真 logcat
+        tvBox.addView(settingRow(getString(R.string.ui_main_label_logcat), getString(R.string.ui_common_open), accent) { showLogcat() })
         // 最近连过的设备（ConnectHistory 持久化，v196）：点一下直接重连，不用重新挑设备。
         //   这段曾加在 MainActivity.renderTv() 里，而那个方法后来改成转发到本 Fragment ——
         //   随之被一起丢掉了（ConnectHistory 只写不读、文案零引用），现在补在真正的渲染方。
@@ -623,6 +625,42 @@ class SettingsFragment : Fragment() {
             .setMessage(text)
             .setPositiveButton(getString(R.string.ui_common_close), null)
             .show()
+    }
+
+    /**
+     * Logcat 系统日志（反馈#4）：showLogs() 的环形缓冲只到「日志级别」，
+     * 这里经 root 抓**全进程全 tag** 的真 logcat；无 root 时降级为本进程日志
+     * （App 读自己的日志不需要 READ_LOGS）。后台线程抓取，抓到回填对话框。
+     */
+    private fun showLogcat() {
+        val dlg = AlertDialog.Builder(activity, R.style.Theme_AllPeriph_Miuix_Dialog)
+            .setTitle(getString(R.string.ui_main_label_logcat))
+            .setMessage("读取中…")
+            .setPositiveButton(getString(R.string.ui_common_close), null)
+            .show()
+        kotlin.concurrent.thread(name = "apx-logcat") {
+            val out = readLogcat()
+            activity?.runOnUiThread {
+                if (dlg.isShowing) dlg.setMessage(out.takeLast(12000))
+            }
+        }
+    }
+
+    private fun readLogcat(): String {
+        // ① root 全量（USB 模式本就需要 root，能看到全部进程与内核 tag）
+        val shell = com.allperiph.gadget.RootShell.open()
+        if (shell != null) {
+            val r = shell.exec("logcat -d -v time -t 2000 2>/dev/null", 8_000L)
+            shell.close()
+            if (r.out.isNotBlank()) return r.out
+        }
+        // ② 降级：本进程日志（无需 READ_LOGS 权限）
+        return runCatching {
+            val p = Runtime.getRuntime().exec(
+                arrayOf("logcat", "-d", "-v", "time", "--pid", android.os.Process.myPid().toString(), "-t", "1500"),
+            )
+            p.inputStream.bufferedReader().readText()
+        }.getOrElse { e -> "logcat 读取失败：${e.message}" }
     }
 
     // ==================== File ====================
