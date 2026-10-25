@@ -1,7 +1,7 @@
 package com.allperiph.localsend
 
 import org.json.JSONObject
-import java.io.BufferedReader
+import java.io.EOFException
 import java.io.InputStream
 import java.io.OutputStream
 import java.net.ServerSocket
@@ -10,7 +10,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * 极简 HTTP/1.1 server，仅覆盖 LocalSend v2 所需端点（每连接一线程，Connection: close）。
- * 不引第三方依赖；错误路径一律文本 4xx，对端对不认识的路径会自行降级。
+ * 关键实现约束：header/JSON body 都从原始 InputStream 逐字节读，**不引入 BufferedReader**——
+ * 字符缓冲会预读吞掉 upload body 开头字节，导致流位置错位、文件损坏。
  */
 class LocalSendHttpServer(
     private val port: Int,
@@ -23,7 +24,7 @@ class LocalSendHttpServer(
         /** POST prepare-upload：接受清单，返回 {sessionId, files:{id:token}} */
         fun prepareUpload(body: JSONObject): JSONObject
 
-        /** POST upload：打开目标文件输出流；未知 session/file 返回 null → 404 */
+        /** POST|PUT upload：打开目标文件输出流；未知 session/file 返回 null → 404 */
         fun openUpload(sessionId: String, fileId: String): OutputStream?
 
         /** 传输结束（ok=写完并关闭）或出错时回调 */
@@ -35,13 +36,12 @@ class LocalSendHttpServer(
 
     private val running = AtomicBoolean(false)
     private var serverSocket: ServerSocket? = null
-    private var acceptThread: Thread? = null
 
     fun start() {
         if (!running.compareAndSet(false, true)) return
         val ss = ServerSocket(port)
         serverSocket = ss
-        acceptThread = Thread({
+        Thread({
             while (running.get()) {
                 val socket = try { ss.accept() } catch (_: Throwable) { break }
                 Thread { handle(socket) }.apply { isDaemon = true; start() }
@@ -56,39 +56,39 @@ class LocalSendHttpServer(
     }
 
     private fun handle(socket: Socket) {
-        var finished = false
         try {
             socket.soTimeout = 120_000
             val input = socket.getInputStream()
-            val reader = input.bufferedReader(Charsets.UTF_8)
-            val requestLine = reader.readLine() ?: return
+            val out = socket.getOutputStream()
+
+            val requestLine = readLineRaw(input) ?: return
             val parts = requestLine.split(" ")
             if (parts.size < 3) return
             val method = parts[0].uppercase()
             val path = parts[1].substringBefore('?')
             val query = if ('?' in parts[1]) parts[1].substringAfter('?') else ""
 
-            val headers = HashMap<String, String>()
+            var contentLength = 0L
             while (true) {
-                val line = reader.readLine() ?: break
+                val line = readLineRaw(input) ?: break
                 if (line.isEmpty()) break
                 val idx = line.indexOf(':')
-                if (idx > 0) headers[line.substring(0, idx).trim().lowercase()] = line.substring(idx + 1).trim()
+                if (idx > 0 && line.substring(0, idx).trim().equals("Content-Length", true)) {
+                    contentLength = line.substring(idx + 1).trim().toLongOrNull() ?: 0L
+                }
             }
-            val contentLength = headers["content-length"]?.toLongOrNull() ?: 0L
 
-            val out = socket.getOutputStream()
             when {
                 method == "GET" && path == LocalSendProtocol.PATH_INFO ->
                     respondJson(out, 200, handler.deviceInfo())
 
                 method == "POST" && path == LocalSendProtocol.PATH_REGISTER -> {
-                    readBodyText(reader, contentLength)
+                    skipBody(input, contentLength)
                     respondJson(out, 200, handler.deviceInfo())
                 }
 
                 method == "POST" && path == LocalSendProtocol.PATH_PREPARE -> {
-                    val body = JSONObject(readBodyText(reader, contentLength))
+                    val body = JSONObject(readBodyBytes(input, contentLength))
                     respondJson(out, 200, handler.prepareUpload(body))
                 }
 
@@ -114,46 +114,68 @@ class LocalSendHttpServer(
                 }
 
                 method == "POST" && path == LocalSendProtocol.PATH_CANCEL -> {
-                    readBodyText(reader, contentLength)
+                    skipBody(input, contentLength)
                     handler.cancel(queryParam(query, "sessionId"))
                     respondText(out, 204, "")
                 }
 
-                else -> respondText(out, 404, "not found")
+                else -> {
+                    skipBody(input, contentLength)
+                    respondText(out, 404, "not found")
+                }
             }
-            finished = true
         } catch (_: Throwable) {
-            // 连接级异常：对端超时/中断属常态，静默即可
+            // 连接级异常：对端超时/中断属常态
         } finally {
-            if (!finished) { /* 未正常响应时不做额外处理 */ }
             try { socket.close() } catch (_: Throwable) {}
         }
     }
 
-    private fun readBodyText(reader: BufferedReader, length: Long): String {
+    /** 从原始流读一行（LF 结尾，容忍 CR）；上限 8KB 防滥用 */
+    private fun readLineRaw(input: InputStream): String? {
+        val buf = ByteArrayOutputStream(128)
+        while (true) {
+            val b = input.read()
+            if (b < 0) return if (buf.size() == 0) null else String(buf.toByteArray(), Charsets.ISO_8859_1)
+            if (b == '\n'.code) break
+            if (buf.size() > 8192) throw IllegalStateException("header too long")
+            buf.write(b)
+        }
+        var bytes = buf.toByteArray()
+        if (bytes.isNotEmpty() && bytes.last() == '\r'.code.toByte()) bytes = bytes.copyOf(bytes.size - 1)
+        return String(bytes, Charsets.ISO_8859_1)
+    }
+
+    private fun readBodyBytes(input: InputStream, length: Long): String {
         if (length <= 0) return ""
-        val chars = CharArray(length.toInt().coerceAtMost(1 shl 20))
+        val bytes = ByteArray(length.toInt().coerceAtMost(4 shl 20))
         var read = 0
-        while (read < chars.size) {
-            val n = reader.read(chars, read, chars.size - read)
+        while (read < bytes.size) {
+            val n = input.read(bytes, read, bytes.size - read)
             if (n < 0) break
             read += n
         }
-        return String(chars, 0, read)
+        return String(bytes, 0, read, Charsets.UTF_8)
     }
 
-    /** 按 Content-Length 精确搬字节：body 尚未被 reader 缓冲区消费时才成立；
-     *  我们仅对 upload（流式 body）走此路径且此前未读过 body 文本 */
-    private fun copyExactly(input: InputStream, target: OutputStream, length: Long) {
+    private fun skipBody(input: InputStream, length: Long) {
         val buf = ByteArray(64 * 1024)
         var remaining = length
-        if (remaining <= 0) {
-            // 无 Content-Length（chunked 等）：本地网络不常见，尽力读到 EOF 不支持，直接视为失败
-            throw IllegalStateException("upload without content-length")
-        }
         while (remaining > 0) {
             val n = input.read(buf, 0, minOf(buf.size.toLong(), remaining).toInt())
-            if (n < 0) throw java.io.EOFException("truncated body")
+            if (n < 0) break
+            remaining -= n
+        }
+    }
+
+    /** 按 Content-Length 精确搬字节到文件流 */
+    private fun copyExactly(input: InputStream, target: OutputStream, length: Long) {
+        if (length <= 0) throw IllegalStateException("upload without content-length")
+        val buf = ByteArray(64 * 1024)
+        var remaining = length
+        while (remaining > 0) {
+            val n = input.read(buf, 0, minOf(buf.size.toLong(), remaining).toInt())
+            if (n < 0) throw EOFException("truncated body")
             target.write(buf, 0, n)
             remaining -= n
         }
@@ -164,7 +186,7 @@ class LocalSendHttpServer(
 
     private fun respondJson(out: OutputStream, code: Int, json: JSONObject) {
         val body = json.toString().toByteArray(Charsets.UTF_8)
-        val status = when (code) { 200 -> "OK"; 204 -> "No Content"; else -> "Error" }
+        val status = if (code == 200) "OK" else "No Content"
         val head = "HTTP/1.1 $code $status\r\n" +
             "Content-Type: application/json; charset=utf-8\r\n" +
             "Content-Length: ${body.size}\r\n" +
@@ -180,4 +202,6 @@ class LocalSendHttpServer(
             "Connection: close\r\n\r\n"
         out.write(head.toByteArray(Charsets.US_ASCII)); out.write(body); out.flush()
     }
+
+    private class ByteArrayOutputStream(cap: Int) : java.io.ByteArrayOutputStream(cap)
 }
