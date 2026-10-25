@@ -15,6 +15,7 @@ on:
 
 permissions:
   contents: write
+  checks: write       # 失败时把编译错误写进 check-run annotation（公开仓库匿名可读）
 
 # ---- 官方 runner 版本（最简单最快，零配置零硬件零维护）----
 # GitHub Free 仓库：Android + Linux + PC 原生编译 + Release 全跑在官方 runner 上。
@@ -71,6 +72,49 @@ jobs:
           grep -n -A 5 -i "error:" /tmp/build.log 2>/dev/null || true
           echo "========== LAST 80 LINES =========="
           tail -80 /tmp/build.log 2>/dev/null || true
+
+      # 失败可见性：workflow logs API 要求仓库 admin 权限，没 PAT 的会话（云端 AI 等）
+      # 根本读不到日志，只能靠猜。annotation 不一样 —— 公开仓库匿名就能读：
+      #   GET /repos/{owner}/{repo}/check-runs/{id}/annotations
+      # 所以把编译错误摘录原样塞进 annotation（同时打 summary + artifact 兜底）。
+      - name: Publish build errors (check annotation)
+        if: failure()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p ci-log
+          grep -n -E "^e: |error: |FAILURE: |What went wrong|> Task .*FAILED|Execution failed" \
+            /tmp/build.log 2>/dev/null | head -60 > ci-log/errors.txt || true
+          echo "========== ERRORS =========="; cat ci-log/errors.txt 2>/dev/null || true
+          {
+            echo "## Android 构建失败 · 错误摘录"
+            echo ''
+            echo '```'
+            head -40 ci-log/errors.txt 2>/dev/null || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          CR=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/check-runs?per_page=100" \
+                 --jq '[.check_runs[] | select(.name == "android")][0].id // empty' 2>/dev/null || true)
+          if [ -n "$CR" ]; then
+            jq -n --rawfile m ci-log/errors.txt \
+              '{annotations:[{path:".github/workflows/build.yml",start_line:1,end_line:1,annotation_level:"failure",message:(if ($m | length) > 0 then ($m[0:40000]) else "未捕获到 error 行，请下载 artifact build-log-android 查看完整日志" end)}]}' \
+              > ci-log/ann.json
+            gh api -X POST "repos/${GITHUB_REPOSITORY}/check-runs/${CR}/annotations" --input ci-log/ann.json
+          else
+            echo "check run 'android' 未找到，跳过 annotation"
+          fi
+
+      - name: Upload build log (debug)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-android
+          path: |
+            ci-log/errors.txt
+            /tmp/build.log
+          retention-days: 7
+          if-no-files-found: ignore
 
       - name: Protocol unit tests
         run: ./gradlew :app:testReleaseUnitTest --no-daemon --stacktrace 2>&1 | tail -50

@@ -17,11 +17,13 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      actions: write      # 推完提交要能再 workflow_dispatch 点一次 Build
     steps:
       - uses: actions/checkout@v4
       - name: apply edits
         run: python3 .github/scripts/repo_edit.py
       - name: commit and push
+        id: commit
         env:
           COMMIT_MSG: ${{ inputs.commit_message }}
         run: |
@@ -34,3 +36,15 @@ jobs:
           fi
           git commit -m "$COMMIT_MSG"
           git push
+          echo "pushed=1" >> "$GITHUB_OUTPUT"
+
+      # GITHUB_TOKEN 推出来的提交**不会**触发 push 事件的其它工作流（GitHub 防递归），
+      # 但 workflow_dispatch 是明文例外 —— 所以这里显式再点一次 Build。
+      # 不加这一步的后果实测过：repo-edit / 云端 AI 写进去的代码永远没人编译，
+      # 批 S-1 的编译错误就是这么在 master 上躺着的。
+      - name: trigger Build workflow
+        if: steps.commit.outputs.pushed == '1'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run build.yml --ref master
