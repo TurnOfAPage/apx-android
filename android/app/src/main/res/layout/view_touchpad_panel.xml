@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 悬浮球展开态：底部 300dp 半透触控板面板（反馈#7）。
+     面板外屏幕区域不受影响（窗口 FLAG_NOT_TOUCH_MODAL），Pad 可一边用别的应用一边触控。 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/bg_card"
+    android:orientation="vertical"
+    android:padding="8dp">
+
+    <!-- 头部：标题 + 提示 + 收起 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="8dp"
+        android:paddingEnd="4dp"
+        android:paddingTop="4dp"
+        android:paddingBottom="4dp">
+
+        <TextView
+            android:id="@+id/tvPanelTitle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/ui_main_label_floating_ball"
+            android:textSize="14sp"
+            android:textStyle="bold"
+            android:textColor="#DD000000" />
+
+        <TextView
+            android:id="@+id/tvPanelHint"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="10dp"
+            android:text="@string/ui_main_floating_ball_hint"
+            android:textSize="12sp"
+            android:textColor="#66000000" />
+
+        <View
+            android:layout_width="0dp"
+            android:layout_height="1dp"
+            android:layout_weight="1" />
+
+        <TextView
+            android:id="@+id/tvPanelClose"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:padding="10dp"
+            android:text="@string/ui_main_floating_ball_collapse"
+            android:textSize="13sp"
+            android:textColor="#88000000"
+            android:clickable="true"
+            android:focusable="true" />
+    </LinearLayout>
+
+    <!-- 触控面：整块喂 TouchpadModule.feed（GestureEngine 首事件自适应 bounds） -->
+    <FrameLayout
+        android:id="@+id/touchSurface"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:layout_margin="4dp"
+        android:background="@android:color/transparent"
+        android:clickable="true"
+        android:focusable="true" />
+
+</LinearLayout>
