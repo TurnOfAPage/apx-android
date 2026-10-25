@@ -79,6 +79,14 @@
 - **设置页长文收编（批 Q · issue 实测「文字说明太长」）**：通用/外观/工具组的 4 个
   说明 caption（模板/配色/背景/诊断提示）置为不可见并**原文搬进**帮助页对应卡
   （功能说明/手势/链路），分组页只留控件本体；诊断输出与内嵌选择器保留（功能不减）
+- **深色模式取色修复（issue#44）**：副屏 / 手柄 / 文件 / 快捷 / 本地发送 / 被控输入
+  6 个 Activity 与悬浮球此前**没接** `ThemePref`，用户选「深色」时它们仍按系统 uiMode
+  取色（亮底亮字看不清）——现在全部接上同一套注入，悬浮球配色也令牌化
+  （`ball_bg` / `ball_text` / `ball_stroke`，深色镜下自动反转），球体 56→60dp、图标 16→18sp
+- **CI 失败可见性（tooling）**：Android 构建失败时把编译错误摘录写进 check-run annotation
+  （公开仓库匿名可读，logs API 要 admin 权限），并上传 build-log-android artifact；
+  repo-edit 推完提交后自动 `workflow_dispatch` 点一次 Build —— GITHUB_TOKEN 推的提交
+  不触发 push 工作流，此前云端编辑的代码没人编译（批 S-1 错误即由此漏出）
 - **全能外设输入法（批 S · issue 实测失焦输入）**：新增 InputMethodService
   （ApxImeService）——切到本输入法后物理键盘在任意界面打字全量转发到电脑
   （forwardFromIme 跳过本地输入态放行），没连电脑自然降级为手机打字；

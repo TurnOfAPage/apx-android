@@ -61,4 +61,9 @@
     <color name="miuix_accent">@color/md_primary</color>
     <color name="miuix_accent_soft">@color/md_primary_container</color>
     <color name="miuix_danger">@color/state_error</color>
+
+    <!-- 悬浮球（issue#44）：此前是写死的亮色白球，深色下不跟随主题 -->
+    <color name="ball_bg">#F2FFFFFF</color>
+    <color name="ball_text">#CC000000</color>
+    <color name="ball_stroke">#33000000</color>
 </resources>

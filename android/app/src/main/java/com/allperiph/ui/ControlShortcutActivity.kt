@@ -1,6 +1,7 @@
 package com.allperiph.ui
 
 import android.app.Activity
+import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 
@@ -18,6 +19,15 @@ import android.os.Bundle
  * 按注册去启动会找不到类（Tile 点击 / 外部 intent 都会失败）。
  */
 class ControlShortcutActivity : Activity() {
+
+    /**
+     * 主题方案（issue#44）：这些页面此前**没接** ThemePref，用户选「深色」也只按系统走 ——
+     * 于是深色系统下页面还是亮色底、亮色字，或者反过来，看着"字体取色异常"。
+     * 与 MainActivity / TouchpadActivity / RemoteActivity 同一套实现。
+     */
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(com.allperiph.ui.ThemePref.wrap(newBase))
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)

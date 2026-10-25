@@ -157,7 +157,8 @@ class FloatingBallService : Service() {
 
     private fun addBall() {
         if (ballAttached) return
-        val v = ball ?: LayoutInflater.from(this).inflate(R.layout.view_floating_ball, null).also { ball = it }
+        // issue#44：悬浮球此前用 Service 自带（亮色）上下文 inflate，深色下取色永远是亮的
+        val v = ball ?: LayoutInflater.from(ThemePref.wrap(this)).inflate(R.layout.view_floating_ball, null).also { ball = it }
         wm.addView(v, ballLayoutParams())
         ballAttached = true
         setupBallTouch(v)
@@ -209,7 +210,7 @@ class FloatingBallService : Service() {
 
     private fun expand() {
         if (panel != null) return
-        val v = LayoutInflater.from(this).inflate(R.layout.view_touchpad_panel, null)
+        val v = LayoutInflater.from(ThemePref.wrap(this)).inflate(R.layout.view_touchpad_panel, null)
         v.findViewById<TextView>(R.id.tvPanelClose)?.setOnClickListener { collapse() }
         v.findViewById<View>(R.id.touchSurface).setOnTouchListener { _, ev ->
             // 与触控板页同一条链路：feed → GestureEngine → 三出口（USB 鼠标帧/蓝牙/无线）

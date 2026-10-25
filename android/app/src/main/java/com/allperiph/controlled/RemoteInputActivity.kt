@@ -19,6 +19,15 @@ import com.allperiph.shared.proto.ApxFrame
 import com.allperiph.shared.util.Log
 
 class RemoteInputActivity : Activity() {
+
+    /**
+     * 主题方案（issue#44）：这些页面此前**没接** ThemePref，用户选「深色」也只按系统走 ——
+     * 于是深色系统下页面还是亮色底、亮色字，或者反过来，看着"字体取色异常"。
+     * 与 MainActivity / TouchpadActivity / RemoteActivity 同一套实现。
+     */
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(com.allperiph.ui.ThemePref.wrap(newBase))
+    }
     private var editText: EditText? = null
     /** 程序性改写输入框时置 true：TextWatcher 会把“删字”当成退格发往电脑，
      *  发送后清空输入框绝不能触发它（否则刚发出去的字会被逐个删掉）。 */
