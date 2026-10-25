@@ -20,19 +20,24 @@
         android:layout_weight="1"
         android:orientation="vertical">
 
+        <!-- 批D：单行+省略，右侧拥挤时永不逐字竖排（issue#43 图1） -->
         <TextView
             android:id="@+id/tvPageTitle"
-            android:layout_width="wrap_content"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:singleLine="true"
             android:text="@string/ui_main_item_touchpad"
             android:textAppearance="@style/APTextTitle"
             android:textSize="24sp" />
 
         <TextView
             android:id="@+id/tvPageSub"
-            android:layout_width="wrap_content"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:ellipsize="end"
             android:paddingTop="4dp"
+            android:singleLine="true"
             android:textAppearance="@style/APTextCaption" />
     </LinearLayout>
 
