@@ -205,6 +205,12 @@
             android:stopWithTask="false"
             android:foregroundServiceType="dataSync" />
 
+        <!-- LocalSend 发送页（issue#45 MVP2） -->
+        <activity
+            android:name=".localsend.SendActivity"
+            android:exported="false"
+            android:label="LocalSend 发送" />
+
         <!--
           ⑦ HID 绑定（v1.19）：被电脑绑定后弹授权弹窗。
         -->

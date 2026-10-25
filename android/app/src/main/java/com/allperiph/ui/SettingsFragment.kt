@@ -203,6 +203,10 @@ class SettingsFragment : Fragment() {
             if (isChecked) com.allperiph.localsend.LocalSendService.start(act)
             else com.allperiph.localsend.LocalSendService.stop(act)
         }
+        // 批H：点行主体 → 发送页（与 Switch 开关互不干扰）
+        act.findViewById<android.view.View>(R.id.rowLocalSend)?.setOnClickListener { v ->
+            v.context.startActivity(android.content.Intent(v.context, com.allperiph.localsend.SendActivity::class.java))
+        }
         // 反馈#10 批 B（方案 B）：首页 = 分类列表，点行进二级页，返回行回首屏。
         // 分组容器复用原四个 group*，另加帮助组 groupHelp；原四分段 tab 已删。
         val categories = listOf(

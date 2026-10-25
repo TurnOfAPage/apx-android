@@ -164,6 +164,8 @@ class LocalSendService : Service() {
         if (msg.optString("fingerprint") == LocalSendProtocol.fingerprint) return
         if (msg.optString("protocol", "http") != "http") return
         val port = msg.optInt("port", 0); if (port !in 1..65535) return
+        // 批H：每次 announce 都刷新发送端设备表（置于 dedup 前，lastSeen 才不过期）
+        LocalSendClient.onAnnounce(msg, ip)
         val fp = msg.optString("fingerprint", ip)
         val now = System.currentTimeMillis()
         val last = registeredRecently[fp]

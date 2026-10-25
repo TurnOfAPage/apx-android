@@ -587,7 +587,7 @@
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
                 android:text="互传（LocalSend）
-电脑/其他平台 LocalSend 直发，文件落 Download/LocalSend"
+开关=接收文件；点行=发送文件到电脑/其他平台"
                 android:textColor="#DD000000"
                 android:textSize="14sp" />
 

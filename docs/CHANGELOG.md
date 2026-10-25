@@ -54,6 +54,10 @@
   极简 HTTP server/接收端前台服务），UDP 多播 224.0.0.167:53317 发现 + register 应答，
   与官方 LocalSend 各平台互通；设置→遥控·工具 新增「互传」开关（默认关），
   文件落系统 Download/LocalSend（MediaStore，免权限），完成/失败均有通知
+- **LocalSend 发送端（批 H · MVP2）**：新增 LocalSendClient（三步推送 register→
+  prepare-upload（预算 sha256）→ 逐文件流式 upload）与 SendActivity 发送页；
+  互传行点行进发送页（设备列表来自 announce，2s 刷新，点设备选文件多选）；
+  触控开关保留为接收开关——开关=接收、点行=发送
 - **Header 标题防挤竖排（issue#43 图1 · 批 D）**：顶栏标题/副说明加
   singleLine+ellipsize——右侧按钮拥挤时不再逐字竖排（v218 散落字符根因，
   v219 已删 segPages 分页钮大幅缓解，本条为防复发双保险）
