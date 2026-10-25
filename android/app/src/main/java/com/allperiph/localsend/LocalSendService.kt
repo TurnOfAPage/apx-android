@@ -7,7 +7,6 @@ import android.app.Service
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
-import android.content.res.Configuration
 import android.net.Uri
 import android.net.wifi.WifiManager
 import android.os.Build
@@ -25,14 +24,16 @@ import java.net.HttpURLConnection
 import java.net.InetSocketAddress
 import java.net.MulticastSocket
 import java.net.URL
+import java.net.URLConnection
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
 /**
  * LocalSend 互传接收端前台服务（MVP1）：
  *  - UDP 多播监听 224.0.0.167:53317 + 周期 announce（让桌面端看见本机）
- *  - 收到他人 announce → HTTP POST register 应答（对端加入本机列表；同时本机也向对端登记）
- *  - 本地 HTTP server 服务 info/register/prepare/upload/cancel，文件落系统 Download/LocalSend/
+ *  - 收到他人 announce → HTTP POST register 应答（对端加入本机列表）
+ *  - 本地 HTTP server 服务 info/register/prepare/upload/cancel；文件落系统 Download/LocalSend/
+ *  - HTTP 端口 53317 被占时回退 53318/53319，announce 携带实际监听端口
  */
 class LocalSendService : Service() {
 
@@ -59,11 +60,11 @@ class LocalSendService : Service() {
     private var multicast: MulticastSocket? = null
     private var multicastLock: WifiManager.MulticastLock? = null
     private var httpServer: LocalSendHttpServer? = null
+    private var httpListenPort = LocalSendProtocol.HTTP_PORT
     private var running = false
     private val sessions = ConcurrentHashMap<String, Session>()
     private val registeredRecently = ConcurrentHashMap<String, Long>()
     private val mainHandler = Handler(Looper.getMainLooper())
-    private var announceTick = 0
     private val announceRunnable = object : Runnable {
         override fun run() {
             if (!running) return
@@ -78,10 +79,7 @@ class LocalSendService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
-    override fun onCreate() {
-        super.onCreate()
-        ensureChannel()
-    }
+    override fun onCreate() { super.onCreate(); ensureChannel() }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
@@ -95,7 +93,6 @@ class LocalSendService : Service() {
 
     private fun startAll() {
         running = true
-        // 1. 前台通知
         val n = NotificationCompat.Builder(this, CHAN_ID)
             .setSmallIcon(android.R.drawable.stat_sys_download)
             .setContentTitle("LocalSend 互传")
@@ -103,23 +100,21 @@ class LocalSendService : Service() {
             .setOngoing(true).build()
         startForeground(NOTIFY_FGS, n)
 
-        // 2. MulticastLock（否则 Wi-Fi 省电会丢多播报文）
         try {
             val wm = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
             multicastLock = wm.createMulticastLock("apx-localsend").apply { setReferenceCounted(false); acquire() }
         } catch (_: Throwable) {}
 
-        // 3. HTTP server（端口被占则换随机端口，announce 会带真实端口）
-        val httpPort = try {
-            val s = LocalSendHttpServer(LocalSendProtocol.HTTP_PORT, handler)
-            s.start(); httpServer = s; LocalSendProtocol.HTTP_PORT
-        } catch (_: Throwable) {
-            val s = LocalSendHttpServer(0, handler)
-            s.start(); httpServer = s
-            (s.boundPort())
+        // HTTP server：53317 被占依次回退 53318/53319
+        for (port in intArrayOf(LocalSendProtocol.HTTP_PORT, LocalSendProtocol.HTTP_PORT + 1, LocalSendProtocol.HTTP_PORT + 2)) {
+            try {
+                val s = LocalSendHttpServer(port, handler)
+                s.start()
+                httpServer = s; httpListenPort = port
+                break
+            } catch (_: Throwable) { httpServer = null }
         }
 
-        // 4. UDP 多播监听 + announce 突发（100/500/2000ms）与周期广播
         Thread {
             try {
                 val ms = MulticastSocket(LocalSendProtocol.MULTICAST_PORT)
@@ -127,9 +122,7 @@ class LocalSendService : Service() {
                 ms.reuseAddress = true
                 ms.joinGroup(InetSocketAddress(LocalSendProtocol.MULTICAST_GROUP, LocalSendProtocol.MULTICAST_PORT), null)
                 multicast = ms
-                repeat(3) { i ->
-                    mainHandler.postDelayed({ sendAnnounce() }, longArrayOf(100, 500, 2000)[i])
-                }
+                longArrayOf(100, 500, 2000).forEach { d -> mainHandler.postDelayed({ sendAnnounce() }, d) }
                 mainHandler.postDelayed(announceRunnable, ANNOUNCE_PERIOD_MS)
                 val buf = ByteArray(64 * 1024)
                 while (running) {
@@ -153,24 +146,22 @@ class LocalSendService : Service() {
         httpServer = null
         try { if (multicastLock?.isHeld == true) multicastLock?.release() } catch (_: Throwable) {}
         multicastLock = null
-        try { if (Build.VERSION.SDK_INT >= 26) stopForeground(STOP_FOREGROUND_REMOVE) } catch (_: Throwable) {}
+        try { stopForeground(STOP_FOREGROUND_REMOVE) } catch (_: Throwable) {}
     }
 
     private fun sendAnnounce() {
         val ms = multicast ?: return
-        val httpPort = httpServer?.boundPort() ?: return
         try {
-            val payload = LocalSendProtocol.announce(alias, deviceType, true, httpPort).toString().toByteArray(Charsets.UTF_8)
+            val payload = LocalSendProtocol.announce(alias, deviceType, true, httpListenPort).toString().toByteArray(Charsets.UTF_8)
             val packet = DatagramPacket(payload, payload.size, InetSocketAddress(LocalSendProtocol.MULTICAST_GROUP, LocalSendProtocol.MULTICAST_PORT))
             ms.send(packet)
         } catch (_: Throwable) {}
     }
 
-    /** 收到他人 announce：去重后 HTTP register 应答（对端因此把本机加入列表） */
     private fun onAnnounce(text: String, ip: String) {
         val msg = try { JSONObject(text) } catch (_: Throwable) { return }
         if (msg.optString("fingerprint") == LocalSendProtocol.fingerprint) return
-        if (msg.optString("protocol", "http") != "http") return // https 对端需 TLS，MVP 不支持
+        if (msg.optString("protocol", "http") != "http") return
         val port = msg.optInt("port", 0); if (port !in 1..65535) return
         val fp = msg.optString("fingerprint", ip)
         val now = System.currentTimeMillis()
@@ -195,8 +186,7 @@ class LocalSendService : Service() {
     }
 
     private val handler = object : LocalSendHttpServer.Handler {
-        override fun deviceInfo(): JSONObject =
-            LocalSendProtocol.deviceInfo(alias, deviceType, true)
+        override fun deviceInfo(): JSONObject = LocalSendProtocol.deviceInfo(alias, deviceType, true)
 
         override fun prepareUpload(body: JSONObject): JSONObject {
             val info = body.optJSONObject("info")
@@ -206,14 +196,13 @@ class LocalSendService : Service() {
             val files = body.optJSONObject("files") ?: return JSONObject().put("sessionId", session.id)
             files.keys().forEach { key ->
                 val f = files.optJSONObject(key) ?: return@forEach
-                val pf = PendingFile(
+                session.files[key] = PendingFile(
                     fileId = key,
                     fileName = sanitize(f.optString("fileName", "file_$key")),
                     size = f.optLong("size", -1L),
                     sender = sender,
                 )
-                session.files[key] = pf
-                respFiles.put(key, key) // token = fileId
+                respFiles.put(key, key)
             }
             sessions[session.id] = session
             return JSONObject().put("sessionId", session.id).put("files", respFiles)
@@ -236,11 +225,11 @@ class LocalSendService : Service() {
             val sizeOk = pf.size < 0 || pf.written == pf.size
             if (ok && sizeOk) {
                 markComplete(pf)
-                session.done++
-                if (session.done >= session.files.size) {
-                    notifyDone(session)
-                    sessions.remove(sessionId)
+                val allDone = synchronized(session) {
+                    session.done++
+                    session.done >= session.files.size
                 }
+                if (allDone) { notifyDone(session); sessions.remove(sessionId) }
             } else {
                 discard(pf)
                 sessions.remove(sessionId)
@@ -259,7 +248,7 @@ class LocalSendService : Service() {
         return if (cleaned.length > 180) cleaned.takeLast(180) else cleaned
     }
 
-    /** 创建落盘目标：API29+ 走 MediaStore Downloads/LocalSend（免权限），低版本写公共 Download */
+    /** API29+ MediaStore Downloads/LocalSend（免权限）；低版本写公共 Download */
     private fun createTarget(fileName: String): Pair<Uri?, OutputStream> {
         if (Build.VERSION.SDK_INT >= 29) {
             val values = ContentValues().apply {
