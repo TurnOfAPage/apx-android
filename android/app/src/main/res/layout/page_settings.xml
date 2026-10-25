@@ -173,6 +173,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="@string/lay_settings_text_hotkey_template_touchpad"
+                android:visibility="gone"
                 android:textAppearance="@style/APTextCaption" />
 
             <LinearLayout
@@ -401,6 +402,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="@string/lay_settings_text_hotkey_theme_touchpad_keyboard"
+                android:visibility="gone"
                 android:textAppearance="@style/APTextCaption" />
 
             <LinearLayout
@@ -467,6 +469,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="@string/lay_settings_text_background_2"
+                android:visibility="gone"
                 android:textAppearance="@style/APTextCaption" />
 
             <LinearLayout
@@ -522,6 +525,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="@string/lay_settings_diag_hint"
+                android:visibility="gone"
                 android:textAppearance="@style/APTextCaption" />
 
             <TextView
@@ -722,6 +726,12 @@
                     android:text="@string/ui_help_link"
                     android:textColor="@color/md_on_surface_variant"
                     android:textSize="13sp" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/lay_settings_diag_hint"
+                    android:textAppearance="@style/APTextCaption" />
             </LinearLayout>
 
             <TextView
@@ -741,6 +751,13 @@
                     android:text="@string/ui_help_gesture"
                     android:textColor="@color/md_on_surface_variant"
                     android:textSize="13sp" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/lay_settings_text_hotkey_template_touchpad"
+                    android:textAppearance="@style/APTextCaption" />
+
             </LinearLayout>
 
             <TextView
@@ -830,6 +847,18 @@
                 android:paddingTop="6dp"
                 android:text="@string/lay_status_text_hotkey_touchpad_keyboard"
                 android:textAppearance="@style/APTextCaption" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/lay_settings_text_hotkey_theme_touchpad_keyboard"
+                    android:textAppearance="@style/APTextCaption" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/lay_settings_text_background_2"
+                    android:textAppearance="@style/APTextCaption" />
             </LinearLayout>
 
             <!-- 批C：三步上手（原状态页常显卡搬来，原文零改动） -->
