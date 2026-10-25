@@ -58,6 +58,9 @@
   prepare-upload（预算 sha256）→ 逐文件流式 upload）与 SendActivity 发送页；
   互传行点行进发送页（设备列表来自 announce，2s 刷新，点设备选文件多选）；
   触控开关保留为接收开关——开关=接收、点行=发送
+- **深色模式取色修复（批 K）**：设置页分类/行/帮助卡与互传发送页的硬编码黑色
+  文字全部换主题 token（md_on_surface / md_on_surface_variant，项目按 4.5:1 对比度
+  校准）——修深色下黑字看不清；悬浮球字体问题随球体样式批一并修
 - **Header 标题防挤竖排（issue#43 图1 · 批 D）**：顶栏标题/副说明加
   singleLine+ellipsize——右侧按钮拥挤时不再逐字竖排（v218 散落字符根因，
   v219 已删 segPages 分页钮大幅缓解，本条为防复发双保险）
