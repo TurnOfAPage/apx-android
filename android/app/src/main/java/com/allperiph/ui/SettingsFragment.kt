@@ -245,7 +245,7 @@ class SettingsFragment : Fragment() {
                 gravity = Gravity.CENTER_VERTICAL
                 isClickable = true
                 isFocusable = true
-                setPadding(h.dp(12), h.dp(12), h.dp(8), h.dp(12))
+                setPadding(h.dp(16), h.dp(12), h.dp(16), h.dp(12))
                 background = if (on) h.pill(h.softTint(tc))
                 else h.pill(resources.getColor(R.color.md_surface_variant))
                 setOnClickListener { applyTemplate(t) }
@@ -268,7 +268,7 @@ class SettingsFragment : Fragment() {
                 text = t.desc
                 textSize = 12f
                 setTextColor(resources.getColor(R.color.md_on_surface_variant))
-            }, LinearLayout.LayoutParams(-2, -2).apply { topMargin = h.dp(3) })
+            }, LinearLayout.LayoutParams(-2, -2).apply { topMargin = h.dp(4) })
             row.addView(col, LinearLayout.LayoutParams(0, -2, 1f))
 
             row.addView(TextView(act).apply {
@@ -281,7 +281,7 @@ class SettingsFragment : Fragment() {
                     text = getString(R.string.ui_main_text_delete)
                     textSize = 12f
                     gravity = Gravity.CENTER
-                    setPadding(h.dp(12), h.dp(6), h.dp(6), h.dp(6))
+                    setPadding(h.dp(12), h.dp(6), 0, h.dp(6))
                     setTextColor(resources.getColor(R.color.state_error))
                     isClickable = true
                     setOnClickListener { confirmDeleteTemplate(t) }

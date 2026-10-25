@@ -146,7 +146,6 @@
             style="@style/APSectionTitle"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:paddingTop="10dp"
             android:text="@string/lay_settings_modules" />
 
         <LinearLayout
@@ -186,7 +185,6 @@
                     style="@style/APSectionTitle"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:paddingTop="10dp"
                     android:text="@string/lay_transport_bt" />
 
                 <LinearLayout
@@ -207,7 +205,6 @@
                     style="@style/APSectionTitle"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:paddingTop="10dp"
                     android:text="@string/lay_transport_usb_group" />
 
                 <LinearLayout
@@ -300,7 +297,6 @@
             style="@style/APSectionTitle"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:paddingTop="10dp"
             android:text="@string/lay_settings_text_theme" />
 
         <LinearLayout
@@ -321,7 +317,6 @@
             style="@style/APSectionTitle"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:paddingTop="10dp"
             android:text="@string/lay_settings_text_color" />
 
         <LinearLayout
@@ -388,7 +383,6 @@
             style="@style/APSectionTitle"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:paddingTop="10dp"
             android:text="@string/lay_settings_text_background" />
 
         <LinearLayout
@@ -424,7 +418,6 @@
             style="@style/APSectionTitle"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:paddingTop="10dp"
             android:text="@string/lay_settings_remote" />
 
         <LinearLayout
@@ -445,7 +438,6 @@
             style="@style/APSectionTitle"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:paddingTop="10dp"
             android:text="@string/lay_settings_group_diag" />
 
         <LinearLayout
@@ -473,7 +465,6 @@
             style="@style/APSectionTitle"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:paddingTop="10dp"
             android:text="@string/ui_filepanel_text_file" />
 
         <LinearLayout
@@ -493,7 +484,6 @@
             style="@style/APSectionTitle"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:paddingTop="10dp"
             android:text="@string/lay_settings_text_remote" />
 
         <LinearLayout
@@ -523,7 +513,6 @@
             style="@style/APSectionTitle"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:paddingTop="10dp"
             android:text="@string/lay_settings_tab_about" />
 
         <com.allperiph.ui.AboutCard
@@ -537,7 +526,6 @@
             style="@style/APSectionTitle"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:paddingTop="10dp"
             android:text="@string/about_maintenance" />
 
         <LinearLayout
