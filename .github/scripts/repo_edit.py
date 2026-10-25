@@ -1,87 +1,78 @@
 #!/usr/bin/env python3
 """repo-edit：大文件锚点替换编辑器。
 
-本批（反馈#9 UI 分页）：横屏底部分页栏常驻 —— 原沉浸隐藏、只能四指滑切页，
-从通知栏进来不方便（用户建议上下分页按钮/侧边栏，二者取其一实现：底部分页栏常驻）。
-  - applyOrientationLayout：底栏两朝向 VISIBLE；104/90dp 底部留白两朝向都保留（消白带）
-  - showPage：去掉横屏提前 return，胶囊横屏也滑动
-  - 旋屏后重算胶囊（替代原横屏 setIndicator(null) 清除）
-  - CHANGELOG 补反馈#9
+本批（反馈#7 悬浮球接线；4 个新文件已直接推送，本批只做注册/入口/文案）：
+  - AndroidManifest：注册 FloatingBallService（connectedDevice 前台类型，复用已有权限）
+  - SettingsFragment：工具小节加「悬浮球」行（开/关态 + 点击切换 + 重渲染）
+  - strings.xml：悬浮球 6 条文案
+  - CHANGELOG：Unreleased 补反馈#7
 
 两阶段：①按期望次数全量校验，失配一次性报全；②全过才写盘。失配 → 退出非零 → 不提交。
-锚点若以双引号收尾，三引号必须先换行再闭合（run#5 教训）；正文禁字面三引号（run#7 教训）。
 """
 import sys
 
 EDITS = [
-    ("android/app/src/main/java/com/allperiph/ui/MainActivity.kt", [
-        # 1) 底栏两朝向常驻
-        ("        tabBarView.visibility = if (landscape) View.GONE else View.VISIBLE",
-         """        // 反馈#9：横屏也常驻底部分页栏（原：沉浸隐藏 → 只能四指滑，从通知栏进来切页不方便）
-        tabBarView.visibility = View.VISIBLE""", 1),
-        # 2) 底部留白两朝向保留（原横屏清零是因栏被隐藏，栏常驻后空间正好归栏用）
-        ("""        // 竖屏布局里 pageKeyboard / pageTouchpad 的 paddingBottom（104dp / 90dp）是给悬浮
-        // 底栏留位的；横屏底栏隐藏、且旋屏不重建（configChanges 含 orientation → layout-land
-        // 不生效），所以这里必须手动把底部留白去掉，否则横屏键盘下方会顶出一大片白
-        // （真机复现：键盘内容只到约 2/3 屏高，下面 300px 空白）。
-        if (::pageKeyboardView.isInitialized) {
-            pageKeyboardView.setPadding(
-                pageKeyboardView.paddingLeft, pageKeyboardView.paddingTop,
-                pageKeyboardView.paddingRight, if (landscape) dp(2) else dp(104),
-            )
-        }
-        if (::pageTouchpadView.isInitialized) {
-            pageTouchpadView.setPadding(
-                pageTouchpadView.paddingLeft, pageTouchpadView.paddingTop,
-                pageTouchpadView.paddingRight, if (landscape) dp(16) else dp(90),
-            )
-        }""",
-         """        // 反馈#9：横屏底部分页栏常驻后，底部留白两种朝向都保留 —— 空间正好被分页栏用掉，
-        // 不再是 v217 那种“留白但栏被隐藏”的 300px 白带（横屏键盘/触控板下缘各让出栏位）。
-        if (::pageKeyboardView.isInitialized) {
-            pageKeyboardView.setPadding(
-                pageKeyboardView.paddingLeft, pageKeyboardView.paddingTop,
-                pageKeyboardView.paddingRight, dp(104),
-            )
-        }
-        if (::pageTouchpadView.isInitialized) {
-            pageTouchpadView.setPadding(
-                pageTouchpadView.paddingLeft, pageTouchpadView.paddingTop,
-                pageTouchpadView.paddingRight, dp(90),
-            )
-        }""", 1),
-        # 3) showPage：横屏不再提前 return（胶囊要滑）
-        ("""        // 横屏沉浸模式：没有底栏，靠四指左右滑换页
-        if (landscape) return
-        // 新页布局完成后再滑动胶囊（否则取到的还是上一页的坐标）
-        findViewById<View>(R.id.contentStack).post { animateIndicator() }
+    ("android/app/src/main/AndroidManifest.xml", [
+        ("""        <!--
+          ⑥ 后台服务（v1.19）：启动前台通知，保留 Binder 保活。
+        -->
+        <service
+            android:name=".ui.AgentForegroundService"
+            android:exported="false"
+            android:stopWithTask="false"
+            android:foregroundServiceType="connectedDevice" />
 """,
-         """        // 反馈#9：横屏底栏常驻 → 不再提前返回，选中胶囊也跟着滑（四指滑切页保留，只是不再唯一）
-        // 新页布局完成后再滑动胶囊（否则取到的还是上一页的坐标）
-        findViewById<View>(R.id.contentStack).post { animateIndicator() }
-""", 1),
-        # 4) 旋屏后重算胶囊（原：横屏清胶囊）——锚点含 #2 加的 updateSettingsEntry()，必须对准 master
-        ("""        if (landscape) navGlass.setIndicator(null)
-        applyImmersive()
-        applyNavBarWidth()
-        updateSettingsEntry()
-    }
-""",
-         """        // 反馈#9：横屏底栏常驻 → 旋屏后重算胶囊位置（原横屏 setIndicator(null) 清除）
-        if (landscape) findViewById<View>(R.id.contentStack).post { animateIndicator() }
-        applyImmersive()
-        applyNavBarWidth()
-        updateSettingsEntry()
-    }
+         """        <!--
+          ⑥ 后台服务（v1.19）：启动前台通知，保留 Binder 保活。
+        -->
+        <service
+            android:name=".ui.AgentForegroundService"
+            android:exported="false"
+            android:stopWithTask="false"
+            android:foregroundServiceType="connectedDevice" />
+
+        <!-- 反馈#7：悬浮球 —— 独立 overlay 触控板窗口（HyperOS 小窗失焦不派发输入的绕行） -->
+        <service
+            android:name=".ui.FloatingBallService"
+            android:exported="false"
+            android:stopWithTask="false"
+            android:foregroundServiceType="connectedDevice" />
 """, 1),
     ]),
-    # ————— CHANGELOG：反馈#9 —————
+    ("android/app/src/main/java/com/allperiph/ui/SettingsFragment.kt", [
+        ("        tvBox.addView(settingRow(getString(R.string.ui_main_label_logcat), getString(R.string.ui_common_open), accent) { showLogcat() })\n",
+         """        tvBox.addView(settingRow(getString(R.string.ui_main_label_logcat), getString(R.string.ui_common_open), accent) { showLogcat() })
+        // 反馈#7：悬浮球 —— 独立 overlay 触控板（绕开 HyperOS 小窗失焦不能输入）；无权限先跳授权
+        tvBox.addView(
+            settingRow(
+                getString(R.string.ui_main_label_floating_ball),
+                getString(
+                    if (FloatingBallService.isRunning) R.string.ui_main_floating_ball_on
+                    else R.string.ui_main_floating_ball_off,
+                ),
+                accent,
+            ) {
+                FloatingBallService.requestToggle(it.context)
+                renderTv()
+            },
+        )
+""", 1),
+    ]),
+    ("android/app/src/main/res/values/strings.xml", [
+        ("</resources>", """    <string name="ui_main_label_floating_ball">悬浮球</string>
+    <string name="ui_main_floating_ball_on">已开启</string>
+    <string name="ui_main_floating_ball_off">未开启</string>
+    <string name="ui_main_floating_ball_note">单击展开触控板，长按关闭</string>
+    <string name="ui_main_floating_ball_hint">单指移动 · 双指滚动 · 三指滑动</string>
+    <string name="ui_main_floating_ball_collapse">收起</string>
+</resources>""", 1),
+    ]),
     ("docs/CHANGELOG.md", [
-        ("  （上=Alt+Tab、下=Win+D、左右=Ctrl+Win+←/→），[12,60) 保留中键按住、点按仍为中键\n",
-         """  （上=Alt+Tab、下=Win+D、左右=Ctrl+Win+←/→），[12,60) 保留中键按住、点按仍为中键
-- **横屏底部分页栏常驻（反馈#9）**：横屏不再隐藏分页栏（原只能四指滑，从通知栏进来不便）；
-  底部 104/90dp 留白两朝向都保留（消除 v217 横屏“留白没栏”白带），选中胶囊横屏也滑动，
-  旋屏自动重算胶囊位置
+        ("  旋屏自动重算胶囊位置\n",
+         """  旋屏自动重算胶囊位置
+- **悬浮球（反馈#7）**：独立 overlay 触控板窗口 —— 不依赖前台 Activity 焦点，
+  HyperOS 小窗失焦不派发输入的绕行方案；小球单击展开/收起、拖动移位、长按关闭，
+  底部 300dp 面板直接喂触控板链路（单/双/三指全支持），入口在设置页「工具」小节
 """, 1),
     ]),
 ]
