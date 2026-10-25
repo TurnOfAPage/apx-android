@@ -33,6 +33,11 @@ import com.allperiph.wireless.ControlTarget
  */
 internal class PhysKeyBridge(private val act: Activity) {
 
+    companion object {
+        /** 批S：IME 全局入口（attach 时登记，ApxImeService 复用键盘转发状态与 heldMods） */
+        var current: PhysKeyBridge? = null
+    }
+
     private var wrapper: Window.Callback? = null
     private var original: Window.Callback? = null
 
@@ -40,6 +45,7 @@ internal class PhysKeyBridge(private val act: Activity) {
     private var heldMods = 0
 
     fun attach(window: Window) {
+        current = this
         if (wrapper != null) return
         val orig = window.callback ?: return
         original = orig
@@ -76,18 +82,21 @@ internal class PhysKeyBridge(private val act: Activity) {
     }
 
     /** @return true = 已转发/已消费；false = 放行给手机本地 */
-    private fun forward(event: KeyEvent): Boolean {
-        val ret = forwardImpl(event)
+    private fun forward(event: KeyEvent, imeBypass: Boolean = false): Boolean {
+        val ret = forwardImpl(event, imeBypass)
         android.util.Log.d("ApxBridge", "KEY kc=${event.keyCode} act=${event.action} rep=${event.repeatCount} usage=${usageOf(event.keyCode)} etFocus=${act.currentFocus is EditText} ret=$ret")
         return ret
     }
 
-    private fun forwardImpl(event: KeyEvent): Boolean {
+    /** 批S：IME 转发入口——焦点在输入框也转发（IME 就是要接管打字）；状态与窗口转发共用 */
+    fun forwardFromIme(event: KeyEvent): Boolean = forward(event, imeBypass = true)
+
+    private fun forwardImpl(event: KeyEvent, imeBypass: Boolean): Boolean {
         val action = event.action
         if (action != KeyEvent.ACTION_DOWN && action != KeyEvent.ACTION_UP) return false
 
-        // ① 手机本地输入中：修饰键也放行（否则本地 Shift+方向选字会坏）
-        if (act.currentFocus is EditText) return false
+        // ① 手机本地输入中：修饰键也放行（否则本地 Shift+方向选字会坏）；IME 场景强制转发
+        if (!imeBypass && act.currentFocus is EditText) return false
         // ② 没连电脑：键盘继续当手机键盘用
         if (!ready()) return false
 
