@@ -502,8 +502,27 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
             it.setPadding(it.paddingLeft, it.paddingTop, it.paddingRight, bottomPad)
         }
         // 批P：横屏操作条 pill 的显隐也在这里按朝向设 —— 见 bindActions 里的说明。
-        findViewById<View>(R.id.pillLandActions)?.visibility =
-            if (landscape) View.VISIBLE else View.GONE
+        // 同时**给 pill 让出一条自己的带子**：pill 是悬浮在根 FrameLayout 右上角的
+        // （top|end + elevation），横屏键盘页那一行快捷键芯片与 Win 键正压在它下面 ——
+        // 真机截图里「自定义」芯片被整个盖住、Win 键被切掉一角，点下去命中的是 pill。
+        // 与其让内容钻到 pill 底下，不如把它的高度从 pager 顶部让出来：
+        //     顶距(space_12) + pill 实测高度 + 一点间隙
+        // 用实测高度而不是写死 dp，是为了以后调 pill 内边距/字号时这条带子自己跟着变。
+        val pill = findViewById<View>(R.id.pillLandActions)
+        val pillBand = if (landscape && pill != null) {
+            pill.visibility = View.VISIBLE
+            pill.measure(
+                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
+                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
+            )
+            dp(12) + pill.measuredHeight + dp(8)
+        } else {
+            pill?.visibility = View.GONE
+            0
+        }
+        if (::pager.isInitialized) {
+            pager.setPadding(pager.paddingLeft, pillBand, pager.paddingRight, pager.paddingBottom)
+        }
 
         // 旋转只换布局、不切页：横竖屏各自铺各自的布局，当前页面保持不动
         //（键盘页已转正进底栏，不再“横过来就自动跳键盘”）。

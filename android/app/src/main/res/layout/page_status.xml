@@ -56,32 +56,47 @@
           开哪一类，设置页里那一类的功能分组才出现（MainActivity/StatusFragment 里
           按 isTransportEnabled 控制 groupWifi/groupBt/groupUsb 的可见性）。
           选中态由代码上色（APButtonGhost 是描边胶囊，未选中保持中性）。
+
+          ⚠️ 竖排、整列宽（原来是三个横排的 0dp+weight=1）：
+          本块现在只活在**设置页左栏**（1/3 宽，竖屏约 114dp）。三个 weight=1 的按钮
+          平分下来每个只有 ~33dp，「无线/蓝牙/USB」被单行 + ellipsize 切得一个字都不剩 ——
+          真机截图里就是三个空描边胶囊。竖排后每个按钮占满整列宽，标签完整。
+          （本块全仓只有 layout/page_settings.xml 一处 include，改竖排不会牵连别处。）
         -->
         <LinearLayout
             android:id="@+id/rowsTransport"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="horizontal"
+            android:orientation="vertical"
             android:paddingTop="@dimen/space_4"
             android:paddingBottom="@dimen/space_4">
 
             <TextView
                 android:id="@+id/btnTransportWifi"
                 style="@style/APTransportButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_weight="0"
                 android:text="@string/lay_transport_wifi"
                 android:contentDescription="@string/lay_transport_wifi_cd" />
 
             <TextView
                 android:id="@+id/btnTransportBt"
                 style="@style/APTransportButton"
-                android:layout_marginStart="@dimen/space_8"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_weight="0"
+                android:layout_marginTop="@dimen/space_8"
                 android:text="@string/lay_transport_bt"
                 android:contentDescription="@string/lay_transport_bt_cd" />
 
             <TextView
                 android:id="@+id/btnTransportUsb"
                 style="@style/APTransportButton"
-                android:layout_marginStart="@dimen/space_8"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_weight="0"
+                android:layout_marginTop="@dimen/space_8"
                 android:text="USB"
                 android:contentDescription="@string/lay_transport_usb_cd" />
         </LinearLayout>

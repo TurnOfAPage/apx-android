@@ -65,26 +65,33 @@
             android:layout_marginEnd="@dimen/space_12"
             android:background="?android:attr/listDivider" />
 
-        <!-- 右栏（weight=2 → 2/3）：独立滚动 -->
+        <!-- 右栏（weight=2 → 2/3）：独立滚动。
+             fillViewport + 内容容器 match_parent + 首页卡片 weight=1：
+             内容短时把首页卡片**撑满右栏**（真机反馈「设置页没有全屏」——
+             此前卡片 wrap_content，5 行分类下面就是一大片空背景）。
+             进分类后首页卡片 GONE（权重随之归零），分组卡片照旧按内容高度排。 -->
         <ScrollView
             android:id="@+id/paneGroupsScroll"
             android:layout_width="0dp"
             android:layout_height="match_parent"
             android:layout_weight="2"
             android:clipToPadding="false"
+            android:fillViewport="true"
             android:scrollbars="none">
 
             <LinearLayout
                 android:id="@+id/paneGroups"
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content"
+                android:layout_height="match_parent"
                 android:orientation="vertical">
 
-        <!-- 分类列表首页（反馈#10 批 B，方案 B）：点行进二级页；二级页经返回行回首屏 -->
+        <!-- 分类列表首页（反馈#10 批 B，方案 B）：点行进二级页；二级页经返回行回首屏。
+             高度 0dp + weight=1 = 撑满右栏剩余高度（详见右栏 ScrollView 上的说明）。 -->
         <LinearLayout
             android:id="@+id/categoryHome"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
+            android:layout_height="0dp"
+            android:layout_weight="1"
             android:layout_marginBottom="@dimen/space_8"
             android:background="@drawable/bg_card"
             android:orientation="vertical"
