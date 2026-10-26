@@ -6,7 +6,7 @@
 
 ---
 
-## Unreleased（2026-10-25）
+## v221（2026-10-26）
 
 ### 新增
 - **LocalSend 互传的 PC 接收端**：手机端 `com.allperiph.localsend` 早就完整（多播发现 +
@@ -27,7 +27,22 @@
     清单不合法、`stop()` 收得回来）都已进 CTest 与两端 CI 门禁。
   - 清单不合法（不是 JSON / 一个文件都没有）直接回 **400**，不再回 200 建一个空会话 ——
     那样对端以为清单已受理，下一步 upload 才 404，问题被藏到更晚才冒出来。
-  - 尚未接线：桌面面板 / `apxhost serve` 里的「互传」卡片与发现列表（需要动 HostBundle 与前端）。
+- **面板里的「互传」卡（本轮接线）**：接收端此前只能在命令行跑（`apxhost localsend`），
+  开了桌面面板的手机却发现不了本机。现在三个入口全部接上：
+  - `HostBundle` 加 `localSend`（裸指针，所有权仍在调用方；空 = 未初始化）；
+    `host_main` 的 `panel` 分支与 `desktop_main` 各建一个实例挂进去；
+  - 两个面板后端同构三个动作：`localsend.toggle`（可带 `enable`，不带则取反）/
+    `localsend.status` / `localsend.openDir`，state 里多一段 `localsend`；
+  - 随面板启动、退出前 `stop()`；启动失败（53317 被官方 localsend 占用等）只告警、
+    不阻断面板，卡片上还能点开关重试；
+  - 收到文件：托盘气泡「<发送方> 发来 <文件名>」+ `on-localsend-received` 事件
+    （`{path,size,from,via:"localsend"}`）；
+  - `openDir`：macOS/Linux `fork`+`execlp(open/xdg-open)`，Windows `ShellExecuteW`，都不经 shell；
+  - 前端第四格（旧面板是 USB 卡）换成互传卡：开关 / 实际端口 / 附近设备 / 已收数 /
+    落盘目录 + 「打开目录」；多播不可用时把 `warn` 如实显示（仍能收直连，只是设备列表空着）。
+  - 状态字段契约由 `apxpc::localsend::statusJson()` 单点产出，`testStatusJson` 钉住字段名与
+    类型，前端 `HostState.localsend` 照此声明 —— **改名要两边一起改**。
+  - 仍未做：PC → 手机方向（用本工程 PC 端主动发文件，`LocalSendClient` 目前只有 Android 端有）。
 
 ### 修复
 - **HID 上报重复（合并未合分支）**：`pc/display/inject/hid/apxhid.c` 的 `ApxHidEnqueue` 在有挂起读请求时，
