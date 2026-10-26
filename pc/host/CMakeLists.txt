@@ -529,7 +529,12 @@ if(APXPC_BUILD_TESTS)
   # 否则 stop() 末尾 join 收不回，进程无法退出（必须 kill）。
   add_executable(wireless_session_lifecycle_test
                  "${APXPC_ROOT}/tests/wireless_session_lifecycle_test.cpp")
-  target_link_libraries(wireless_session_lifecycle_test PRIVATE apxpc_service)
+  # ⚠️ 必须同时链 apxpc_wireless：WirelessSession 的实现在
+  #    src/wireless/wireless_session.cpp（APXPC_WIRELESS_SRC），不在 APXPC_SERVICE_SRC 里。
+  #    此前只链 apxpc_service → LNK2019 / Undefined symbols（构造/析构/startAuto/stop 四个符号）。
+  #    这个错误一直存在，只是**测试从未被编译过**（CI 没跑 ctest、macOS 又把 BUILD_TESTS 关了），
+  #    所以没暴露；2026-10 把 ctest 接进 CI 后两端同时红了才看见。
+  target_link_libraries(wireless_session_lifecycle_test PRIVATE apxpc_service apxpc_wireless)
   if(WIN32)
     target_link_libraries(wireless_session_lifecycle_test PRIVATE ws2_32 hid setupapi cfgmgr32)
   endif()
