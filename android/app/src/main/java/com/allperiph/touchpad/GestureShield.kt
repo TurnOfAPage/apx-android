@@ -19,12 +19,22 @@ import java.util.concurrent.Executors
  *
  *   three_gesture_down=screen_shot               ← 三指下滑截屏（用户报的误触）
  *   three_gesture_long_press=partial_screen_shot ← 三指长按区域截屏
+ *   three_gesture_up=launch_ai_memory            ← 三指上滑唤起小爱记忆
+ *   three_gesture_horizontal_ltr/rtl=split_ltr/split_rtl ← 三指左右滑分屏
+ *
+ * 触控板自身就把三指滑动做成了组合键（GestureEngine.THREE_SWIPE，上下左右四个方向），
+ * 所以四个方向都会被系统抢走：下滑截屏、上滑小爱、左右分屏。全部一并遮蔽。
  *
  * 注意 `three_gesture_screenshot` 在本机本来就是 0，与误触无关，动它没用。
  * 手势由 SystemUI/手势服务在系统层判定，应用内怎么写 onTouchEvent 都晚于系统，
  * 所以只能在系统层改键值。
  *
- * **安全网**（异常退出没还原 = 把用户手机的三指截屏永久改掉，必须防）：
+ * 遮蔽值取 none —— 已反编译核对 MIUI 判定逻辑（miui-services.jar，
+ * MiuiMultiFingerGestureManager.isEmpty()：`TextUtils.isEmpty(f) || "none".equals(f)`），
+ * 该手势会被置成 MiuiMultiFingerGestureStatus.NONE（不 READY），即彻底不参与判定；
+ * 且每个键都注册了 ContentObserver，写入后立即生效，不需要重启 SystemUI。
+ *
+ * **安全网**（异常退出没还原 = 把用户手机的三指手势永久改掉，必须防）：
  *  ① 写之前先把原值落到 apx prefs，写完置 active 标记；
  *  ② 进程启动时（App.onCreate）无条件自愈：标记还在就还原；
  *  ③ 还原失败保留标记，下次启动继续试。
@@ -42,10 +52,17 @@ object GestureShield {
     private const val KEY_ORIG_PREFIX = "gesture_shield_orig_"
 
     /**
-     * system 命名空间下需要遮蔽的键。遮蔽值取 none：MIUI 侧的枚举认不出这个动作，
-     * 就当没配这个手势（不会去执行 screen_shot）。
+     * system 命名空间下需要遮蔽的键。遮蔽值取 none：MIUI 侧把它当"没配这个手势"，
+     * 手势状态直接置 NONE，不会去执行 screen_shot / launch_ai_memory / split_*。
+     * 三指上下左右 + 长按四个方向全遮：触控板自己就用这四个方向发组合键。
      */
-    private val KEYS = listOf("three_gesture_down", "three_gesture_long_press")
+    private val KEYS = listOf(
+        "three_gesture_down",
+        "three_gesture_up",
+        "three_gesture_long_press",
+        "three_gesture_horizontal_ltr",
+        "three_gesture_horizontal_rtl",
+    )
 
     private const val CMD_TIMEOUT = 4_000L
     private const val ORIG_NULL = "null"
@@ -73,8 +90,8 @@ object GestureShield {
         ctx.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
     /**
-     * 默认开启：本机没有 UI 开关时也要生效（开关 UI 在 feat/gesture-shield-settings-ui 分支，
-     * 等有 git 推送通道时再合入；prefs 里写成 false 也能关）。
+     * 默认开启：设置页里的开关（SettingsFragment→rowGestureShield）只是可以关掉它，
+     * 不做开关时也必须默认生效，否则功能等于不存在。prefs 里写 false 即关闭。
      */
     fun isEnabled(ctx: Context): Boolean = prefs(ctx).getBoolean(KEY_ON, true)
 
