@@ -62,7 +62,8 @@ jobs:
         run: cmake --build build_host -j4 --target apxhost apxdesktop
 
       - name: Build + run unit tests (ctest)
-        # 四个跨平台用例（tcp_transport_test 是 WIN32-only，不在此列）。
+        # 四个用例都在 pc/host 工程里；tcp_transport_test 属于 pc/display 那个独立工程，
+        # 不在 build_host 的 target 列表里。
         # macOS 此前 -DAPXPC_BUILD_TESTS=OFF，测试连编译都没过堂；打开后 mac 侧回归也有了门禁。
         run: |
           cmake --build build_host -j4 --target \

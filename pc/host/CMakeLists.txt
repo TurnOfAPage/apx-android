@@ -539,7 +539,7 @@ if(APXPC_BUILD_TESTS)
     target_link_libraries(wireless_session_lifecycle_test PRIVATE ws2_32 hid setupapi cfgmgr32)
   endif()
   add_test(NAME wireless_session_lifecycle_test COMMAND wireless_session_lifecycle_test)
-  # 400 轮 start/stop，每轮含 50ms 相位错开 —— 给足超时，避免 CI 慢机误判死锁
+  # 140 轮 start/stop，每轮含 50ms 相位错开 —— 给足超时，避免 CI 慢机误判死锁
   set_tests_properties(wireless_session_lifecycle_test PROPERTIES TIMEOUT 300)
 endif()
 

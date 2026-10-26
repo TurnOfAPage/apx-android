@@ -12,6 +12,7 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <unistd.h>
 #endif
 
@@ -414,6 +415,21 @@ void WirelessSession::beaconLoop() {
 #endif
         return;
     }
+    // ★ 接收必须有超时，否则 stop() 收不回 beacon 线程：
+    //   本线程阻塞在 recvfrom 上时，stop() 只能置 beaconRun_ = false，没法打断系统调用；
+    //   没有 SO_RCVTIMEO 时它会一直等到「有信标进来」才醒 —— 局域网里没别人广播就是永远。
+    //   真机表现是退出程序卡死（必须 kill），CI 表现是 ctest 把
+    //   wireless_session_lifecycle_test 判成 300s 超时。200ms 让循环能定期看 beaconRun_。
+#if defined(_WIN32)
+    DWORD rcvToMs = 200;
+    setsockopt(b, SOL_SOCKET, SO_RCVTIMEO,
+               reinterpret_cast<const char*>(&rcvToMs), sizeof(rcvToMs));
+#else
+    timeval rcvTo{};
+    rcvTo.tv_sec = 0;
+    rcvTo.tv_usec = 200 * 1000;
+    setsockopt(b, SOL_SOCKET, SO_RCVTIMEO, &rcvTo, sizeof(rcvTo));
+#endif
     char buf[1024];
     while (beaconRun_.load()) {
         sockaddr_in from{};

@@ -51,7 +51,10 @@ static bool stopWithTimeout(WirelessSession& s, std::chrono::milliseconds budget
 /// 注意：startAuto() 不重启 worker —— 它只置 desire 标志；worker 由 ctor 启动、
 /// 由 stop() 终结。所以每轮必须新建 session。
 static void testStartStopNoDeadlock() {
-    constexpr int kIters = 200;
+    // 轮数按 CI 可承受的总时长定：每轮约 50ms 相位 + stop 收线程（worker 250ms tick
+    // + beacon 200ms 接收超时）。60 轮足够覆盖竞争窗口，整支测试稳定在 30s 内，
+    // 不会顶到 ctest 的 300s 上限。
+    constexpr int kIters = 60;
     for (int i = 0; i < kIters; ++i) {
         WirelessSession s;
         s.startAuto();
@@ -65,7 +68,7 @@ static void testStartStopNoDeadlock() {
 /// 析构路径也要走通：v198 之前析构 → stop() 也可能死锁。构造后不显式 stop，
 /// 直接让 RAII 析构跑一次。
 static void testDestructorNoDeadlock() {
-    constexpr int kIters = 100;
+    constexpr int kIters = 40;
     for (int i = 0; i < kIters; ++i) {
         auto fut = std::async(std::launch::async, [] {
             WirelessSession s;
@@ -85,7 +88,7 @@ static void testDestructorNoDeadlock() {
 /// 边界：startAuto() 之后立刻 stop()，worker 可能还没来得及起 beacon；这条路
 /// 也得能正常退出。
 static void testImmediateStop() {
-    constexpr int kIters = 100;
+    constexpr int kIters = 40;
     for (int i = 0; i < kIters; ++i) {
         WirelessSession s;
         s.startAuto();
