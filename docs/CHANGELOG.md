@@ -29,11 +29,27 @@
 - **方向锁定仍绑陀螺仪、设置入口难达（反馈#2）**：锁定中布局钉死不再跟系统配置翻面、
   `onResume` 不使能方向传感器、`setOrientLock` 直接停物理检测；竖屏顶栏 + 横屏悬浮
   右上角常驻「设置」入口（f3da1d0）
+- **横屏键盘页没有方向锁定 / 切换触摸板·键盘按钮（真机反馈）**：pill 的显隐原先写在
+  `bindActions()` 里，而这个方法 onCreate 只跑一次 —— MainActivity 的 configChanges 含
+  orientation、旋屏**不重建 Activity**，于是「竖屏启动 → 转横屏」这条路上 pill 永远是
+  `GONE`。改由 `applyOrientationLayout()` 按朝向统一设，冷启动与旋屏同源。
+- **横屏底栏隐藏后留白没收回（真机反馈）**：`applyOrientationLayout` 里无条件写死
+  104dp / 90dp 底距，把 `layout-land` 给的值整个覆盖 —— 底栏都藏了，底下还压着一条百 dp
+  死白带。改按朝向取 `inset_bottom_nav`(竖) / `inset_bottom_land`(横)，设置页同样跟着调。
+- **横屏 pill 压住内容**：pill 悬浮在右上角，正盖在键盘页「自定义」芯片与 Win 键上
+  （点芯片中心命中的其实是 pill）。改为从 pager 顶部让出 pill 实测高度的一条带子，
+  内容不再钻到 pill 底下。
+- **截屏掉不下来（FLAG_SECURE）**：MainActivity 与 TouchpadActivity 都挂了 FLAG_SECURE，
+  截图 / 录屏 / 最近任务缩略图全黑，界面问题只能口述、没法对证。两处一并移除。
 
 ### 变更
-- **设置页「左 1 右 2」不再跟朝向**：原先只有横屏左右分栏、竖屏退回纵向堆叠；
-  按要求改为**任何朝向**都是左 1/3（状态概览 + 传输按钮 + 分类/返回）+ 右 2/3（功能分组），
-  中缝 12dp。旋屏只是重算 orientation 与 LayoutParams，视图实例、分类跳转状态与滚动位置不变。
+- **设置页两栏「左 1 右 2」写进布局**：原先靠运行期 `applySettingsTwoPane()` 改 orientation
+  与 LayoutParams（横屏才分栏、竖屏纵向堆叠）；按要求改为**任何朝向**都是左 1/3 + 右 2/3，
+  且排布直接落在 `layout/page_settings.xml` 里 —— `settingsTwoPane` 恒为横排、权重 1:2、
+  中缝 12dp，两栏各自 `match_parent` 高 + 独立滚动，运行期不再改 LayoutParams。
+  右栏 `fillViewport` + 首页分类卡片撑满整栏（真机反馈「设置页没有全屏」：此前内容短时
+  下半屏整片空着）；左栏三个传输按钮由「三个 weight=1 横排」改竖排整列宽 —— 1/3 栏宽下
+  每个只有 ~33dp，「无线 / 蓝牙 / USB」被单行 + ellipsize 切空，真机上只剩三个空描边胶囊。
 
 ### 新增
 - **Logcat 系统日志工具（反馈#4）**：设置页「工具」小节新增入口，root 抓全进程 logcat，
