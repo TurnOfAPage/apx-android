@@ -293,6 +293,22 @@ elseif(APPLE)
   target_link_libraries(apxpc_wireless PUBLIC "-framework CoreGraphics" "-framework AppKit")
 endif()
 
+# ---------------------------------------------------------------- 目标：LocalSend 互传（PC 接收端）
+# 手机端 com.allperiph.localsend 早就完整（多播发现 + 五个 HTTP 端点），PC 端此前一个字节都没有，
+# 于是「手机 ↔ 官方桌面版」能通、「手机 ↔ 本工程 PC 端」不通。这里补的就是 PC 这一半：
+# 加入多播组、周期 announce、实现 info/register/prepare-upload/upload/cancel、落盘到「下载/AllPeriph」。
+set(APXPC_LOCALSEND_SRC
+  "${APXPC_ROOT}/src/localsend/local_send_receiver.cpp"
+  "${APXPC_ROOT}/src/localsend/sha256.cpp"
+)
+add_library(apxpc_localsend STATIC ${APXPC_LOCALSEND_SRC})
+target_include_directories(apxpc_localsend PUBLIC "${APXPC_ROOT}/include")
+# json 的实现在 apxpc_service（src/net/json.cpp 属该库），协议层直接复用，不另造解析器
+target_link_libraries(apxpc_localsend PUBLIC apxpc_service)
+if(WIN32)
+  target_link_libraries(apxpc_localsend PUBLIC ws2_32)
+endif()
+
 # ---------------------------------------------------------------- 目标：媒体通道
 set(APXPC_MEDIA_SRC
   "${APXPC_ROOT}/src/media/media_session.cpp"
@@ -341,7 +357,7 @@ endif()
 # 让 panel 的全部符号依赖都在 apxhost 既有的 link 列表里（objs 先于 libs，无序问题）。
 add_executable(apxhost "${APXPC_ROOT}/src/host_main.cpp"
                        "${APXPC_ROOT}/src/ui/panel_http.cpp")
-target_link_libraries(apxhost PRIVATE apxpc_core apxpc_discovery apxpc_sensors apxpc_service apxpc_wireless apxpc_media)
+target_link_libraries(apxhost PRIVATE apxpc_core apxpc_discovery apxpc_sensors apxpc_service apxpc_wireless apxpc_media apxpc_localsend)
 if(WIN32)
   target_link_libraries(apxhost PRIVATE ws2_32 shell32 user32 hid setupapi cfgmgr32)
 endif()
@@ -541,6 +557,13 @@ if(APXPC_BUILD_TESTS)
   add_test(NAME wireless_session_lifecycle_test COMMAND wireless_session_lifecycle_test)
   # 140 轮 start/stop，每轮含 50ms 相位错开 —— 给足超时，避免 CI 慢机误判死锁
   set_tests_properties(wireless_session_lifecycle_test PROPERTIES TIMEOUT 300)
+
+  # LocalSend 协议层：SHA-256 标准向量 + prepare-upload JSON 契约 + 文件名清洗。
+  # 纯函数、不占端口不起线程，所以不会像上面那个用例那样受 CI 机器负载影响。
+  add_executable(localsend_protocol_test
+                 "${APXPC_ROOT}/tests/localsend_protocol_test.cpp")
+  target_link_libraries(localsend_protocol_test PRIVATE apxpc_localsend)
+  add_test(NAME localsend_protocol_test COMMAND localsend_protocol_test)
 endif()
 
 # ---------------------------------------------------------------- 安装

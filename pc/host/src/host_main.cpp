@@ -27,6 +27,7 @@
 #include <apxpc/media/audio_capture.hpp>
 #include <apxpc/media/mic_bridge.hpp>
 #include <apxpc/config/app_config.hpp>
+#include <apxpc/localsend/local_send_receiver.hpp>
 #include <apxpc/autostart.hpp>
 #include <apxpc/tray/tray_win32.hpp>
 #include <apxpc/ui/panel_http.hpp>
@@ -73,6 +74,10 @@ void printUsage() {
         "                     会先列出所有播放设备；不填序号 = 跟随系统默认\n"
         "  apxhost check-update  检查新版本（GitHub releases/latest，比对规则与手机端一致）\n"
         "                     退出码：0=已是最新 3=发现新版本 1=检查失败\n"
+        "  apxhost localsend [端口] [秒数] [目录]\n"
+        "                     LocalSend 互传的接收端：加入多播组、周期自广播，手机端在\n"
+        "                     「互传（LocalSend）」里即可发现本机并直接发送（默认端口 53317，\n"
+        "                     被占自动回退 53318/53319；默认落盘「下载/AllPeriph」）\n"
         "  apxhost --help\n"
         "\n"
         "交互命令：\n"
@@ -239,6 +244,52 @@ int runCtrlRemote(const std::string& host, uint16_t port, int seconds) {
     }
     cap->stop();
     cli.disconnect();
+    std::puts("\n已停止");
+    return 0;
+}
+
+// ---------------------------------------------------------- LocalSend 互传 ----
+// PC 侧接收端：手机端「互传（LocalSend）」能发现本机（多播 announce + register 应答），
+// 也能直接把文件发过来（prepare-upload → upload → 落盘）。此前 pc/host 里一个字节都没有，
+// 所以「手机 ↔ 官方桌面版」通、「手机 ↔ 本工程 PC 端」不通。
+static int runLocalSend(uint16_t port, int seconds, const std::string& dir) {
+    apxpc::localsend::Options opt;
+    opt.port = port;
+    opt.dir = dir;
+
+    apxpc::localsend::LocalSendReceiver rx;
+    const int64_t t0 = std::chrono::duration_cast<std::chrono::milliseconds>(
+                           std::chrono::steady_clock::now().time_since_epoch())
+                           .count();
+    auto onFile = [t0](const std::string& path, uint64_t size) {
+        const int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                std::chrono::steady_clock::now().time_since_epoch())
+                                .count();
+        std::printf("\n[+%llds] 已接收 %s（%llu 字节）\n", static_cast<long long>((now - t0) / 1000),
+                    path.c_str(), static_cast<unsigned long long>(size));
+        std::fflush(stdout);
+    };
+    if (!rx.start(opt, onFile)) {
+        std::printf("LocalSend 接收端启动失败：%s\n", rx.lastError().c_str());
+        return 1;
+    }
+    std::printf("LocalSend 接收端已就绪：端口 %u，落盘 %s\n",
+                static_cast<unsigned>(rx.listenPort()),
+                (dir.empty() ? apxpc::localsend::LocalSendReceiver::defaultDir() : dir).c_str());
+    std::puts("手机端打开「互传（LocalSend）」即可发现本机并发送文件。Ctrl+C 退出。");
+
+    while (true) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+        const int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                std::chrono::steady_clock::now().time_since_epoch())
+                                .count();
+        const auto peers = rx.devices();
+        std::printf("\r[%4llds] 已收 %d 个文件 | 60s 内发现设备 %zu 台   ",
+                    static_cast<long long>((now - t0) / 1000), rx.receivedCount(), peers.size());
+        std::fflush(stdout);
+        if (seconds > 0 && (now - t0) >= static_cast<int64_t>(seconds) * 1000) break;
+    }
+    rx.stop();
     std::puts("\n已停止");
     return 0;
 }
@@ -426,6 +477,14 @@ int main(int argc, char** argv) {
             std::printf("当前版本 %s 已是最新（最新 Release：%s）\n",
                         APXPC_VERSION_STRING, r.latestTag.c_str());
             return 0;
+        }
+
+        // ---- LocalSend 互传接收端（PC 侧此前完全缺失）----
+        if (cmd == "localsend") {
+            const int port = argc > 2 ? std::atoi(argv[2]) : 53317;
+            const int secs = argc > 3 ? std::atoi(argv[3]) : 0;
+            const std::string dir = argc > 4 ? argv[4] : "";
+            return runLocalSend(static_cast<uint16_t>(port), secs, dir);
         }
 
         // ---- 浏览器控制面板（方案 B：本地 HTTP + React dist；macOS 首选入口）----

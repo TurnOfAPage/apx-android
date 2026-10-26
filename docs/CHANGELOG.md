@@ -8,6 +8,23 @@
 
 ## Unreleased（2026-10-25）
 
+### 新增
+- **LocalSend 互传的 PC 接收端**：手机端 `com.allperiph.localsend` 早就完整（多播发现 +
+  `info`/`register`/`prepare-upload`/`upload`/`cancel` 五个端点），但 `pc/host` 里一个字节都没有 ——
+  结果「手机 ↔ 官方 LocalSend 桌面版」能通、「手机 ↔ 本工程 PC 端」不通（只能走旧的 9512 私有通道）。
+  新增 `apxpc/localsend/local_send_receiver`（协议 v2.2，与官方及本工程 Android 端互通）：
+  - UDP 加入 `224.0.0.167:53317`，启动突发 100/500/2000ms + 周期自广播，
+    并在收到对方 announce 后回 `register`，手机端设备列表里能看见本机；
+  - HTTP 默认 53317，**被占自动回退 53318/53319** 且实际端口由 announce 带出去（对端无需猜）；
+  - 文件落盘「下载/AllPeriph」，重名不覆盖；对端声明了 `sha256` 就边写边算并如实记录是否一致
+    （不一致保留文件但明确告警——对方可能自己算错，删掉反而丢数据）；
+  - 半截文件一律删除，不留「看起来收到了」的残file；会话 30 分钟未动自动清理。
+  - 自实现的 SHA-256（仓库此前只有 crc32），用 NIST 向量钉住（含 100 万字节那条）。
+  - 用法：`apxhost localsend [端口] [秒数] [目录]`。
+  - 单元测试 `pc/host/tests/localsend_protocol_test.cpp`（SHA-256 向量 + prepare-upload JSON 契约 +
+    文件名清洗）已进 CTest 与两端 CI 门禁。
+  - 尚未接线：桌面面板 / `apxhost serve` 里的「互传」卡片与发现列表（需要动 HostBundle 与前端）。
+
 ### 修复
 - **HID 上报重复（合并未合分支）**：`pc/display/inject/hid/apxhid.c` 的 `ApxHidEnqueue` 在有挂起读请求时，
   把同一份报告**既**交给挂起请求**又**写进环形缓冲区 —— 下一次 READ_REPORT 会把同一报告再报一次

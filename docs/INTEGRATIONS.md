@@ -12,7 +12,7 @@
 |---|---|---|
 | Sunshine / Moonlight | 全仓 0 处引用 | 未开始 |
 | scrcpy | 仅 `pc/display/transport/tcp_transport_win.cpp` 两处注释（对照其「多 socket」设计取舍与发送缓冲策略），无任何代码依赖 | 未接入，只是借鉴过思路 |
-| LocalSend | Android 端 5 个文件：`LocalSendProtocol` / `LocalSendHttpServer` / `LocalSendClient` / `LocalSendService` / `SendActivity`，协议按官方 v2.2 实现（多播 224.0.0.167:53317、`/info` `/register` `/prepare-upload` `/upload` `/cancel`），设置页有开关（issue#45） | **Android 端已完成，PC 端（`pc/host/src`）没有实现** |
+| LocalSend | **PC 接收端已实现**（`pc/host/src/localsend/`，见下）\n  · Android 端 5 个文件：`LocalSendProtocol` / `LocalSendHttpServer` / `LocalSendClient` / `LocalSendService` / `SendActivity`，协议按官方 v2.2 实现（多播 224.0.0.167:53317、`/info` `/register` `/prepare-upload` `/upload` `/cancel`），设置页有开关（issue#45） | **Android 端已完成，PC 端（`pc/host/src`）没有实现** |
 | bada | 全仓 0 处引用 | 未开始 |
 
 也就是说，「四项都做」里目前真正有代码的只有 LocalSend 的一半：手机 ↔ 官方 LocalSend 桌面版能通，手机 ↔ 本工程 PC 端还不通。
@@ -61,7 +61,7 @@
 
 **现状最接近可用**：Android 端协议层完整，`LocalSendHttpServer` 已经能收（`prepare-upload` → `upload` → `cancel`），`LocalSendClient` 已经能发，`SendActivity` 是发送界面，`LocalSendService` 是前台接收服务。也就是说手机侧不需要再动协议。
 
-**缺的是 PC 端**：`pc/host/src` 里没有 LocalSend 的任何实现，所以本工程 PC 端既不能被手机发现，也不能接收。
+**PC 端已在本次补齐**（`pc/host/src/localsend/local_send_receiver.cpp` + `sha256.cpp`）：\n多播收发、五个端点、落盘「下载/AllPeriph」、sha256 校验、`apxhost localsend` 子命令，\n协议层单测已进 CI 门禁。剩余未接线的是**面板/常驻服务里的「互传」入口**（发现列表与收到文件的展示），\n那部分要同时改 `HostBundle`、`panel_http` 与 WebView2 壳的前端，属于下一步。
 
 **三条路**
 
