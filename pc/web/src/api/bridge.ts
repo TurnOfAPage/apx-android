@@ -50,6 +50,25 @@ export interface HostState {
     };
     mic?: { running: boolean; device: string };
   };
+  /** 互传（LocalSend 协议 v2.2）：字段口径由 C++ 的 apxpc::localsend::statusJson 统一给出
+   *  （host 侧 testStatusJson 钉住这份契约），两个面板入口（WebView2 / HTTP）同源。 */
+  localsend: {
+    running: boolean;
+    /** 实际 HTTP 端口：53317 被占时回退 53318/53319，由 announce 带给对端 */
+    port: number;
+    /** 落盘目录（= 「文件传输」面板同一目录：下载/AllPeriph） */
+    dir: string;
+    /** 本次运行收到的文件数 */
+    received: number;
+    error: string;
+    /** 多播发现不可用时的诚实提示（此时仍能收直连，只是附近设备列表为空） */
+    warn: string;
+    /** 多播 announce 积累的近期设备 */
+    devices: {
+      alias: string; deviceType: string; ip: string;
+      fingerprint: string; port: number; lastSeenMs: number;
+    }[];
+  };
   transports: Record<string, unknown>;
   counts: { mouse: number; keyboard: number; consumer: number; dropped: number };
   config: Record<string, unknown>;
@@ -140,6 +159,13 @@ class Bridge {
                     encodeMs: 16.2, dropped: 3, error: '' },
           audio: { running: false, peak: 0, device: '', sampleRate: 48000, channels: 2, framesSent: 0, error: '' },
           mic: { running: false, device: '' },
+        },
+        localsend: {
+          running: true, port: 53317, dir: '下载/AllPeriph', received: 3,
+          error: '', warn: '',
+          devices: [
+            { alias: 'Pixel 8', deviceType: 'phone', ip: '192.168.1.5', fingerprint: 'mock', port: 53317, lastSeenMs: Date.now() },
+          ],
         },
         transports: {},
         counts: { mouse: 4567, keyboard: 890, consumer: 45, dropped: 1 },

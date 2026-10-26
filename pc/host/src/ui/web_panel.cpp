@@ -39,6 +39,7 @@
 #include "apxpc/wireless/wireless_session.hpp"
 #include "apxpc/wireless/file_receiver.hpp"
 #include "apxpc/wireless/file_sender.hpp"
+#include "apxpc/localsend/local_send_receiver.hpp"
 #include "apxpc/media/media_session.hpp"
 #include "apxpc/media/screen_push.hpp"
 #include "apxpc/media/audio_capture.hpp"
@@ -286,6 +287,24 @@ void buildState(const HostBundle& b, Json& out) {
         transports["usbSpeed"] = gp->usbSpeed;
     }
 
+    // 互传（LocalSend）：字段口径由 apxpc::localsend::statusJson 统一给出（单测钉住的那份），
+    // 两个面板不各写一遍，免得字段名漂移弄坏前端。
+    if (b.localSend) {
+        std::string lerr;
+        out["localsend"] = Json::parse(apxpc::localsend::statusJson(b.localSend->snapshot()), &lerr);
+    } else {
+        // 未接线时也给完整「已关闭」形态：前端按类型读，缺字段会渲染成 undefined
+        Json ls = Json::makeObject();
+        ls["running"] = false;
+        ls["port"] = 0.0;
+        ls["dir"] = std::string("");
+        ls["received"] = 0.0;
+        ls["error"] = std::string("互传接收端未初始化");
+        ls["warn"] = std::string("");
+        ls["devices"] = Json::makeArray();
+        out["localsend"] = ls;
+    }
+
     out["link"] = link;
     out["media"] = media;
     out["transports"] = transports;
@@ -459,6 +478,51 @@ void startFileSend(Panel* p, const std::string& path, const std::string& respId)
 }
 
 // ———————————————— 动作分发（前端 act 请求） ———————————————
+// 互传（LocalSend 协议 v2.2）
+// 起停与 panel_http.cpp 同口径：落盘目录固定取 FileReceiver::defaultDir()（下载\AllPeriph），
+// 与「文件传输」面板同一目录 —— 互传来的文件在那里直接可见、也删得掉，不各写一份默认值。
+bool startLocalSend(const HostBundle& b) {
+    if (!b.localSend) return false;
+    if (b.localSend->running()) return true;   // 幂等：重复点开关不会撞端口
+    apxpc::localsend::Options opt;
+    opt.dir = apxpc::wireless::FileReceiver::defaultDir();
+    const bool ok = b.localSend->start(
+        opt, [](const std::string& path, uint64_t size, const std::string& from) {
+            Panel* p = g_panel;
+            if (!p) return;
+            const size_t slash = path.find_last_of("\\/");
+            const std::string name =
+                (slash == std::string::npos) ? path : path.substr(slash + 1);
+            if (p->bundle.tray) p->bundle.tray->notify("收到文件", from + " 发来 " + name);
+            // 回调跑在接收线程；PostWebMessageAsJson 线程安全（同 postEvent 的约定），
+            // 但面板刚启动、WebView2 还没建好时 webview 为空 —— 判空后再推。
+            if (!p->webview) return;
+            Json d = Json::makeObject();
+            d["path"] = path;
+            d["size"] = static_cast<double>(size);
+            d["from"] = from;
+            d["via"] = std::string("localsend");
+            postEvent(p, std::string("on-localsend-received"), d);
+        });
+    if (ok)
+        APX_LOGI("互传接收端已启动：端口 %u",
+                 static_cast<unsigned>(b.localSend->listenPort()));
+    else
+        APX_LOGW("互传接收端启动失败：%s", b.localSend->lastError().c_str());
+    return ok;
+}
+
+// 用资源管理器打开落盘目录。路径来自宿主默认目录（不是前端自由输入），但仍走
+// ShellExecuteW 的 argv 形式、不经 cmd —— 不给命令行拼接留任何余地。
+void openDirInExplorer(const std::string& dir) {
+    if (dir.empty()) return;
+    const std::wstring w = utf8ToWide(dir);
+    const HINSTANCE r = ::ShellExecuteW(nullptr, L"open", w.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+    if (reinterpret_cast<INT_PTR>(r) <= 32)
+        APX_LOGW("打开互传目录失败（ShellExecuteW=%lld）: %s",
+                 static_cast<long long>(reinterpret_cast<INT_PTR>(r)), dir.c_str());
+}
+
 void handleAct(Panel* p, const std::string& id, const std::string& name, const Json& payload) {
     APX_LOGI("handleAct: name={} id={}", name.c_str(), id.c_str());
     const HostBundle& b = p->bundle;
@@ -578,6 +642,30 @@ void handleAct(Panel* p, const std::string& id, const std::string& name, const J
     }
 
     // —— 文件传输（PC ↔ 手机，TCP 9512）——
+    // —— 互传（LocalSend）：toggle / status / openDir ——
+    if (name == "localsend.toggle") {
+        if (!b.localSend) return postResponse(p, id, failResp("互传接收端未初始化"));
+        auto* en = payload.find("enable");
+        const bool enable = en ? en->asBool(false) : !b.localSend->running();
+        if (enable && !startLocalSend(b))
+            return postResponse(p, id, failResp("互传接收端启动失败：" + b.localSend->lastError()));
+        if (!enable) b.localSend->stop();
+        std::string lerr;
+        return postResponse(p, id, okResp(Json::parse(apxpc::localsend::statusJson(b.localSend->snapshot()), &lerr)));
+    }
+    if (name == "localsend.status") {
+        if (!b.localSend) return postResponse(p, id, failResp("互传接收端未初始化"));
+        std::string lerr;
+        return postResponse(p, id, okResp(Json::parse(apxpc::localsend::statusJson(b.localSend->snapshot()), &lerr)));
+    }
+    if (name == "localsend.openDir") {
+        if (!b.localSend) return postResponse(p, id, failResp("互传接收端未初始化"));
+        const std::string dir = b.localSend->snapshot().dir;
+        if (dir.empty()) return postResponse(p, id, failResp("落盘目录未知"));
+        openDirInExplorer(dir);
+        return postResponse(p, id, okResp());
+    }
+
     if (name == "file.send") {
         const std::string path = payload.find("path") ? payload.find("path")->asString() : "";
         if (path.empty()) return postResponse(p, id, failResp("未选择文件"));
@@ -1004,6 +1092,9 @@ int runWebPanel(const HostBundle& bundle, const std::string& /*webDir*/) {
     panel.bundle = bundle;
     g_panel = &panel;
     panel.running.store(true);
+    // 互传接收端：面板一开就起（与 9511 受控端 / 9512 收文件同口径 —— 面板在跑就能互传）。
+    // 失败（53317 被官方 localsend 占用等）只告警、不阻断面板：状态里能点开关重试。
+    startLocalSend(panel.bundle);
 
     // ★ WebView2 依赖 COM：UI 线程必须先初始化 STA，否则 CreateCoreWebView2Environment
     //   必然返回 0x800401F0（CO_E_NOTINITIALIZED）。
@@ -1141,6 +1232,8 @@ int runWebPanel(const HostBundle& bundle, const std::string& /*webDir*/) {
         g_sendThreads.clear();
     }
     // 媒体建链线程：面板退出前 join（Panel 是栈对象，析构时若线程仍 joinable 会 terminate）
+    // 互传接收端：先停再清 g_panel —— 接收线程的回调以 g_panel 为准，顺序反了会漏推事件
+    if (panel.bundle.localSend) panel.bundle.localSend->stop();
     if (panel.mediaThread.joinable()) panel.mediaThread.join();
     g_panel = nullptr;
     if (comOwned) ::CoUninitialize();

@@ -25,6 +25,7 @@
 #include "apxpc/wireless/wireless_session.hpp"
 #include "apxpc/wireless/ctrl9511.hpp"
 #include "apxpc/wireless/file_receiver.hpp"
+#include "apxpc/localsend/local_send_receiver.hpp"
 #include "apxpc/media/media_session.hpp"
 #include "apxpc/media/screen_push.hpp"
 #include "apxpc/media/audio_capture.hpp"
@@ -365,6 +366,10 @@ int main(int /*argc*/, char** /*argv*/) {
     auto audio       = std::make_unique<apxpc::media::AudioCapture>();
     auto micBridge   = std::make_unique<apxpc::media::MicBridge>();
     auto fileRecv    = std::make_unique<apxpc::wireless::FileReceiver>();
+    // 互传（LocalSend）接收端：对象在此、起停交给面板入口（Win=runWebPanel / mac=runWebPanelHttp
+    // 启动时 start、退出时 stop）。理由与 9512 的 FileReceiver 相同：面板入口才知道
+    // 「落盘目录 = FileReceiver::defaultDir()」与「头像/alias 用本机名」这两件宿主侧的事。
+    auto localSend   = std::make_unique<apxpc::localsend::LocalSendReceiver>();
     auto tray        = std::make_unique<apxpc::tray::TrayIcon>();
     auto hk          = std::make_shared<apxpc::hotkey::HotkeyManager>();
     auto router      = std::make_shared<apxpc::api::ActionRouter>();
@@ -398,6 +403,7 @@ int main(int /*argc*/, char** /*argv*/) {
     apxpc::ui::HostBundle bundle;
     bundle.session      = session.get();
     bundle.fileReceiver = fileRecv.get();
+    bundle.localSend    = localSend.get();
     bundle.media        = media.get();
 #if defined(_WIN32)
     bundle.screenPush   = screenPush.get();
@@ -429,6 +435,7 @@ int main(int /*argc*/, char** /*argv*/) {
 
     // —— 退出清理（反向顺序）——
     APX_LOGI("宿主栈关闭中…");
+    localSend->stop();   // 面板入口已 stop 过；重复停止是幂等的
     fileRecv->stop();
     audio->stop();
     micBridge->stop();

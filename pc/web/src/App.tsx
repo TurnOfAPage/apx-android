@@ -4,6 +4,7 @@ import { ConnectionCard } from './components/ConnectionCard';
 import { ScreenCard } from './components/ScreenCard';
 import { SpeakerCard } from './components/SpeakerCard';
 import { MicCard } from './components/MicCard';
+import { LocalSendCard } from './components/LocalSendCard';
 import { RemoteInputModal } from './components/RemoteInputModal';
 import { SettingsModal } from './components/SettingsModal';
 import { FilePanelModal } from './components/FilePanelModal';
@@ -86,7 +87,9 @@ export default function App() {
           <ScreenCard   state={state} />
           <SpeakerCard  state={state} />
           <MicCard      state={state} />
-          {/* 第四格（旧面板右下是 USB 卡 —— WebView2 版暂时省掉，BT/USB 状态走设置页） */}
+          {/* 第四格：旧面板右下是 USB 卡（WebView2 版省掉，BT/USB 状态走设置页），
+              换成互传 —— 手机 / 官方 LocalSend 直发文件到本机，不依赖控制链路先连上 */}
+          <LocalSendCard state={state} />
         </div>
 
         {/* 底部 */}

@@ -370,7 +370,8 @@ if(WIN32 AND APXPC_BUILD_UI)
       "${APXPC_ROOT}/src/ui/webview2_runtime.cpp")
     add_library(apxpc_webpanel STATIC ${APXPC_WEBPANEL_SRC})
     target_include_directories(apxpc_webpanel PUBLIC "${APXPC_ROOT}/include")
-    target_link_libraries(apxpc_webpanel PUBLIC apxpc_core apxpc_wireless apxpc_media apxpc_screen apxpc_service apxpc_discovery)
+    # apxpc_localsend：面板里的「互传」卡（buildState 的 localsend 段 + toggle / openDir 动作）
+    target_link_libraries(apxpc_webpanel PUBLIC apxpc_core apxpc_wireless apxpc_media apxpc_screen apxpc_service apxpc_discovery apxpc_localsend)
 
     if(DEFINED WEBVIEW2_SDK_DIR)
       target_include_directories(apxpc_webpanel PUBLIC
@@ -418,7 +419,7 @@ endif()
 add_executable(apxdesktop ${APXDESKTOP_SRC})
 
 if(APXPC_BUILD_UI AND APXPC_BUILD_UI_WEBVIEW2 AND WIN32)
-  target_link_libraries(apxdesktop PRIVATE apxpc_webpanel apxpc_wireless apxpc_media apxpc_screen apxpc_service apxpc_core)
+  target_link_libraries(apxdesktop PRIVATE apxpc_webpanel apxpc_wireless apxpc_media apxpc_screen apxpc_service apxpc_core apxpc_localsend)
 elseif(APXPC_BUILD_UI AND WIN32)
   target_link_libraries(apxdesktop PRIVATE apxpc_ui apxpc_wireless apxpc_core)
 else()
@@ -428,7 +429,7 @@ else()
   # macos.yml 此前只 build --target apxhost，本次纳入 apxdesktop 后补齐）。
   # Win 无 UI 的罕见构建同样落此分支，链全集无害（库都在）。
   target_link_libraries(apxdesktop PRIVATE apxpc_core apxpc_discovery apxpc_sensors
-    apxpc_service apxpc_wireless apxpc_media)
+    apxpc_service apxpc_wireless apxpc_media apxpc_localsend)
 endif()
 
 if(WIN32)

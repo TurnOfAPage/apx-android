@@ -53,6 +53,7 @@ class AudioCapture;
 class MicBridge;
 }
 
+namespace apxpc::localsend { class LocalSendReceiver; }
 namespace apxpc::api { class ActionRouter; }
 namespace apxpc::tray { class TrayIcon; }
 namespace apxpc::hotkey { class HotkeyManager; }
@@ -67,6 +68,10 @@ struct HostBundle {
     // 核心会话
     wireless::WirelessSession*   session      = nullptr;
     wireless::FileReceiver*      fileReceiver = nullptr;
+
+    // 互传（LocalSend 协议 v2.2）：PC 侧接收端。落盘目录由调用方决定（面板里取
+    // FileReceiver::defaultDir()，与「文件传输」面板同一目录）；为空时前端显示「未初始化」。
+    localsend::LocalSendReceiver* localSend    = nullptr;
 
     // 媒体
     media::MediaSession*         media        = nullptr;

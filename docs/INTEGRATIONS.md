@@ -12,7 +12,7 @@
 |---|---|---|
 | Sunshine / Moonlight | 全仓 0 处引用 | 未开始 |
 | scrcpy | 仅 `pc/display/transport/tcp_transport_win.cpp` 两处注释（对照其「多 socket」设计取舍与发送缓冲策略），无任何代码依赖 | 未接入，只是借鉴过思路 |
-| LocalSend | **PC 接收端已实现**（`pc/host/src/localsend/`，见下）\n  · Android 端 5 个文件：`LocalSendProtocol` / `LocalSendHttpServer` / `LocalSendClient` / `LocalSendService` / `SendActivity`，协议按官方 v2.2 实现（多播 224.0.0.167:53317、`/info` `/register` `/prepare-upload` `/upload` `/cancel`），设置页有开关（issue#45） | **Android 端已完成，PC 端（`pc/host/src`）没有实现** |
+| LocalSend | **PC 接收端 + 面板入口已实现**（`pc/host/src/localsend/`，见下）\n  · Android 端 5 个文件：`LocalSendProtocol` / `LocalSendHttpServer` / `LocalSendClient` / `LocalSendService` / `SendActivity`，协议按官方 v2.2 实现（多播 224.0.0.167:53317、`/info` `/register` `/prepare-upload` `/upload` `/cancel`），设置页有开关（issue#45） | **Android 端已完成，PC 端（`pc/host/src`）没有实现** |
 | bada | 全仓 0 处引用 | 未开始 |
 
 也就是说，「四项都做」里目前真正有代码的只有 LocalSend 的一半：手机 ↔ 官方 LocalSend 桌面版能通，手机 ↔ 本工程 PC 端还不通。
@@ -61,7 +61,30 @@
 
 **现状最接近可用**：Android 端协议层完整，`LocalSendHttpServer` 已经能收（`prepare-upload` → `upload` → `cancel`），`LocalSendClient` 已经能发，`SendActivity` 是发送界面，`LocalSendService` 是前台接收服务。也就是说手机侧不需要再动协议。
 
-**PC 端已在本次补齐**（`pc/host/src/localsend/local_send_receiver.cpp` + `sha256.cpp`）：\n多播收发、五个端点、落盘「下载/AllPeriph」、sha256 校验、`apxhost localsend` 子命令，\n协议层单测 + 真开端口的集成测试（prepare-upload → upload → 落盘 → 摘要校验）都已进 CI 门禁。剩余未接线的是**面板/常驻服务里的「互传」入口**（发现列表与收到文件的展示），\n那部分要同时改 `HostBundle`、`panel_http` 与 WebView2 壳的前端，属于下一步。
+**PC 端 + 面板入口均已补齐**（`pc/host/src/localsend/local_send_receiver.cpp` + `sha256.cpp`）：
+多播收发、五个端点、落盘「下载/AllPeriph」、sha256 校验、`apxhost localsend` 子命令；
+协议层单测 + 真开端口的集成测试（prepare-upload → upload → 落盘 → 摘要校验）都已在 CI 门禁里。
+
+**面板里的「互传」卡**（本轮接线，三个入口同构）：
+
+| 入口 | 后端 | 前端 |
+|---|---|---|
+| `apxhost panel`（macOS / Linux / Windows HTTP） | `pc/host/src/ui/panel_http.cpp` 的 `localsend` 段 + `localsend.toggle/status/openDir` | `pc/web` 同一份 dist |
+| `apxdesktop`（Windows，WebView2） | `pc/host/src/ui/web_panel.cpp` 同上三个动作 | 同上 |
+| `apxdesktop`（macOS，走 HTTP 入口） | 同 `apxhost panel` | 同上 |
+
+- 状态字段契约由 `apxpc::localsend::statusJson()` 单点产出，`testStatusJson` 钉住字段名/类型；
+  前端 `HostState.localsend` 照此声明 —— **改名要两边一起改**。
+- 起停：`HostBundle.localSend` 非空时随面板启动（失败只告警、不阻断面板，卡片上能重试），
+  退出前 `stop()`；未接线时 state 里给完整的「已关闭」形态，避免前端读到 `undefined`。
+- 收到文件：托盘气泡 + `on-localsend-received` 事件（`{path,size,from,via:"localsend"}`），
+  前端卡片据此显示「X 发来文件」。
+- 落盘目录显式取 `FileReceiver::defaultDir()`，与「文件传输」面板同一目录 —— 互传来的文件
+  在那里直接可见、也删得掉，不各写一份默认值。
+- `openDir` 打开目录：macOS/Linux 用 `fork`+`execlp("open"/"xdg-open")`，Windows 用
+  `ShellExecuteW`，都不经 shell。
+
+仍未做：**PC → 手机方向**（用本工程 PC 端主动发文件，协议层 `LocalSendClient` 只在 Android 端有）。
 
 **三条路**
 
