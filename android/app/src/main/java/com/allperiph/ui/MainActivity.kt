@@ -527,7 +527,6 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
         } else {
             pill?.visibility = View.GONE
         }
-        val space4 = resources.getDimensionPixelSize(R.dimen.space_4)
         // 键盘页顶部那行「布局页签」（8 套布局的横滑容器）：横屏只需把它的右端让出 pill 的
         // 宽度 —— 页签滑到底也不会钻到 pill 底下，键盘**不用整页下移**（改前这里是整页顶距）。
         if (::keyboardPanel.isInitialized) {
@@ -536,11 +535,17 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
                 if (landscape) pillWidth else dp(6), keyboardPanel.tabScroll.paddingBottom,
             )
         }
-        // 触控板页右栏顶部那一行（标题 + 编辑）：横屏把右内边距加到 pill 左边为止。
+        // 触控板页右栏顶部那一行（「常用快捷键」+ 编辑）：**竖向**让位，不能像键盘页那样只加
+        // 右内边距 —— 这一栏本身只有 ~320dp 宽，扣掉 pill 的宽度后剩不下「标题 + 编辑」两个
+        // 控件：真机复测里 pillWidth 一加，「编辑」当场被挤成竖排两行（截图见 CHANGELOG）。
+        // 改成整行下移到 pill 底边之下：宽度保持满栏，标题与按钮都不变形；
+        // 代价只是右栏（快捷键）整体下移一个 pill 的高度 —— 它是列表，本来就有余量。
+        val space8 = resources.getDimensionPixelSize(R.dimen.space_8)
         findViewById<View>(R.id.chipSection)?.let {
             it.setPadding(
-                it.paddingLeft, it.paddingTop,
-                if (landscape) pillWidth else space4, it.paddingBottom,
+                it.paddingLeft,
+                if (landscape) pillBand else space8,
+                it.paddingRight, it.paddingBottom,
             )
         }
         // 设置页右栏（分类列表所在的滚动容器）：横屏顶部让出 pillBand。
