@@ -113,7 +113,14 @@ std::string Sha256::hex() {
     std::string out;
     out.reserve(64);
     for (uint32_t v : h_) {
-        for (int i = 3; i >= 0; --i) out.push_back(kHex[(v >> (8 * i)) & 0xfu]);
+        for (int i = 3; i >= 0; --i) {
+            // 一个字节要两位十六进制。首版这里只取低半字节、每字节只吐一个字符，
+            // 于是摘要恒为 32 字符且数值全错 —— 而算法本身是对的（CI 上六个向量全红，
+            // 打印出来的“实际值”恰好等于正确摘要的每字节低半字节）。
+            const uint32_t byte = (v >> (8 * i)) & 0xffu;
+            out.push_back(kHex[byte >> 4]);
+            out.push_back(kHex[byte & 0xfu]);
+        }
     }
     reset();
     return out;
