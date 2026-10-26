@@ -144,7 +144,13 @@ int runService(const ServiceOptions& opt) {
             hotkey::ActionId aid = hotkey::actionFromName(id);
             hkBindings[aid] = {b.mods, b.key, b.enabled};
         }
-        hk->start(amap, hkBindings, &err);
+        if (!hk->start(amap, hkBindings, &err)) {
+            // 此前返回值与 err 都被丢弃：注册失败（非 Windows 未实现 / 组合键被占用 /
+            // 线程创建失败）时用户只看到「按了没反应」，日志里一片空白。改为明确报出原因。
+            APX_LOGW("全局热键未启用：{}", err);
+        } else {
+            APX_LOGI("全局热键已注册 {} 项绑定", hkBindings.size());
+        }
     }
 
     // 托盘

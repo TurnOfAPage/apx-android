@@ -287,6 +287,24 @@ jobs:
             exit $LASTEXITCODE
           }
 
+      # --- 单元测试（离线可跑；此前从未进过 CI）---
+      # arbiter / utf16_convert / ctrl_frame / wireless_session_lifecycle / tcp_transport
+      # 五个用例在 CMake 里一直有 add_test，但 pc job 只有 configure→build→upload，
+      # 从没跑过 ctest：v198 那个「stop() 后进程退不掉」的 beacon 死锁，正是靠
+      # wireless_session_lifecycle_test 兜住的 —— 没有门禁，下次回归照样漏。
+      - name: Build unit tests
+        shell: pwsh
+        run: |
+          cmake --build build_host --config Release --target `
+            arbiter_test utf16_convert_test ctrl_frame_test `
+            wireless_session_lifecycle_test tcp_transport_test 2>&1 | `
+            Tee-Object -FilePath test_build.log | Select-Object -Last 20
+          if ($LASTEXITCODE -ne 0) { Get-Content test_build.log -Tail 60; exit $LASTEXITCODE }
+
+      - name: Run unit tests (ctest)
+        shell: pwsh
+        run: ctest --test-dir build_host -C Release --output-on-failure
+
       # --- Artifacts ---
       - name: Upload PC exes + bundled UI
         if: success()

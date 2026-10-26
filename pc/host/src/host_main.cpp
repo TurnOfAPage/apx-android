@@ -450,8 +450,12 @@ int main(int argc, char** argv) {
             bundle.fileReceiver = &fileReceiver;
             bundle.media        = &media;
             bundle.screenPush   = nullptr;   // 虚拟显示器仅 Windows；HTTP 入口不挂（见 panel_http 头注释）
-            bundle.audio        = &audio;    // macOS 底层为诚实 stub：start 返回「仅实现 Windows」
-            bundle.micBridge    = &mic;      // 同上
+            // 音桥两端都是**真实现**（非 stub）：Windows=WASAPI 环回、
+            // macOS=CoreAudio Process Tap（音箱，14.2+）/ AudioQueue（麦克风）；仅 Linux 未实现。
+            // ⚠️ 原注释写「macOS 底层为诚实 stub：start 返回『仅实现 Windows』」——早已过期，
+            //    会让读代码的人以为 mac 上音箱/麦克风不可用。
+            bundle.audio        = &audio;
+            bundle.micBridge    = &mic;
             bundle.tray         = &tray;
             bundle.hotkey       = nullptr;
             bundle.cfg          = &cfg;

@@ -51,7 +51,7 @@ jobs:
           cmake -S pc/host -B build_host \
             -DCMAKE_BUILD_TYPE=Release \
             -DAPXPC_BUILD_UI=OFF \
-            -DAPXPC_BUILD_TESTS=OFF
+            -DAPXPC_BUILD_TESTS=ON
 
       - name: Build (apxhost + apxdesktop)
         # apxdesktop：mac 桌面壳（desktop_main → runWebPanelHttp）。历史上 mac CI **只 build
@@ -60,6 +60,15 @@ jobs:
         # 注：tag 构建时 CMake 的发版段会从 GITHUB_REF_NAME 注入 APXPC_VERSION_STRING，
         # `apxhost --version` 即为 tag 号（与 build.yml 三端同源逻辑一致）。
         run: cmake --build build_host -j4 --target apxhost apxdesktop
+
+      - name: Build + run unit tests (ctest)
+        # 四个跨平台用例（tcp_transport_test 是 WIN32-only，不在此列）。
+        # macOS 此前 -DAPXPC_BUILD_TESTS=OFF，测试连编译都没过堂；打开后 mac 侧回归也有了门禁。
+        run: |
+          cmake --build build_host -j4 --target \
+            arbiter_test utf16_convert_test ctrl_frame_test \
+            wireless_session_lifecycle_test
+          ctest --test-dir build_host --output-on-failure
 
       - name: Package (strip + web dist + .app bundle + zip)
         if: success()

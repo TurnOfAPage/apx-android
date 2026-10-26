@@ -192,14 +192,24 @@ bool HotkeyManager::rebind(ActionId id, const Binding& b, std::string* err) {
     return true;
 }
 
-#else
+#else  // 非 Windows（macOS / Linux）
 
-bool HotkeyManager::start(const ActionMap&, const std::map<ActionId, Binding>&, std::string*) {
-    return true;
+// 全局热键在非 Windows 平台**尚未实现**：macOS 要 CGEventTap（且需「辅助功能」授权）、
+// Linux 要 X11 XGrabKey / Wayland portal —— 两者都未接线。
+//
+// ⚠️ 这里必须返回 false。此前无条件 `return true` 属于**假成功**：调用方以为热键已注册，
+//    用户按了没反应、日志里也查不到任何线索。与媒体模块「Linux 上暂未实现」同一口径 ——
+//    做不到就诚实报错，让上层能把原因显示给用户。
+bool HotkeyManager::start(const ActionMap&, const std::map<ActionId, Binding>&, std::string* err) {
+    if (err) *err = "全局热键在当前平台尚未实现（仅 Windows；macOS 需辅助功能授权，未接线）";
+    return false;
 }
 void HotkeyManager::stop() {}
 std::vector<Conflict> HotkeyManager::conflicts() const { return {}; }
-bool HotkeyManager::rebind(ActionId, const Binding&, std::string*) { return false; }
+bool HotkeyManager::rebind(ActionId, const Binding&, std::string* err) {
+    if (err) *err = "全局热键在当前平台尚未实现（仅 Windows）";
+    return false;
+}
 
 #endif
 

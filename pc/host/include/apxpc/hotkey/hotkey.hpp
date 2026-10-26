@@ -48,7 +48,7 @@ public:
     HotkeyManager();
     ~HotkeyManager();
 
-    // 启动：注册默认/已载入绑定；非 Windows 平台为 no-op（返回 true）
+    // 启动：注册默认/已载入绑定。非 Windows 平台尚未实现 —— 返回 false 并写 err（不是 no-op）
     bool start(const ActionMap& actions, const std::map<ActionId, Binding>& bindings,
                std::string* err);
     void stop();
