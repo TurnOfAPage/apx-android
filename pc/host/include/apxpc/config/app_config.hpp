@@ -1,5 +1,6 @@
 #pragma once
 // 配置持久化：%LOCALAPPDATA%\AllPeriph\config.json，带 schemaVersion 与迁移。
+#include <cstdint>
 #include <map>
 #include <string>
 #include <vector>
