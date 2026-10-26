@@ -293,12 +293,14 @@ elseif(APPLE)
   target_link_libraries(apxpc_wireless PUBLIC "-framework CoreGraphics" "-framework AppKit")
 endif()
 
-# ---------------------------------------------------------------- 目标：LocalSend 互传（PC 接收端）
+# ---------------------------------------------------------------- 目标：LocalSend 互传（PC 收发两端）
 # 手机端 com.allperiph.localsend 早就完整（多播发现 + 五个 HTTP 端点），PC 端此前一个字节都没有，
 # 于是「手机 ↔ 官方桌面版」能通、「手机 ↔ 本工程 PC 端」不通。这里补的就是 PC 这一半：
-# 加入多播组、周期 announce、实现 info/register/prepare-upload/upload/cancel、落盘到「下载/AllPeriph」。
+#   · 接收端：加入多播组、周期 announce、实现 info/register/prepare-upload/upload/cancel、落盘
+#   · 发送端：register → prepare-upload → upload 三步推送（PC → 手机 / PC → 官方客户端）
 set(APXPC_LOCALSEND_SRC
   "${APXPC_ROOT}/src/localsend/local_send_receiver.cpp"
+  "${APXPC_ROOT}/src/localsend/local_send_sender.cpp"
   "${APXPC_ROOT}/src/localsend/sha256.cpp"
 )
 add_library(apxpc_localsend STATIC ${APXPC_LOCALSEND_SRC})
@@ -575,6 +577,15 @@ if(APXPC_BUILD_TESTS)
   target_link_libraries(localsend_upload_test PRIVATE apxpc_localsend)
   add_test(NAME localsend_upload_test COMMAND localsend_upload_test)
   set_tests_properties(localsend_upload_test PROPERTIES TIMEOUT 120)
+
+  # LocalSend 发送端：纯函数（fileType 表 / prepare 报文契约 / 应答解析）走假对端验证
+  # register → prepare → upload 三步，并验取消能真中断且通知对端 cancel。
+  # 同样只在 127.0.0.1 上跑，自带超时，失败是「这条用例红」而不是整步卡死。
+  add_executable(localsend_sender_test
+                 "${APXPC_ROOT}/tests/localsend_sender_test.cpp")
+  target_link_libraries(localsend_sender_test PRIVATE apxpc_localsend)
+  add_test(NAME localsend_sender_test COMMAND localsend_sender_test)
+  set_tests_properties(localsend_sender_test PROPERTIES TIMEOUT 120)
 endif()
 
 # ---------------------------------------------------------------- 安装

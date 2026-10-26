@@ -40,6 +40,7 @@
 #include "apxpc/wireless/file_receiver.hpp"
 #include "apxpc/wireless/file_sender.hpp"
 #include "apxpc/localsend/local_send_receiver.hpp"
+#include "apxpc/localsend/local_send_sender.hpp"
 #include "apxpc/media/media_session.hpp"
 #include "apxpc/media/screen_push.hpp"
 #include "apxpc/media/audio_capture.hpp"
@@ -142,6 +143,10 @@ struct Panel {
     std::thread mediaThread;
     std::atomic<bool> mediaBusy{false};
     uint64_t mediaNextMs = 0;
+
+    // 互传发送线程（PC → 对端）：一次一批，结果走 on-localsend-sent 事件
+    std::thread sendThread;
+    std::atomic<bool> sendBusy{false};
 };
 Panel* g_panel = nullptr;
 
@@ -657,6 +662,47 @@ void handleAct(Panel* p, const std::string& id, const std::string& name, const J
         if (!b.localSend) return postResponse(p, id, failResp("互传接收端未初始化"));
         std::string lerr;
         return postResponse(p, id, okResp(Json::parse(apxpc::localsend::statusJson(b.localSend->snapshot()), &lerr)));
+    }
+    // localsend.send：本机 → 某台设备（PC → 手机 / 官方客户端）。后台线程发，
+    // 结果用 on-localsend-sent 事件回推（大文件要传几十秒，不能让前端干等）
+    if (name == "localsend.send") {
+        const std::string ip = payload.find("ip") ? payload.find("ip")->asString() : "";
+        const int port = payload.find("port") ? payload.find("port")->asInt(0) : 0;
+        std::vector<std::string> paths;
+        if (const Json* arr = payload.find("paths"); arr && arr->isArray()) {
+            for (const auto& v : arr->asArray())
+                if (v.isString() && !v.asString().empty()) paths.push_back(v.asString());
+        }
+        if (ip.empty() || port <= 0 || port > 65535)
+            return postResponse(p, id, failResp("目标设备不合法（需要 ip 与 port）"));
+        if (paths.empty()) return postResponse(p, id, failResp("未选择文件"));
+        if (p->sendBusy.exchange(true))
+            return postResponse(p, id, failResp("上一批文件还在发送中"));
+
+        apxpc::localsend::Target target;
+        target.ip = ip;
+        target.port = static_cast<uint16_t>(port);
+        std::vector<apxpc::localsend::OutgoingFile> files;
+        files.reserve(paths.size());
+        for (const auto& f : paths) files.push_back({f, {}});
+
+        if (p->sendThread.joinable()) p->sendThread.join();
+        p->sendThread = std::thread([p, target, files] {
+            apxpc::localsend::LocalSendSender tx;
+            apxpc::localsend::SenderIdentity self;
+            const auto res = tx.send(target, self, files);
+            p->sendBusy.store(false);
+            Json d = Json::makeObject();
+            d["ok"] = res.ok;
+            d["ip"] = target.ip;
+            d["port"] = static_cast<double>(target.port);
+            d["peerAlias"] = res.peerAlias;
+            d["error"] = res.error;
+            d["count"] = static_cast<double>(res.deliveredNames.size());
+            d["bytes"] = static_cast<double>(res.bytesSent);
+            postEvent(p, std::string("on-localsend-sent"), d);
+        });
+        return postResponse(p, id, okResp());
     }
     if (name == "localsend.openDir") {
         if (!b.localSend) return postResponse(p, id, failResp("互传接收端未初始化"));
@@ -1234,6 +1280,8 @@ int runWebPanel(const HostBundle& bundle, const std::string& /*webDir*/) {
     // 媒体建链线程：面板退出前 join（Panel 是栈对象，析构时若线程仍 joinable 会 terminate）
     // 互传接收端：先停再清 g_panel —— 接收线程的回调以 g_panel 为准，顺序反了会漏推事件
     if (panel.bundle.localSend) panel.bundle.localSend->stop();
+    // 发送线程持 Panel*（栈对象）：先 join 再出栈
+    if (panel.sendThread.joinable()) panel.sendThread.join();
     if (panel.mediaThread.joinable()) panel.mediaThread.join();
     g_panel = nullptr;
     if (comOwned) ::CoUninitialize();

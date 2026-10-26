@@ -28,6 +28,7 @@
 #include <apxpc/media/mic_bridge.hpp>
 #include <apxpc/config/app_config.hpp>
 #include <apxpc/localsend/local_send_receiver.hpp>
+#include <apxpc/localsend/local_send_sender.hpp>
 #include <apxpc/autostart.hpp>
 #include <apxpc/tray/tray_win32.hpp>
 #include <apxpc/ui/panel_http.hpp>
@@ -75,6 +76,7 @@ void printUsage() {
         "  apxhost check-update  检查新版本（GitHub releases/latest，比对规则与手机端一致）\n"
         "                     退出码：0=已是最新 3=发现新版本 1=检查失败\n"
         "  apxhost localsend [端口] [秒数] [目录]\n"
+        "  apxhost localsend-send <对端IP>[：端口] <文件…>\n"
         "                     LocalSend 互传的接收端：加入多播组、周期自广播，手机端在\n"
         "                     「互传（LocalSend）」里即可发现本机并直接发送（默认端口 53317，\n"
         "                     被占自动回退 53318/53319；默认落盘「下载/AllPeriph」）\n"
@@ -295,6 +297,47 @@ static int runLocalSend(uint16_t port, int seconds, const std::string& dir) {
     return 0;
 }
 
+// PC → 对端（手机 / 官方 LocalSend 桌面版）发文件。
+// 目标用 ip[:port] 直接给 —— 不要求本机也开着接收端去「发现」对方：发送只需要对端在听。
+static int runLocalSendSend(const std::string& spec, const std::vector<std::string>& paths) {
+    const auto hp = parseSpec(spec, apxpc::localsend::kDefaultPort);
+    apxpc::localsend::Target target;
+    target.ip = hp.first;
+    target.port = hp.second;
+
+    std::vector<apxpc::localsend::OutgoingFile> files;
+    files.reserve(paths.size());
+    for (const auto& p : paths) files.push_back({p, {}});
+
+    apxpc::localsend::SenderIdentity self;
+    apxpc::localsend::LocalSendSender tx;
+    std::printf("正在向 %s:%u 发送 %zu 个文件…\n", target.ip.c_str(),
+                static_cast<unsigned>(target.port), files.size());
+    int lastPct = -1;
+    const auto res = tx.send(target, self, files, [&](const apxpc::localsend::SendProgress& pr) {
+        const int pct = pr.grandTotal == 0
+                            ? 0
+                            : static_cast<int>(pr.totalBytes * 100 / pr.grandTotal);
+        if (pct != lastPct) {   // 只在百分比变化时打点，否则每 64KB 一行刷屏
+            lastPct = pct;
+            std::printf("\r[%3d%%] %s（%llu / %llu 字节）   ", pct, pr.fileName.c_str(),
+                        static_cast<unsigned long long>(pr.totalBytes),
+                        static_cast<unsigned long long>(pr.grandTotal));
+            std::fflush(stdout);
+        }
+        return true;
+    });
+    std::puts("");
+    if (!res.ok) {
+        std::printf("发送失败：%s\n", res.error.c_str());
+        return 1;
+    }
+    std::printf("已发送 %zu 个文件到 %s（共 %llu 字节）\n", res.deliveredNames.size(),
+                (res.peerAlias.empty() ? target.ip : res.peerAlias).c_str(),
+                static_cast<unsigned long long>(res.bytesSent));
+    return 0;
+}
+
 // ---------------------------------------------------------------- 媒体通道 ----
 // 与控制面并列的第二条连接（手机 9502）：副屏/音箱下行，麦克风上行。
 // 这条 CLI 是调试用 —— 桌面端面板里是同一套 apxpc::media::MediaSession。
@@ -486,6 +529,19 @@ int main(int argc, char** argv) {
             const int secs = argc > 3 ? std::atoi(argv[3]) : 0;
             const std::string dir = argc > 4 ? argv[4] : "";
             return runLocalSend(static_cast<uint16_t>(port), secs, dir);
+        }
+        // ---- LocalSend 互传发送端（PC → 手机 / 官方客户端）----
+        if (cmd == "localsend-send") {
+            if (argc < 4) {
+                std::fputs("用法：apxhost localsend-send <对端IP>[：端口] <文件…>\n"
+                           "  例：apxhost localsend-send 192.168.1.5 a.png b.mp4\n"
+                           "  端口省略即 53317；对端需开着互传（官方 LocalSend 或本 App）。\n",
+                           stderr);
+                return 1;
+            }
+            std::vector<std::string> files;
+            for (int i = 3; i < argc; ++i) files.emplace_back(argv[i]);
+            return runLocalSendSend(argv[2], files);
         }
 
         // ---- 浏览器控制面板（方案 B：本地 HTTP + React dist；macOS 首选入口）----

@@ -6,6 +6,32 @@
 
 ---
 
+## Unreleased
+
+### 新增
+- **LocalSend 互传的 PC 发送端（PC → 手机 / PC → 官方客户端）**：上一版只补了接收方向，
+  反方向仍然只能走旧的 9512 私有通道（要求控制链路先连上、对方必须是本 App）。
+  新增 `apxpc/localsend/local_send_sender`，与 Android 端 `LocalSendClient` 三步同构：
+  `register` → `prepare-upload`（每文件带 sha256 + size + fileType）→ `upload` 流式推送。
+  - 自带的极简 HTTP 客户端（select + 超时 + 非阻塞 connect），不进 libcurl 依赖；
+    `upload` 用 POST —— 官方 dto_v2 同时收 POST/PUT，省掉「PUT 不支持再重试」这条分支。
+  - 取消：进度回调返回 false 即中止，并**尽力**向对端发 `cancel`，免得对面把半截文件
+    当完整文件留着。
+  - 命令行：`apxhost localsend-send <对端IP>[:端口] <文件…>`，带百分比进度。
+  - 面板：互传卡里每台设备右侧新增「发送」—— 系统文件对话框选文件 → 后台线程推送，
+    结果用 `on-localsend-sent` 事件回推（大文件要传几十秒，不让前端干等）；
+    浏览器面板（`apxhost panel`）没有系统文件对话框，会如实提示而不是点了没反应。
+  - 测试 `pc/host/tests/localsend_sender_test.cpp`：纯函数（fileType 表、prepare 报文契约、
+    应答解析）+ 真端口对假对端（只实现五个端点）验证发出去的字段 / query / Content-Length /
+    内容摘要，以及取消真能中断并发出 cancel、目标不可达与文件不存在如实报错。已进 CTest 与
+    Windows/macOS 两套 CI 门禁。
+
+### 修复（发版链）
+- `pc/host/include/apxpc/config/app_config.hpp` 补 `<cstdint>`：`uint32_t` 此前靠间接包含
+  才可见，Linux/g++ 下编 `app_config.cpp` 会报未声明（Windows/MSVC 一直能过，故未暴露）。
+
+---
+
 ## v221（2026-10-26）
 
 ### 新增

@@ -84,7 +84,22 @@
 - `openDir` 打开目录：macOS/Linux 用 `fork`+`execlp("open"/"xdg-open")`，Windows 用
   `ShellExecuteW`，都不经 shell。
 
-仍未做：**PC → 手机方向**（用本工程 PC 端主动发文件，协议层 `LocalSendClient` 只在 Android 端有）。
+**PC → 手机 / PC → 官方客户端（本轮补齐发送端）**：`apxpc/localsend/local_send_sender`，
+与 Android 端 `LocalSendClient` 三步同构（`register` → `prepare-upload`（带 sha256）→ `upload`），
+`upload` 用 POST（官方 dto_v2 同时收 POST/PUT，省掉重试分支）。
+
+| 用法 | 入口 |
+|---|---|
+| 命令行 | `apxhost localsend-send <对端IP>[:端口] <文件…>`（带百分比进度） |
+| 面板 | 互传卡里每台设备右侧的「发送」→ 系统文件对话框 → 后台线程推送，结果走 `on-localsend-sent` 事件 |
+
+- 发送端**不依赖本机接收端在跑**，也不需要先「发现」对方：目标用 `ip:port` 直接给，
+  唯一前提是对端在听 53317（官方 LocalSend 或本 App）。
+- 取消语义：进度回调返回 false 即中止，并**尽力**向对端发 `cancel`，免得对面把半截文件
+  当完整文件留着。
+- 测试 `pc/host/tests/localsend_sender_test.cpp`：纯函数（fileType 表、prepare 报文契约、
+  应答解析）+ 真端口跑一遍假对端（只实现五个端点），验证发出去的字段、query、
+  Content-Length 与内容摘要，以及取消真能中断且发出 cancel、目标不可达/文件不存在如实报错。
 
 **三条路**
 

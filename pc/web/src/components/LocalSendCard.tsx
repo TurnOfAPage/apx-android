@@ -24,12 +24,22 @@ export const LocalSendCard: React.FC<Props> = ({ state }) => {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [lastFrom, setLastFrom] = useState('');
+  const [status, setStatus] = useState('');
 
   // 收到文件：本卡给一句「刚收到 X 发来的文件」，不必开文件面板也能确认
   React.useEffect(() => bridge.onEvent('on-localsend-received', (evt: any) => {
     const from = evt?.data?.from || '';
     setLastFrom(from ? `${from} 发来文件` : '收到文件');
     setErr('');
+  }), []);
+
+  // 发送结果（C++ 后台线程推回来）：成功给一句「已发送 N 个到 X」，失败把原因写清
+  React.useEffect(() => bridge.onEvent('on-localsend-sent', (evt: any) => {
+    const d = evt?.data || {};
+    setStatus('');
+    if (d.ok) setErr('');
+    else setErr(d.error || '发送失败');
+    if (d.ok) setLastFrom(`已发送 ${d.count} 个文件到 ${d.peerAlias || d.ip}`);
   }), []);
 
   const toggle = async (enable: boolean) => {
@@ -42,6 +52,22 @@ export const LocalSendCard: React.FC<Props> = ({ state }) => {
       setErr(e?.message || '切换失败');
     } finally {
       setBusy(false);
+    }
+  };
+
+  // 选设备 → 系统文件对话框 → 发送。openFile 只有 WebView2 桌面壳支持；
+  // 浏览器面板（apxhost panel）里 bridge 会直接抛「不支持系统文件对话框」，
+  // 这里如实显示出来，而不是让按钮点了没反应。
+  const sendTo = async (dev: { ip: string; port: number; alias: string }) => {
+    setErr('');
+    setStatus(`正在发送到 ${dev.alias || dev.ip}…`);
+    try {
+      const pick: any = await bridge.openFile('全部文件|*.*');
+      if (!pick?.ok || !pick?.path) { setStatus(''); return; }   // 用户取消
+      await bridge.act('localsend.send', { ip: dev.ip, port: dev.port, paths: [pick.path] });
+    } catch (e: any) {
+      setStatus('');
+      setErr(e?.message || '发送失败');
     }
   };
 
@@ -91,9 +117,15 @@ export const LocalSendCard: React.FC<Props> = ({ state }) => {
       {running && devices.length > 0 && (
         <div className="flex flex-col gap-1">
           {devices.slice(0, 3).map((d) => (
-            <div key={d.ip + d.port} className="flex items-center justify-between">
+            <div key={d.ip + d.port} className="flex items-center justify-between gap-2">
               <span className="body-text text-on-surface truncate">{d.alias || d.ip}</span>
-              <span className="data-text shrink-0">{d.deviceType || 'device'}</span>
+              <button
+                className="btn-ghost h-[26px] px-2 text-[12px] shrink-0"
+                onClick={() => sendTo(d)}
+                title={`发送文件到 ${d.alias || d.ip}`}
+              >
+                发送
+              </button>
             </div>
           ))}
         </div>
@@ -102,6 +134,8 @@ export const LocalSendCard: React.FC<Props> = ({ state }) => {
       <div className="mt-auto flex flex-col gap-0.5">
         {err ? (
           <div className="caption-text text-state-error">{err}</div>
+        ) : status ? (
+          <div className="caption-text text-on-variant">{status}</div>
         ) : ls?.warn ? (
           // 多播 53317 绑不上时仍能收直连 —— 如实说明，而不是假装一切正常
           <div className="caption-text text-state-warn">{ls.warn}</div>
@@ -109,7 +143,7 @@ export const LocalSendCard: React.FC<Props> = ({ state }) => {
           <div className="caption-text text-state-ok">{lastFrom}</div>
         ) : (
           <div className="caption-text">
-            {running ? '手机端选「互传」即可发文件到本机' : '打开开关：手机/官方 LocalSend 可直发到本机'}
+            {running ? '手机可直发本机；点设备右侧「发送」把本机文件传过去' : '打开开关：手机 / 官方 LocalSend 可直发到本机'}
           </div>
         )}
         <div className="flex items-center justify-between">
