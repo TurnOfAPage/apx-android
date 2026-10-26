@@ -50,13 +50,22 @@ object GestureShield {
     private const val CMD_TIMEOUT = 4_000L
     private const val ORIG_NULL = "null"
 
+    /** 界面切换时先等一下再还原：A.onPause → B.onResume 挨着发生，别为了几十毫秒
+     *  白白跑两次 su（每次 fork su 都要 200ms 上下），闪烁也难看 */
+    private const val RELEASE_DELAY_MS = 1_200L
+
     /** root 写入串行化：进入/退出操控面各一次，不需要并发 */
     private val worker: ExecutorService = Executors.newSingleThreadExecutor { r ->
         Thread(r, "apx-gesture-shield").apply { isDaemon = true }
     }
 
+    private val main = Handler(Looper.getMainLooper())
+
     /** 当前持有遮蔽的界面（引用计数用；进程被杀后由 prefs 的 active 标记自愈） */
     private val holders: MutableSet<String> = Collections.synchronizedSet(HashSet<String>())
+
+    /** 延迟还原任务：这段时间内又有界面 acquire 就取消 */
+    private var pendingRestore: Runnable? = null
 
     // —————————————————————————— 开关 ——————————————————————————
 
@@ -73,7 +82,7 @@ object GestureShield {
         }
     }
 
-    /** root 不可用的提示只弹一次，别每次进操控面都弹 */
+    /** root 不可用或写不进去时的提示只弹一次，别每次进界面都弹 */
     fun shouldHintNoRoot(ctx: Context): Boolean {
         val p = prefs(ctx)
         if (p.getBoolean(KEY_HINTED, false)) return false
@@ -92,6 +101,7 @@ object GestureShield {
             onResult?.invoke(false)
             return
         }
+        cancelPendingRestore()
         if (!holders.add(holder)) return // 已持有，不重复写
         val app = ctx.applicationContext
         worker.execute { onResult?.invoke(applyShield(app)) }
@@ -105,8 +115,26 @@ object GestureShield {
         worker.execute { restoreShield(app) }
     }
 
+    /** 界面切换用：最后一个持有者退出后等 [RELEASE_DELAY_MS]，期间有人重新持有就不还原 */
+    fun releaseSoon(ctx: Context, holder: String) {
+        if (!holders.remove(holder)) return
+        if (holders.isNotEmpty()) return
+        val app = ctx.applicationContext
+        main.postDelayed(
+            Runnable {
+                if (holders.isEmpty()) worker.execute { restoreShield(app) }
+            }.also { pendingRestore = it },
+            RELEASE_DELAY_MS,
+        )
+    }
+
+    private fun cancelPendingRestore() {
+        pendingRestore?.let { main.removeCallbacks(it) }
+        pendingRestore = null
+    }
+
     /**
-     * 进操控面：开关开着就上遮蔽；失败且是**首次**时提示一次走手动兜底。
+     * 进界面：开关开着就上遮蔽；失败且是**首次**时提示一次走手动兜底。
      * 提示用 app context 在主线程弹，调用方不必处理线程。
      */
     fun acquireWithHint(ctx: Context, holder: String) {
