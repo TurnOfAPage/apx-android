@@ -232,8 +232,7 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:text="触摸板光标锁定
-连上电脑后本窗隐藏系统光标，触控板点击只转发到电脑（Pad 防误触）"
+                android:text="@string/lay_settings_cursor_lock_title"
                 android:textColor="@color/md_on_surface"
                 android:textSize="14sp" />
 
@@ -256,13 +255,6 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical">
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/lay_settings_text_hotkey_template_touchpad"
-                android:visibility="gone"
-                android:textAppearance="@style/APTextCaption" />
 
             <LinearLayout
                 android:id="@+id/rowTemplateCurrent"
@@ -302,12 +294,15 @@
                 android:visibility="gone" />
         </LinearLayout>
 
-        <!-- 功能开关：模块启停 + 快捷键排序（同一张卡，风格统一也省一屏） -->
+        <!-- 交互开关：快捷键排序 + 屏幕方向锁定（同一张卡，风格统一也省一屏）。
+             原先这里还嵌着「无线 / 蓝牙 / 有线」三组模块行（按开关状态显隐）——
+             真机反馈「左边三个传输按钮点了应弹出对应分类」，三组已各自独立成页，
+             见文件末尾的 groupWifi / groupBt / groupUsb。 -->
         <TextView
             style="@style/APSectionTitle"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="@string/lay_settings_modules" />
+            android:text="@string/lay_settings_group_interact" />
 
         <LinearLayout
             style="@style/APCard"
@@ -315,78 +310,11 @@
             android:layout_height="wrap_content"
             android:orientation="vertical">
 
-            <!-- 功能按传输类分组：某类开关打开（见状态页）才显示对应模块行 -->
-            <LinearLayout
-                android:id="@+id/groupWifi"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical">
-
-                <TextView
-                    style="@style/APSectionTitle"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="@string/lay_transport_wifi" />
-
-                <LinearLayout
-                    android:id="@+id/rowsWifi"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="vertical" />
-            </LinearLayout>
-
-            <LinearLayout
-                android:id="@+id/groupBt"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:visibility="gone">
-
-                <TextView
-                    style="@style/APSectionTitle"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="@string/lay_transport_bt" />
-
-                <LinearLayout
-                    android:id="@+id/rowsBt"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="vertical" />
-            </LinearLayout>
-
-            <LinearLayout
-                android:id="@+id/groupUsb"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:visibility="gone">
-
-                <TextView
-                    style="@style/APSectionTitle"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="@string/lay_transport_usb_group" />
-
-                <LinearLayout
-                    android:id="@+id/rowsUsb"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="vertical" />
-            </LinearLayout>
-
-            <View
-                android:layout_width="match_parent"
-                android:layout_height="1dp"
-                android:layout_marginTop="@dimen/space_8"
-                android:background="@color/card_stroke" />
-
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:gravity="center_vertical"
-                android:orientation="horizontal"
-                android:paddingTop="@dimen/space_12">
+                android:orientation="horizontal">
 
                 <LinearLayout
                     android:layout_width="0dp"
@@ -486,13 +414,6 @@
             android:layout_height="wrap_content"
             android:orientation="vertical">
 
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/lay_settings_text_hotkey_theme_touchpad_keyboard"
-                android:visibility="gone"
-                android:textAppearance="@style/APTextCaption" />
-
             <LinearLayout
                 android:id="@+id/skinBox"
                 android:layout_width="match_parent"
@@ -553,13 +474,6 @@
             android:layout_height="wrap_content"
             android:orientation="vertical">
 
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/lay_settings_text_background_2"
-                android:visibility="gone"
-                android:textAppearance="@style/APTextCaption" />
-
             <LinearLayout
                 android:id="@+id/fxBox"
                 android:layout_width="match_parent"
@@ -608,13 +522,6 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical">
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/lay_settings_diag_hint"
-                android:visibility="gone"
-                android:textAppearance="@style/APTextCaption" />
 
             <TextView
                 android:id="@+id/tvDiag"
@@ -678,8 +585,7 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:text="互传（LocalSend）
-开关=接收文件；点行=发送文件到电脑/其他平台"
+                android:text="@string/lay_settings_localsend_title"
                 android:textColor="@color/md_on_surface"
                 android:textSize="14sp" />
 
@@ -755,8 +661,7 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:text="导出运行日志
-一键保存 log.txt 到 Download/AllPeriph（反馈问题时附上）"
+                android:text="@string/lay_settings_export_log_title"
                 android:textColor="@color/md_on_surface"
                 android:textSize="14sp" />
 
@@ -865,6 +770,77 @@
                     android:text="@string/ui_help_faq"
                     android:textColor="@color/md_on_surface_variant"
                     android:textSize="13sp" />
+            </LinearLayout>
+
+            <!-- 开关与日志（真机反馈：分组里的长文继续往这里收 —— 触摸板光标锁定 / 互传 /
+                 导出日志三处的说明原来就是设置行的正文，行上现在只留标题） -->
+            <TextView
+                style="@style/APSectionTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/ui_help_title_switch" />
+
+            <LinearLayout
+                style="@style/APCard"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:paddingTop="@dimen/space_8"
+                    android:text="@string/ui_help_cursor_lock"
+                    android:textAppearance="@style/APTextCaption" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:paddingTop="@dimen/space_6"
+                    android:text="@string/ui_help_localsend"
+                    android:textAppearance="@style/APTextCaption" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:paddingTop="@dimen/space_6"
+                    android:text="@string/ui_help_export_log"
+                    android:textAppearance="@style/APTextCaption" />
+            </LinearLayout>
+
+            <!-- 遥控键位（原「遥控 · 工具 › 遥控键映射」卡里那三段长文；那边只留一条跳转行） -->
+            <TextView
+                style="@style/APSectionTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/ui_help_title_keymap" />
+
+            <LinearLayout
+                style="@style/APCard"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:paddingTop="@dimen/space_8"
+                    android:text="@string/ui_main_item_hotkey_touchpad_home"
+                    android:textAppearance="@style/APTextCaption" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:paddingTop="@dimen/space_6"
+                    android:text="@string/ui_main_item_remote_device_only_cursor"
+                    android:textAppearance="@style/APTextCaption" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:paddingTop="@dimen/space_6"
+                    android:text="@string/ui_main_item_remote_keyboard_reboot_poweroff"
+                    android:textAppearance="@style/APTextCaption" />
             </LinearLayout>
 
             <!-- 批C：功能说明（原状态页 boxIdleFeatures 九行搬来，原文零改动） -->
@@ -984,6 +960,202 @@
                 android:textAppearance="@style/APTextCaption" />
                 </LinearLayout>
             </LinearLayout>
+
+        <!-- ============ 传输分类页（真机反馈：左边三个传输按钮点了弹出对应分类） ============
+             三类模块原先嵌在「交互开关」卡里、按开关状态显隐（既进不去，也看不清结构）；
+             现在各自一整页。每页两块：
+
+               ① 「无线 / 蓝牙 / 有线（USB）」总开关卡 —— 勾选即开/关该类传输，走
+                  StatusFragment.onTransportToggle 那条原生效路径（模块热启、前台服务、
+                  双属模块的退出开关都在那里）；
+               ② 该类模块行卡（rows* 容器 id 未变，populateModuleRows 照旧往里塞行）——
+                  未开启该类传输时整卡收起（与旧行为一致：没开的传输不列模块）。
+
+             显隐不再由 isTransportEnabled 直接决定（那样一进分类就被刷回 GONE），
+             而是与其它分类一样交给 SettingsFragment 的导航控制；Refresh 只负责
+             回读总开关状态 + 收起未开启的模块卡。 -->
+        <LinearLayout
+            android:id="@+id/groupWifi"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <LinearLayout
+                style="@style/APCard"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/lay_transport_wifi"
+                        android:textAppearance="@style/APTextSubtitle" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/lay_transport_switch_hint"
+                        android:textAppearance="@style/APTextCaption" />
+                </LinearLayout>
+
+                <Switch
+                    android:id="@+id/swTransportWifi"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:contentDescription="@string/lay_transport_wifi_cd" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/cardWifiModules"
+                style="@style/APCard"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/lay_settings_transport_modules"
+                    android:textAppearance="@style/APTextSubtitle" />
+
+                <LinearLayout
+                    android:id="@+id/rowsWifi"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/groupBt"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <LinearLayout
+                style="@style/APCard"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/lay_transport_bt"
+                        android:textAppearance="@style/APTextSubtitle" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/lay_transport_switch_hint"
+                        android:textAppearance="@style/APTextCaption" />
+                </LinearLayout>
+
+                <Switch
+                    android:id="@+id/swTransportBt"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:contentDescription="@string/lay_transport_bt_cd" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/cardBtModules"
+                style="@style/APCard"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/lay_settings_transport_modules"
+                    android:textAppearance="@style/APTextSubtitle" />
+
+                <LinearLayout
+                    android:id="@+id/rowsBt"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/groupUsb"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <LinearLayout
+                style="@style/APCard"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/lay_transport_usb_group"
+                        android:textAppearance="@style/APTextSubtitle" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/lay_transport_switch_hint"
+                        android:textAppearance="@style/APTextCaption" />
+                </LinearLayout>
+
+                <Switch
+                    android:id="@+id/swTransportUsb"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:contentDescription="@string/lay_transport_usb_cd" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/cardUsbModules"
+                style="@style/APCard"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/lay_settings_transport_modules"
+                    android:textAppearance="@style/APTextSubtitle" />
+
+                <LinearLayout
+                    android:id="@+id/rowsUsb"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical" />
+            </LinearLayout>
+        </LinearLayout>
             </LinearLayout>
         </ScrollView>
     </LinearLayout>

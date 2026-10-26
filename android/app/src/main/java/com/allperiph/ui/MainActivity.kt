@@ -86,12 +86,9 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
     private lateinit var tvOverall: TextView
     private lateinit var tvOverallSub: TextView
     private lateinit var badgeStatus: TextView
-    private lateinit var groupWifi: LinearLayout
-    private lateinit var groupBt: LinearLayout
-    private lateinit var groupUsb: LinearLayout
-    private lateinit var rowsWifi: LinearLayout
-    private lateinit var rowsBt: LinearLayout
-    private lateinit var rowsUsb: LinearLayout
+    // 传输三组（groupWifi / groupBt / groupUsb）与它们的模块行容器（rowsWifi / rowsBt /
+    // rowsUsb）**只在 StatusFragment 里持有**：显隐由设置页导航 + 该 Fragment 的总开关回读
+    // 决定，Activity 侧原先那份按月轮询的 visibility 赋值与这里的绑定一起删掉了。
     private lateinit var tvDiag: TextView
     private lateinit var btnBattery: Button
     private lateinit var btnRefresh: Button
@@ -332,12 +329,6 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
 
         tvOverall = findViewById(R.id.tvOverall)
         tvOverallSub = findViewById(R.id.tvOverallSub)
-        groupWifi = findViewById(R.id.groupWifi)
-        groupBt = findViewById(R.id.groupBt)
-        groupUsb = findViewById(R.id.groupUsb)
-        rowsWifi = findViewById(R.id.rowsWifi)
-        rowsBt = findViewById(R.id.rowsBt)
-        rowsUsb = findViewById(R.id.rowsUsb)
         tvDiag = findViewById(R.id.tvDiag)
         btnBattery = findViewById(R.id.btnBattery)
         btnRefresh = findViewById(R.id.btnRefresh)
@@ -502,26 +493,62 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
             it.setPadding(it.paddingLeft, it.paddingTop, it.paddingRight, bottomPad)
         }
         // 批P：横屏操作条 pill 的显隐也在这里按朝向设 —— 见 bindActions 里的说明。
-        // 同时**给 pill 让出一条自己的带子**：pill 是悬浮在根 FrameLayout 右上角的
-        // （top|end + elevation），横屏键盘页那一行快捷键芯片与 Win 键正压在它下面 ——
-        // 真机截图里「自定义」芯片被整个盖住、Win 键被切掉一角，点下去命中的是 pill。
-        // 与其让内容钻到 pill 底下，不如把它的高度从 pager 顶部让出来：
-        //     顶距(space_12) + pill 实测高度 + 一点间隙
-        // 用实测高度而不是写死 dp，是为了以后调 pill 内边距/字号时这条带子自己跟着变。
+        // pill 悬浮在根 FrameLayout 右上角（top|end + elevation）。原先它压着键盘页顶部那行
+        // 布局页签的右端（真机截图里最后一个页签「自定义」被整个盖住，点下去命中的是 pill），
+        // 所以轮到的内容必须给它让位。
+        //
+        // ⚠️ 但**不再把这条带子从 pager 顶部整块让出去** —— 真机反馈原话：
+        //    「横屏时最上面的横条把所有界面都压下去了」。
+        // pager 一层 padding 会让触控板 / 键盘 / 设置**每一页**都往下缩一截，而 pill 实际
+        // 只压到其中两处的右上角。现在按「谁真的被压到，谁让」分开处理：
+        //   ① 触控板页：顶部控件在左右两栏里各自靠左排 —— **整页不让高度**，只把右栏
+        //      chipSection 的右内边距加宽，让「快捷键 / 编辑」躲到 pill 左边；
+        //   ② 键盘页：整页也不让高度 —— 只把顶部那行布局页签（横滑容器）的右端让出 pill
+        //      宽度，页签滑到底也到不了 pill 底下；
+        //   ③ 设置页：右栏（分类列表）顶部让出 pillBand。分类行是**整行可点**的，让它在
+        //      pill 底下既点不到、又容易误触切页；左栏（状态 + 传输按钮）保持满高。
+        // 两份值都**显式写**（竖屏写回各自布局里的原值）：旋屏不重建 Activity，改过的
+        // padding 会留在同一棵视图树上，只写横屏那份就会把竖屏也带偏。
         val pill = findViewById<View>(R.id.pillLandActions)
-        val pillBand = if (landscape && pill != null) {
+        var pillBand = 0
+        var pillWidth = 0
+        if (landscape && pill != null) {
             pill.visibility = View.VISIBLE
             pill.measure(
                 View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
                 View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
             )
-            dp(12) + pill.measuredHeight + dp(8)
+            // 顶距(space_12) + pill 实测高度 + 一点间隙。用实测值而不是写死 dp，是为了
+            // 以后调 pill 的内边距 / 字号时这条带子自己跟着变。
+            pillBand = dp(12) + pill.measuredHeight + dp(8)
+            // 需要躲开 pill 的宽度：pill 宽 + 它的右距(space_12) + 一点余量
+            // （触控板页右栏那一行的右内边距、键盘页页签行的右内边距都用它）
+            pillWidth = pill.measuredWidth + dp(24)
         } else {
             pill?.visibility = View.GONE
-            0
         }
-        if (::pager.isInitialized) {
-            pager.setPadding(pager.paddingLeft, pillBand, pager.paddingRight, pager.paddingBottom)
+        val space4 = resources.getDimensionPixelSize(R.dimen.space_4)
+        // 键盘页顶部那行「布局页签」（8 套布局的横滑容器）：横屏只需把它的右端让出 pill 的
+        // 宽度 —— 页签滑到底也不会钻到 pill 底下，键盘**不用整页下移**（改前这里是整页顶距）。
+        if (::keyboardPanel.isInitialized) {
+            keyboardPanel.tabScroll.setPadding(
+                keyboardPanel.tabScroll.paddingLeft, keyboardPanel.tabScroll.paddingTop,
+                if (landscape) pillWidth else dp(6), keyboardPanel.tabScroll.paddingBottom,
+            )
+        }
+        // 触控板页右栏顶部那一行（标题 + 编辑）：横屏把右内边距加到 pill 左边为止。
+        findViewById<View>(R.id.chipSection)?.let {
+            it.setPadding(
+                it.paddingLeft, it.paddingTop,
+                if (landscape) pillWidth else space4, it.paddingBottom,
+            )
+        }
+        // 设置页右栏（分类列表所在的滚动容器）：横屏顶部让出 pillBand。
+        findViewById<View>(R.id.paneGroupsScroll)?.let {
+            it.setPadding(
+                it.paddingLeft, if (landscape) pillBand else 0,
+                it.paddingRight, it.paddingBottom,
+            )
         }
 
         // 旋转只换布局、不切页：横竖屏各自铺各自的布局，当前页面保持不动
@@ -1160,6 +1187,15 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
 
     override fun isBtConnected(): Boolean =
         (AgentController.module(com.allperiph.core.ModuleId.BTHID) as? com.allperiph.bt.BtHidDevice)?.isConnected == true
+
+    /**
+     * 状态页左侧三个传输按钮 → 设置页右栏切到对应分类（"wifi" / "bt" / "usb"）。
+     *
+     * 真机反馈「设置页左边三个传输按钮点了应该弹出对应分类」：按钮不再就地开关，只把右栏
+     * 切到那一类的分类页（页内第一张卡就是总开关）——开关的生效路径仍在
+     * StatusFragment.onTransportToggle，没有第二套。
+     */
+    override fun showCategory(category: String) { settingsFragment?.showCategory(category) }
 
     override fun renderChips() = hotkeyBoard.render()
 
@@ -1973,10 +2009,10 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
                 if (rootMissing) R.string.hint_root_missing else R.string.hint_idle
             )
         }
-        // 设置页按传输类分组：某类开关打开才显示它的模块行（"打开才出现对应功能"）
-        groupWifi.visibility = if (AgentController.isTransportEnabled(this, "wifi")) View.VISIBLE else View.GONE
-        groupBt.visibility = if (AgentController.isTransportEnabled(this, "bt")) View.VISIBLE else View.GONE
-        groupUsb.visibility = if (AgentController.isTransportEnabled(this, "usb")) View.VISIBLE else View.GONE
+        // 传输分类页（无线 / 蓝牙 / 有线）的显隐**不在这里**：它跟其它分类一样由
+        // SettingsFragment 的导航控制。原先这里按 isTransportEnabled 直接置 group* 可见 ——
+        // 那正是「点左侧传输按钮进分类」要反过来用的一处（刚切过去就被下一秒刷回 GONE）。
+        // 该类是否显示模块行，由 StatusFragment.refresh() 按同一个开关每秒回读。
 
         val st = AgentController.overallState()
         tvOverall.text = stateLabel(st)

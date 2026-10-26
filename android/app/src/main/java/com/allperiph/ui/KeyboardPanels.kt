@@ -41,6 +41,17 @@ class KeyboardPanels(private val act: Activity) {
     private var tabs: List<TextView> = emptyList()
     private var volRepeat: Runnable? = null
 
+    /**
+     * 顶部 8 个布局页签所在的横滑容器。
+     *
+     * 暴露给 MainActivity：横屏 pill（触控板/键盘/锁定/设置）悬浮在右上角，正好压在这行页签的
+     * 右端 —— 真机上最后一个页签「自定义」滑到底会钻到 pill 底下，点下去命中的是 pill。
+     * 横屏时给这里补一段右内边距（= pill 宽度），页签就再也滑不到 pill 底下，
+     * 键盘页也因此**不用整页下移**（真机反馈「横条把所有界面都压下去了」）。
+     */
+    lateinit var tabScroll: android.widget.HorizontalScrollView
+        private set
+
     // 令牌（随主题变化，故每次读取而非缓存常量）
     private val cCard get() = act.getColor(R.color.md_surface)
     private val cText get() = act.getColor(R.color.md_on_surface)
@@ -92,11 +103,13 @@ class KeyboardPanels(private val act: Activity) {
             t
         }
         // 7 套布局一屏放不下 → 页签行改成可横向滑动
+        // （容器存进 tabScroll：横屏 pill 要它让出右端宽度，见字段注释）
+        tabScroll = android.widget.HorizontalScrollView(act).apply {
+            isHorizontalScrollBarEnabled = false
+            addView(tabRow)
+        }
         col.addView(
-            android.widget.HorizontalScrollView(act).apply {
-                isHorizontalScrollBarEnabled = false
-                addView(tabRow)
-            },
+            tabScroll,
             LinearLayout.LayoutParams(-1, -2)
         )
 

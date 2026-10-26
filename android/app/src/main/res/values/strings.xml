@@ -433,4 +433,31 @@ TV/PC 控制 · 诊断 · 文件 · 自检/日志/悬浮球</string>
     <string name="ui_remote_touchpad_hint">触摸控制\n单点 = 确认 · 按住滑动 = 移动光标</string>
     <string name="ui_ime_panel_hint">已启用：物理键盘打字将发送到电脑；切回其他输入法可恢复手机打字</string>
     <string name="ui_touchpad_send_progress">发送 %1$d%%</string>
+
+    <!-- 开关行：分组里只留一行标题，说明文字搬去帮助页（真机反馈「还有很多长文没移到帮助页」） -->
+    <string name="lay_settings_cursor_lock_title">触摸板光标锁定</string>
+    <string name="lay_settings_localsend_title">互传（LocalSend）</string>
+    <string name="lay_settings_export_log_title">导出运行日志</string>
+    <string name="lay_settings_group_interact">交互开关</string>
+    <string name="lay_settings_keymap_to_help">遥控键映射说明</string>
+
+    <!-- 传输分类页：左侧三个传输按钮点了进这里，总开关与模块列表同页 -->
+    <string name="lay_transport_switch_hint">开启后下方模块才会生效</string>
+    <string name="lay_settings_transport_modules">模块开关</string>
+    <string name="hint_transport_enter">点按钮进入对应分类，开与关都在那一页</string>
+
+    <!-- 日志对话框：复制 / 导出（两个日志此前都只能看，不能带走） -->
+    <string name="ui_log_export">导出</string>
+    <string name="ui_log_empty">没有可导出的日志内容</string>
+    <string name="ui_log_empty_hint">暂无日志 —— 只有达到「日志级别」的记录才会留下</string>
+    <string name="ui_log_export_failed">导出失败：%1$s</string>
+    <string name="ui_log_exported">已保存到 Download/AllPeriph/%1$s</string>
+    <string name="ui_log_head">=== AllPeriph 运行日志导出 ===\n时间: %1$s\n设备: %2$s / SDK %3$s\n\n</string>
+
+    <!-- 帮助页：开关与日志说明 / 遥控键位（从各分组搬来的长文） -->
+    <string name="ui_help_title_switch">开关与日志</string>
+    <string name="ui_help_title_keymap">遥控键位</string>
+    <string name="ui_help_cursor_lock">触摸板光标锁定：连上电脑后本窗隐藏系统光标，触控板点击只转发到电脑（Pad 防误触）。</string>
+    <string name="ui_help_localsend">互传（LocalSend）：开关 = 接收文件；点行 = 发送文件到电脑 / 其他平台。</string>
+    <string name="ui_help_export_log">导出运行日志：一键保存 log.txt 到 Download/AllPeriph，反馈问题时附上。</string>
 </resources>

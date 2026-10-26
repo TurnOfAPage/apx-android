@@ -207,83 +207,120 @@ class SettingsFragment : Fragment() {
         act.findViewById<android.view.View>(R.id.rowLocalSend)?.setOnClickListener { v ->
             v.context.startActivity(android.content.Intent(v.context, com.allperiph.localsend.SendActivity::class.java))
         }
-        // 批O：手动导出运行日志（issue 建议）——自进程 logcat → Download/AllPeriph/
-        act.findViewById<android.view.View>(R.id.rowExportLog)?.setOnClickListener { v ->
-            android.widget.Toast.makeText(v.context, v.context.getString(R.string.ui_log_collecting), android.widget.Toast.LENGTH_SHORT).show()
+        // 批O：手动导出运行日志（issue 建议）——自进程 logcat → Download/AllPeriph/。
+        // 落盘与提示复用 exportLog 那条口径（同一份 saveToDownloads / 头部 / 文案），
+        // 与运行日志、Logcat 两个对话框的「导出」完全一致。
+        act.findViewById<android.view.View>(R.id.rowExportLog)?.setOnClickListener {
+            Toast.makeText(act, getString(R.string.ui_log_collecting), Toast.LENGTH_SHORT).show()
             Thread {
-                val msg = try {
+                val raw = try {
                     val pid = android.os.Process.myPid()
-                    val p = Runtime.getRuntime().exec(arrayOf("logcat", "-d", "-v", "time", "-t", "5000", "--pid=$pid"))
-                    val raw = p.inputStream.bufferedReader().readText()
+                    val p = Runtime.getRuntime().exec(
+                        arrayOf("logcat", "-d", "-v", "time", "-t", "5000", "--pid=$pid"),
+                    )
+                    p.inputStream.bufferedReader().readText()
+                } catch (e: Throwable) {
+                    ""
+                }
+                val msg = try {
                     if (raw.isBlank()) {
-                        "没有可导出的日志内容"
+                        getString(R.string.ui_log_empty)
                     } else {
-                        val stamp = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())
-                        val head = "=== AllPeriph 运行日志导出 ===\n时间: $stamp\n设备: ${android.os.Build.MODEL} / SDK ${android.os.Build.VERSION.SDK_INT}\n说明: 仅含本进程最近 5000 行 logcat\n\n"
-                        val body = head + raw.takeLast(890_000)
                         val fileName = "log_${System.currentTimeMillis()}.txt"
-                        val values = android.content.ContentValues().apply {
-                            put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, fileName)
-                            put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "text/plain")
-                            put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS + "/AllPeriph")
-                            put(android.provider.MediaStore.MediaColumns.IS_PENDING, 1)
-                        }
-                        val uri = v.context.contentResolver.insert(
-                            android.provider.MediaStore.Downloads.getContentUri(android.provider.MediaStore.VOLUME_EXTERNAL_PRIMARY), values,
-                        ) ?: throw IllegalStateException("insert failed")
-                        v.context.contentResolver.openOutputStream(uri)!!.use { it.write(body.toByteArray(Charsets.UTF_8)) }
-                        val fin = android.content.ContentValues().apply {
-                            put(android.provider.MediaStore.MediaColumns.IS_PENDING, 0)
-                        }
-                        v.context.contentResolver.update(uri, fin, null, null)
-                        "已保存到 Download/AllPeriph/$fileName"
+                        saveToDownloads(
+                            act.applicationContext, fileName, logHead() + raw.takeLast(890_000),
+                        )
+                        getString(R.string.ui_log_exported, fileName)
                     }
                 } catch (e: Throwable) {
-                    "导出失败: ${e.message}"
+                    getString(R.string.ui_log_export_failed, e.message ?: "")
                 }
                 android.os.Handler(android.os.Looper.getMainLooper()).post {
-                    android.widget.Toast.makeText(v.context, msg, android.widget.Toast.LENGTH_LONG).show()
+                    Toast.makeText(act, msg, Toast.LENGTH_LONG).show()
                 }
-            }.apply { isDaemon = true; start() }
+            }.apply { isDaemon = true; name = "apx-log-export" }.start()
         }
-        // 反馈#10 批 B（方案 B）：首页 = 分类列表，点行进二级页，返回行回首屏。
-        // 分组容器复用原四个 group*，另加帮助组 groupHelp；原四分段 tab 已删。
-        val categories = listOf(
-            act.findViewById<View>(R.id.catGeneral) to R.id.groupGeneral,
-            act.findViewById<View>(R.id.catLook) to R.id.groupLook,
-            act.findViewById<View>(R.id.catRemote) to R.id.groupRemote,
-            act.findViewById<View>(R.id.catAbout) to R.id.groupAbout,
-            act.findViewById<View>(R.id.catHelp) to R.id.groupHelp,
-        )
-        val home = act.findViewById<View>(R.id.categoryHome)
-        val back = act.findViewById<View>(R.id.btnBackHome)
-        fun hideAllGroups() {
-            categories.forEach { (_, gid) -> act.findViewById<View>(gid)?.visibility = View.GONE }
-        }
-        fun scrollTop() {
-            // 设置页改成两栏后**没有外层 ScrollView**（左右两栏各自滚动）：
-            // 分类跳转要回到顶部的是**右栏**（分组内容区），此前那个 as? ScrollView
-            // 转型现在恒为 null（静默失效，点了分类不回到顶部）。
-            (act.findViewById<View>(R.id.paneGroupsScroll) as? android.widget.ScrollView)
-                ?.fullScroll(View.FOCUS_UP)
-        }
-        fun showHome() {
-            home?.visibility = View.VISIBLE
-            back?.visibility = View.GONE
-            hideAllGroups()
-            scrollTop()
-        }
-        categories.forEach { (row, gid) ->
-            row?.setOnClickListener {
-                home?.visibility = View.GONE
-                back?.visibility = View.VISIBLE
-                hideAllGroups()
-                act.findViewById<View>(gid)?.visibility = View.VISIBLE
-                scrollTop()
-            }
-        }
-        back?.setOnClickListener { showHome() }
+        bindCategoryNav()
         showHome()
+    }
+
+    // ==================== 分类导航 ====================
+
+    /** 首页分类行 → 分组容器（点行进二级页）。 */
+    private var categoryRows: List<Pair<Int, Int>> = emptyList()
+
+    /** 所有「页」的分组容器 id：切页时先全部收起（含首页没有入口的传输分类页）。 */
+    private var categoryPages: List<Int> = emptyList()
+
+    private var navHome: View? = null
+    private var navBack: View? = null
+
+    private fun bindCategoryNav() {
+        val act = activity ?: return
+        navHome = act.findViewById(R.id.categoryHome)
+        navBack = act.findViewById(R.id.btnBackHome)
+        // 反馈#10 批 B（方案 B）：首页 = 分类列表，点行进二级页，返回行回首屏；
+        // 分组容器复用原四个 group*，另加帮助组 groupHelp。原四分段 tab 已删。
+        categoryRows = listOf(
+            R.id.catGeneral to R.id.groupGeneral,
+            R.id.catLook to R.id.groupLook,
+            R.id.catRemote to R.id.groupRemote,
+            R.id.catAbout to R.id.groupAbout,
+            R.id.catHelp to R.id.groupHelp,
+        )
+        // 传输分类页（无线 / 蓝牙 / 有线）**没有首页分类行** —— 入口是设置页左栏那三个传输
+        // 按钮，见 [showCategory]。它们同样要参与「切页先全收」，所以一并登记。
+        categoryPages = categoryRows.map { it.second } +
+            listOf(R.id.groupWifi, R.id.groupBt, R.id.groupUsb)
+        categoryRows.forEach { (row, gid) ->
+            act.findViewById<View>(row)?.setOnClickListener { showGroup(gid) }
+        }
+        navBack?.setOnClickListener { showHome() }
+    }
+
+    /** 进二级页：藏首页、显示返回行、只留目标分组，并回到右栏顶部。 */
+    private fun showGroup(groupId: Int) {
+        val act = activity ?: return
+        navHome?.visibility = View.GONE
+        navBack?.visibility = View.VISIBLE
+        categoryPages.forEach { act.findViewById<View>(it)?.visibility = View.GONE }
+        act.findViewById<View>(groupId)?.visibility = View.VISIBLE
+        scrollTop()
+    }
+
+    /** 回首页（分类列表）。 */
+    private fun showHome() {
+        val act = activity ?: return
+        navHome?.visibility = View.VISIBLE
+        navBack?.visibility = View.GONE
+        categoryPages.forEach { act.findViewById<View>(it)?.visibility = View.GONE }
+        scrollTop()
+    }
+
+    /**
+     * 按名字进分类页：`"wifi" / "bt" / "usb"`（左栏三个传输按钮）与 `"help"`（遥控 tab 的
+     * 键映射行跳说明）。未知名字什么也不做 —— 宁可不动，也不要停在一个不相干的分类里。
+     */
+    fun showCategory(category: String) {
+        if (!ensureViews()) return
+        val gid = when (category) {
+            "wifi" -> R.id.groupWifi
+            "bt" -> R.id.groupBt
+            "usb" -> R.id.groupUsb
+            "help" -> R.id.groupHelp
+            "general" -> R.id.groupGeneral
+            "look" -> R.id.groupLook
+            "remote" -> R.id.groupRemote
+            "about" -> R.id.groupAbout
+            else -> return
+        }
+        showGroup(gid)
+    }
+
+    /** 回到右栏顶部（设置页两栏后没有外层 ScrollView，要滚的是右栏那个容器）。 */
+    private fun scrollTop() {
+        (activity?.findViewById<View>(R.id.paneGroupsScroll) as? android.widget.ScrollView)
+            ?.fullScroll(View.FOCUS_UP)
     }
 
     // ==================== Templates ====================
@@ -701,13 +738,17 @@ class SettingsFragment : Fragment() {
     private fun showLogs() {
         val snap = com.allperiph.shared.util.Log.snapshot()
         val text = if (snap.isEmpty()) {
-            "暂无日志 —— 只有达到「日志级别」的记录才会留下"
+            getString(R.string.ui_log_empty_hint)
         } else {
             snap.takeLast(120).joinToString("\n") { e -> "${e.level} ${e.tag}: ${e.msg}" }
         }
         AlertDialog.Builder(activity, R.style.Theme_AllPeriph_Miuix_Dialog)
             .setTitle(getString(R.string.ui_main_dialog_log, minOf(snap.size, 120)))
             .setMessage(text)
+            // 真机反馈「两个日志都没有导出和复制的功能」：日志对话框此前只能看、带不走。
+            // 中立位 = 复制，否定位 = 导出，肯定位 = 关闭（AlertDialog 三键就三处）。
+            .setNeutralButton(getString(R.string.ui_common_copy)) { _, _ -> copyLog(text) }
+            .setNegativeButton(getString(R.string.ui_log_export)) { _, _ -> exportLog("log", text) }
             .setPositiveButton(getString(R.string.ui_common_close), null)
             .show()
     }
@@ -718,17 +759,111 @@ class SettingsFragment : Fragment() {
      * （App 读自己的日志不需要 READ_LOGS）。后台线程抓取，抓到回填对话框。
      */
     private fun showLogcat() {
-        val dlg = AlertDialog.Builder(activity, R.style.Theme_AllPeriph_Miuix_Dialog)
+        val act = activity ?: return
+        // 抓取在后台（root logcat 可能要几秒），而「复制 / 导出」按钮**点开时就绑定**了内容 ——
+        // 所以最新文本放字段里，按钮读字段而不是闭包捕获的初值（否则永远只能复制到「读取中…」）。
+        logcatText = ""
+        val dlg = AlertDialog.Builder(act, R.style.Theme_AllPeriph_Miuix_Dialog)
             .setTitle(getString(R.string.ui_main_label_logcat))
             .setMessage(getString(R.string.ui_loading))
+            .setNeutralButton(getString(R.string.ui_common_copy)) { _, _ -> copyLog(logcatText) }
+            .setNegativeButton(getString(R.string.ui_log_export)) { _, _ -> exportLog("logcat", logcatText) }
             .setPositiveButton(getString(R.string.ui_common_close), null)
             .show()
+        // 抓到之前没有内容可拿：两个动作先禁用，抓到再放开（按钮在对话框显示后才会存在）。
+        dlg.getButton(AlertDialog.BUTTON_NEUTRAL)?.isEnabled = false
+        dlg.getButton(AlertDialog.BUTTON_NEGATIVE)?.isEnabled = false
         kotlin.concurrent.thread(name = "apx-logcat") {
             val out = readLogcat()
             activity?.runOnUiThread {
-                if (dlg.isShowing) dlg.setMessage(out.takeLast(12000))
+                logcatText = out
+                if (dlg.isShowing) {
+                    dlg.setMessage(out.takeLast(12000))
+                    dlg.getButton(AlertDialog.BUTTON_NEUTRAL)?.isEnabled = true
+                    dlg.getButton(AlertDialog.BUTTON_NEGATIVE)?.isEnabled = true
+                }
             }
         }
+    }
+
+    // ==================== 日志带走（复制 / 导出） ====================
+
+    /** Logcat 对话框当前文本：后台抓完才填，复制 / 导出从这里读。 */
+    private var logcatText: String = ""
+
+    /** 复制整段日志到系统剪贴板（顺带会被「手机复制 → 电脑粘贴」的剪贴板同步带去电脑）。 */
+    private fun copyLog(text: String) {
+        val ctx = activity ?: return
+        val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+        cm?.setPrimaryClip(ClipData.newPlainText("APX-log", text))
+        Toast.makeText(ctx, getString(R.string.ui_common_copied), Toast.LENGTH_SHORT).show()
+    }
+
+    /** 导出文件头（时间 / 设备 / SDK）：三个导出口径一致，用户一眼看出是哪台机、什么时候。 */
+    private fun logHead(): String = getString(
+        R.string.ui_log_head,
+        java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault())
+            .format(java.util.Date()),
+        android.os.Build.MODEL,
+        android.os.Build.VERSION.SDK_INT.toString(),
+    )
+
+    /**
+     * 后台把日志写到 Download/AllPeriph/&lt;name&gt;.txt，完成 / 失败都 Toast 结果。
+     *
+     * 设置页三条导出口径（「导出运行日志」行、运行日志对话框、Logcat 对话框）共用这里，
+     * MediaStore 那段只此一份（无需存储权限；同名自动加后缀，不会互相覆盖）。
+     */
+    private fun exportLog(name: String, text: String) {
+        val ctx = activity?.applicationContext ?: return
+        Toast.makeText(ctx, getString(R.string.ui_log_collecting), Toast.LENGTH_SHORT).show()
+        Thread {
+            val msg = try {
+                if (text.isBlank()) {
+                    ctx.getString(R.string.ui_log_empty)
+                } else {
+                    val fileName = "${name}_${System.currentTimeMillis()}.txt"
+                    saveToDownloads(ctx, fileName, logHead() + text.takeLast(890_000))
+                    ctx.getString(R.string.ui_log_exported, fileName)
+                }
+            } catch (e: Throwable) {
+                ctx.getString(R.string.ui_log_export_failed, e.message ?: "")
+            }
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                Toast.makeText(ctx, msg, Toast.LENGTH_LONG).show()
+            }
+        }.apply { isDaemon = true; name = "apx-log-export" }.start()
+    }
+
+    /** 正文写进 Download/AllPeriph/&lt;fileName&gt;（MediaStore，免存储权限），返回 uri。 */
+    private fun saveToDownloads(
+        ctx: Context,
+        fileName: String,
+        body: String,
+    ): android.net.Uri {
+        val values = android.content.ContentValues().apply {
+            put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+            put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "text/plain")
+            put(
+                android.provider.MediaStore.MediaColumns.RELATIVE_PATH,
+                android.os.Environment.DIRECTORY_DOWNLOADS + "/AllPeriph",
+            )
+            put(android.provider.MediaStore.MediaColumns.IS_PENDING, 1)
+        }
+        val uri = ctx.contentResolver.insert(
+            android.provider.MediaStore.Downloads
+                .getContentUri(android.provider.MediaStore.VOLUME_EXTERNAL_PRIMARY),
+            values,
+        ) ?: throw IllegalStateException("insert failed")
+        ctx.contentResolver.openOutputStream(uri)!!.use { it.write(body.toByteArray(Charsets.UTF_8)) }
+        ctx.contentResolver.update(
+            uri,
+            android.content.ContentValues().apply {
+                put(android.provider.MediaStore.MediaColumns.IS_PENDING, 0)
+            },
+            null, null,
+        )
+        return uri
     }
 
     private fun readLogcat(): String {
@@ -782,25 +917,15 @@ class SettingsFragment : Fragment() {
 
     fun renderKeymap() {
         if (!ensureViews()) return
-        val h = host ?: return
         keymapBox.removeAllViews()
-        // 5 条并 3 条（v206）：
-        //   ① 方向/OK/返回/主页 与键义、"点不动=没开权限"是一件事，合成一条；
-        //   ② 音量/电源 与 "切到 TV 目标自动换遥控预设" 都是遥控那点事，合成一条；
-        //   原第 5 条硬编码中文已并入 ui_main_item_remote_keyboard_reboot_poweroff。
-        val lines = listOf(
-            getString(R.string.ui_main_item_hotkey_touchpad_home),
-            getString(R.string.ui_main_item_remote_device_only_cursor),
-            getString(R.string.ui_main_item_remote_keyboard_reboot_poweroff),
-        )
-        lines.forEach { t ->
-            keymapBox.addView(TextView(activity).apply {
-                text = "· $t"
-                textSize = 13f
-                setTextColor(resources.getColor(R.color.md_on_surface_variant))
-                setPadding(h.dp(4), h.dp(6), h.dp(4), h.dp(6))
-            })
-        }
+        // 三段长文（方向 / OK / 返回 / 主页、方向键语义、音量 / 电源与遥控预设）已搬进
+        // **帮助页的「遥控键位」卡**（原文零改动，见 page_settings.xml 的 groupHelp）：
+        // 真机反馈「设置分组里还有很多长文没移到帮助页」，这里只留一行跳转。
+        keymapBox.addView(settingRow(
+            getString(R.string.lay_settings_keymap_to_help),
+            getString(R.string.ui_main_cat_help),
+            resources.getColor(R.color.md_primary),
+        ) { showCategory("help") })
     }
 
     // ==================== Hotkey sort ====================

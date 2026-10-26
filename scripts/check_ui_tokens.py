@@ -44,11 +44,15 @@ R_USE = re.compile(
     r"(?<![\w.])R\.(string|color|layout|id|drawable|style|array|dimen|raw|xml|anim|menu"
     r"|plurals|mipmap|font|integer|bool)\b")
 # 中文文案棘轮基线：只许降不许升。降下来之后把这里调成新值即可锁住战果。
-TEXT_BASELINE = 536
+TEXT_BASELINE = 530
 
 
 def strip_comments(text):
     return re.sub(r"<!--.*?-->", "", text, flags=re.S)
+
+# 文案属性的整篇匹配版：`android:text="A\nB"` 在 XML 里就是**真换行**，逐行匹配会漏
+# （本仓真有三处长文这么写：藏在分组卡片里、既不进 strings.xml 也不被本关卡拦住）。
+TEXT_ATTR_ML = re.compile(r'android:(text|hint|contentDescription)="([^"]*)"', re.S)
 
 
 def xml_files():
@@ -80,9 +84,9 @@ def check_literals_and_text(problems):
                                     % (rel, i, line.strip()[:90]))
 
         if is_layout:
-            for i, line in enumerate(body.splitlines(), 1):
-                m = TEXT_ATTR.search(line)
-                if m and CJK.search(m.group(2)):
+            for m in TEXT_ATTR_ML.finditer(body):
+                if CJK.search(m.group(2)):
+                    i = body.count("\n", 0, m.start()) + 1
                     problems.append('%s:%d 硬编码文案（应移入 strings.xml）：%s="%s…"'
                                     % (rel, i, m.group(1), m.group(2)[:24]))
     return checked

@@ -52,9 +52,10 @@
         </LinearLayout>
 
         <!--
-          传输开关：三个按钮（点一下开/关），不再是「标签 + Switch」的大卡片行。
-          开哪一类，设置页里那一类的功能分组才出现（MainActivity/StatusFragment 里
-          按 isTransportEnabled 控制 groupWifi/groupBt/groupUsb 的可见性）。
+          传输入口：三个按钮（点一下**进对应分类**，不再就地开关）。进去的是设置页右栏的
+          「无线 / 蓝牙 / 有线（USB）」分类页 —— 那一页第一张卡就是这一类的总开关。
+          真机反馈原话：「设置页左边三个传输按钮点了应该弹出对应分类」；开关搬到分类页里做，
+          按钮本身只导航，同时用选中色显示当前开/关状态（renderTransportButtons）。
           选中态由代码上色（APButtonGhost 是描边胶囊，未选中保持中性）。
 
           ⚠️ 竖排、整列宽（原来是三个横排的 0dp+weight=1）：
@@ -100,6 +101,17 @@
                 android:text="USB"
                 android:contentDescription="@string/lay_transport_usb_cd" />
         </LinearLayout>
+
+        <!-- 一行说明：按钮现在是「入口」，别让人以为点了没反应（真机反馈的下一句担心） -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingStart="@dimen/space_4"
+            android:paddingEnd="@dimen/space_4"
+            android:paddingTop="@dimen/space_2"
+            android:paddingBottom="@dimen/space_2"
+            android:text="@string/hint_transport_enter"
+            android:textAppearance="@style/APTextCaption" />
 
         <TextView
             android:id="@+id/tvIdleHint"

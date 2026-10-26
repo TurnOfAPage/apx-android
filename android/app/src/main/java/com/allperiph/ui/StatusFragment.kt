@@ -55,6 +55,9 @@ class StatusFragment : Fragment() {
         fun onStatusBadgeUpdate(stateLabel: String, stateColor: Int, uplinkPath: String)
         fun renderUplink()
         fun isBtConnected(): Boolean
+
+        /** 左侧传输按钮 → 设置页右栏切到对应分类（"wifi" / "bt" / "usb"）。 */
+        fun showCategory(category: String)
     }
 
     private var host: Host? = null
@@ -86,9 +89,12 @@ class StatusFragment : Fragment() {
         tvIdleHint = act.findViewById(R.id.tvIdleHint) ?: return false
         boxRunning = act.findViewById(R.id.boxRunning) ?: return false
         boxIdleFeatures = act.findViewById(R.id.boxIdleFeatures) ?: return false
-        groupWifi = act.findViewById(R.id.groupWifi) ?: return false
-        groupBt = act.findViewById(R.id.groupBt) ?: return false
-        groupUsb = act.findViewById(R.id.groupUsb) ?: return false
+        swTransportWifi = act.findViewById(R.id.swTransportWifi) ?: return false
+        swTransportBt = act.findViewById(R.id.swTransportBt) ?: return false
+        swTransportUsb = act.findViewById(R.id.swTransportUsb) ?: return false
+        cardWifiModules = act.findViewById(R.id.cardWifiModules) ?: return false
+        cardBtModules = act.findViewById(R.id.cardBtModules) ?: return false
+        cardUsbModules = act.findViewById(R.id.cardUsbModules) ?: return false
         rowsWifi = act.findViewById(R.id.rowsWifi) ?: return false
         rowsBt = act.findViewById(R.id.rowsBt) ?: return false
         rowsUsb = act.findViewById(R.id.rowsUsb) ?: return false
@@ -115,10 +121,18 @@ class StatusFragment : Fragment() {
     private lateinit var btnTransportUsb: TextView
     private lateinit var boxIdleFeatures: LinearLayout
 
-    // --- Module rows (in page_settings.xml, controlled by transport toggles) ---
-    private lateinit var groupWifi: LinearLayout
-    private lateinit var groupBt: LinearLayout
-    private lateinit var groupUsb: LinearLayout
+    // --- 传输分类页（in page_settings.xml，由左侧三个传输按钮导航进入）---
+    private lateinit var swTransportWifi: Switch
+    private lateinit var swTransportBt: Switch
+    private lateinit var swTransportUsb: Switch
+    private lateinit var cardWifiModules: LinearLayout
+    private lateinit var cardBtModules: LinearLayout
+    private lateinit var cardUsbModules: LinearLayout
+
+    /** 刷新时回读开关状态会触发监听 → 用这个旗标挡住，免得每秒把自己又切一次。 */
+    private var syncingTransport = false
+
+    // --- Module rows (in page_settings.xml，落在上面三张模块卡里) ---
     private lateinit var rowsWifi: LinearLayout
     private lateinit var rowsBt: LinearLayout
     private lateinit var rowsUsb: LinearLayout
@@ -386,14 +400,25 @@ class StatusFragment : Fragment() {
         if (!ensureViews()) return
         val h = host ?: return
         renderTransportButtons()
-        // 传输开关改成按钮：点一下翻转。
-        // 新状态从 h.isTransportEnabled **回读**，不靠本地取反 —— 开 USB 可能失败
-        // （没 root / 口被调试占用），回读才能如实反映。
+        // 左侧三个传输按钮 = **进入对应分类**（真机反馈原话：「设置页左边三个传输按钮点了
+        // 应该弹出对应分类」）。开/关搬到那一页的总开关上做，按钮只负责导航 —— 同时仍用
+        // 选中色显示该类的当前状态（renderTransportButtons），点之前就知道开没开。
         for ((btn, kind) in transportButtons()) {
             btn.setOnClickListener {
                 Feedback.tap(it)
-                onTransportToggle(kind, !h.isTransportEnabled(kind))
-                renderTransportButtons()
+                h.showCategory(kind)
+            }
+        }
+        // 分类页里的总开关：勾选即开/关该类传输，沿用 onTransportToggle 那条原生效路径
+        // （模块热启 / 前台服务 / 双属模块的退出开关都在那里）。新状态仍从
+        // h.isTransportEnabled **回读**，不靠本地取反 —— 开 USB 可能失败（没 root / 口被
+        // 调试占用），回读才能如实反映。refresh() 每秒回读会触发本监听，故用
+        // syncingTransport 挡住（否则会每秒把自己又切一次）。
+        for ((sw, kind) in transportSwitches()) {
+            sw.setOnCheckedChangeListener { _, checked ->
+                Feedback.tap(sw)
+                if (syncingTransport) return@setOnCheckedChangeListener
+                onTransportToggle(kind, checked)
             }
         }
     }
@@ -403,6 +428,21 @@ class StatusFragment : Fragment() {
         btnTransportBt to "bt",
         btnTransportUsb to "usb",
     )
+
+    /** 传输分类页里的三个总开关（与 transportButtons() 同一套 kind 取值）。 */
+    private fun transportSwitches(): List<Pair<Switch, String>> = listOf(
+        swTransportWifi to "wifi",
+        swTransportBt to "bt",
+        swTransportUsb to "usb",
+    )
+
+    /** 把总开关的状态回读成真机状态（回读期间挡掉监听，见 [syncingTransport]）。 */
+    private fun syncTransportSwitches() {
+        val h = host ?: return
+        syncingTransport = true
+        for ((sw, kind) in transportSwitches()) sw.isChecked = h.isTransportEnabled(kind)
+        syncingTransport = false
+    }
 
     /**
      * 传输按钮选中态：开启 = 主色实底 + onPrimary 文字；关闭 = 中性描边胶囊。
@@ -503,10 +543,13 @@ class StatusFragment : Fragment() {
 
         // 传输按钮选中态（USB 可能在外部被拔掉/被系统关，每秒跟一次）
         renderTransportButtons()
-        // 设置页按传输类分组显示：**开哪个弹哪个**（分组随按钮状态出现/消失）
-        groupWifi.visibility = if (h.isTransportEnabled("wifi")) View.VISIBLE else View.GONE
-        groupBt.visibility = if (h.isTransportEnabled("bt")) View.VISIBLE else View.GONE
-        groupUsb.visibility = if (h.isTransportEnabled("usb")) View.VISIBLE else View.GONE
+        // 传输分类页：分类页本身由 SettingsFragment 的导航控制显隐（同其它分类），
+        // 这里只回读总开关状态，并在该类未开启时收起模块卡（与旧行为一致：没开的传输不列模块，
+        // 免得用户在这里点了模块却在等一条没开的链路）。
+        syncTransportSwitches()
+        cardWifiModules.visibility = if (h.isTransportEnabled("wifi")) View.VISIBLE else View.GONE
+        cardBtModules.visibility = if (h.isTransportEnabled("bt")) View.VISIBLE else View.GONE
+        cardUsbModules.visibility = if (h.isTransportEnabled("usb")) View.VISIBLE else View.GONE
 
         // 总状态
         val st = AgentController.overallState()
