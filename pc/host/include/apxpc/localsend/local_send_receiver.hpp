@@ -63,10 +63,28 @@ struct PreparedFile {
     uint64_t size = 0;
 };
 
+/// 面板状态快照（纯数据：两个面板与单测共用同一份字段口径，不碰 socket）
+struct StatusSnapshot {
+    bool running = false;
+    uint16_t port = 0;            ///< 实际 HTTP 端口（回退过就是回退后的值）
+    std::string dir;              ///< 落盘目录
+    std::string error;            ///< 起不来的原因（running=false 时才有意义）
+    std::string warn;             ///< 起来了但能力受限（如多播端口被占 → 发现能力下降）
+    int received = 0;             ///< 本次运行累计收到的文件数
+    std::vector<Device> devices;  ///< 60s 内可见的设备，最近可见优先
+};
+
+/// 快照 → 面板 state JSON 里的 localsend 段。
+/// 字段名是**前端契约**（pc/web/src/api/bridge.ts 的 HostState.localsend），改名即破坏前端。
+std::string statusJson(const StatusSnapshot& s);
+
 class LocalSendReceiver {
 public:
-    /// 每个文件落盘完成时回调（在接收线程调用）
-    using FileCallback = std::function<void(const std::string& path, uint64_t size)>;
+    /// 每个文件落盘完成时回调（在接收线程调用）。
+    /// from = 发送方 alias（对端没报 alias 时是「未知设备」）—— 面板要拿它做提示文案，
+    /// 所以由接收端一并给出，而不是让面板再回头去猜是哪个会话。
+    using FileCallback = std::function<void(const std::string& path, uint64_t size,
+                                           const std::string& from)>;
     /// 首次发现某台设备时回调（在 UDP 线程调用）
     using DeviceCallback = std::function<void(const Device& dev)>;
 
@@ -87,6 +105,8 @@ public:
     int receivedCount() const;
     /// 60s 内见过的设备，最近可见优先
     std::vector<Device> devices() const;
+    /// 面板用状态快照（未启动时也给得出诚实值：running=false + 默认端口 + 落盘目录）
+    StatusSnapshot snapshot() const;
     /// 默认落盘目录：用户「下载」目录下的 AllPeriph（不存在会被创建）
     static std::string defaultDir();
 

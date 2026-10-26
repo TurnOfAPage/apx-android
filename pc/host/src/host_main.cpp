@@ -261,12 +261,13 @@ static int runLocalSend(uint16_t port, int seconds, const std::string& dir) {
     const int64_t t0 = std::chrono::duration_cast<std::chrono::milliseconds>(
                            std::chrono::steady_clock::now().time_since_epoch())
                            .count();
-    auto onFile = [t0](const std::string& path, uint64_t size) {
+    auto onFile = [t0](const std::string& path, uint64_t size, const std::string& from) {
         const int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
                                 std::chrono::steady_clock::now().time_since_epoch())
                                 .count();
-        std::printf("\n[+%llds] 已接收 %s（%llu 字节）\n", static_cast<long long>((now - t0) / 1000),
-                    path.c_str(), static_cast<unsigned long long>(size));
+        std::printf("\n[+%llds] 收到 %s 发来的 %s（%llu 字节）\n",
+                    static_cast<long long>((now - t0) / 1000), from.c_str(), path.c_str(),
+                    static_cast<unsigned long long>(size));
         std::fflush(stdout);
     };
     if (!rx.start(opt, onFile)) {
@@ -503,6 +504,9 @@ int main(int argc, char** argv) {
             apxpc::media::MicBridge mic;
             apxpc::tray::TrayIcon tray;
             tray.create("全能外设 · 浏览器面板");   // macOS 托盘为空实现，无害
+            // 互传（LocalSend）：起停由面板入口负责（runWebPanelHttp 启动时 start、退出时 stop），
+            // 这里只提供对象；未在面板里点开关前保持关闭，不悄悄占用 53317。
+            apxpc::localsend::LocalSendReceiver localSend;
 
             apxpc::ui::HostBundle bundle;
             bundle.session      = &session;
@@ -517,6 +521,7 @@ int main(int argc, char** argv) {
             bundle.micBridge    = &mic;
             bundle.tray         = &tray;
             bundle.hotkey       = nullptr;
+            bundle.localSend    = &localSend;
             bundle.cfg          = &cfg;
             bundle.configPath   = cfgPath;
             // webDir 空 = panel 内部按可执行文件旁 web/ 定位（与 apxdesktop 约定一致）

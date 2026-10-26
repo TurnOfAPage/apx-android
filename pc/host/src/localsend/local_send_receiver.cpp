@@ -291,6 +291,28 @@ std::string LocalSendReceiver::buildPrepareResponse(const std::string& sessionId
     return root.stringify();
 }
 
+std::string statusJson(const StatusSnapshot& s) {
+    apxpc::net::Json o = apxpc::net::Json::makeObject();
+    o["running"] = s.running;
+    o["port"] = static_cast<int>(s.port);
+    o["dir"] = s.dir;
+    o["received"] = s.received;
+    o["error"] = s.error;
+    o["warn"] = s.warn;
+    apxpc::net::Json arr = apxpc::net::Json::makeArray();
+    for (const Device& d : s.devices) {
+        apxpc::net::Json e = apxpc::net::Json::makeObject();
+        e["alias"] = d.alias;
+        e["deviceType"] = d.deviceType;
+        e["ip"] = d.ip;
+        e["port"] = static_cast<int>(d.port);
+        e["lastSeenMs"] = static_cast<double>(d.lastSeenMs);
+        arr.push(e);
+    }
+    o["devices"] = arr;
+    return o.stringify();
+}
+
 std::string LocalSendReceiver::defaultDir() { return defaultDirImpl(); }
 
 // ============================================================================
@@ -310,6 +332,7 @@ struct LocalSendReceiver::Impl {
 
     mutable std::mutex mu;
     std::string lastError;
+    std::string warn;   // 起来了但能力受限（多播被占等）——面板要如实说出来，别让「附近没有设备」背锅
     std::string lastPath;
     std::map<std::string, Device> devices;
 
@@ -561,6 +584,9 @@ struct LocalSendReceiver::Impl {
                          reinterpret_cast<const char*>(&mreq), sizeof(mreq)) != 0) {
             // 某些多网卡／受限网络下加入组播会失败：不影响收单播来的 register，
             // 但发现能力下降，必须说出来而不是装作没事。
+            if (warn.empty())
+                warn = "加入多播组 " + opt.multicastGroup +
+                       " 失败（受限网络/多网卡）：只能被动等待对端直连，「附近设备」看不到别的机器";
             APX_LOGW("LocalSend 加入多播组 {} 失败，只能被动等待对端直连", opt.multicastGroup.c_str());
         } else {
             APX_LOGI("LocalSend 已加入多播组 {}:{}", opt.multicastGroup.c_str(),
@@ -742,10 +768,12 @@ struct LocalSendReceiver::Impl {
         }
 
         bool allDone = false;
+        std::string fromAlias;   // 面板提示文案要「谁发来的」，在会话被 erase 之前取出来
         {
             std::lock_guard<std::mutex> lk(mu);
             const auto sit = sessions.find(sid);
             if (sit != sessions.end()) {
+                fromAlias = sit->second.sender;
                 auto fit = sit->second.files.find(token);
                 if (fit != sit->second.files.end()) {
                     fit->second.written = written;
@@ -766,7 +794,7 @@ struct LocalSendReceiver::Impl {
         received.fetch_add(1);
         APX_LOGI("LocalSend 已接收：{}（{} 字节，sha256 {}）", path.c_str(),
                  static_cast<unsigned long long>(written), shaOk ? "一致" : "不一致");
-        if (onFile) onFile(path, written);
+        if (onFile) onFile(path, written, fromAlias);
         respondEmpty(c, 204);
     }
 
@@ -956,6 +984,9 @@ struct LocalSendReceiver::Impl {
             a.sin_addr.s_addr = htonl(INADDR_ANY);
             a.sin_port = htons(kDefaultPort);
             if (::bind(udp, reinterpret_cast<sockaddr*>(&a), sizeof(a)) != 0) {
+                warn = "多播端口 " + std::to_string(kDefaultPort) +
+                       " 绑定失败（可能已有 LocalSend 在跑）：本机仍能收对方直连发来的文件，"
+                       "但「附近设备」列表会一直空着";
                 APX_LOGW("LocalSend 多播端口 {} 绑定失败，发现能力受限（仍可被直连发送）",
                          std::to_string(kDefaultPort).c_str());
                 closeSock(udp);
@@ -1078,6 +1109,23 @@ std::vector<Device> LocalSendReceiver::devices() const {
     std::sort(out.begin(), out.end(),
               [](const Device& a, const Device& b) { return a.lastSeenMs > b.lastSeenMs; });
     return out;
+}
+
+StatusSnapshot LocalSendReceiver::snapshot() const {
+    StatusSnapshot s;
+    // 没起来也要答得出话：running=false + 默认端口 + 落盘目录（面板据此显示「已关闭」）
+    s.dir = impl_ ? impl_->dir : defaultDirImpl();
+    s.port = impl_ ? impl_->listenPort : kDefaultPort;
+    if (!impl_) {
+        s.error = "未启动";
+        return s;
+    }
+    s.running = impl_->running.load();
+    s.error = impl_->lastError;
+    s.warn = impl_->warn;
+    s.received = impl_->received.load();
+    s.devices = devices();
+    return s;
 }
 
 }  // namespace apxpc::localsend

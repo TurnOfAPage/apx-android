@@ -286,7 +286,12 @@ int main() {
 
     LocalSendReceiver rx;
     int fileCallbacks = 0;
-    if (!rx.start(opt, [&fileCallbacks](const std::string&, uint64_t) { ++fileCallbacks; })) {
+    std::string lastFrom;
+    if (!rx.start(opt, [&fileCallbacks, &lastFrom](const std::string&, uint64_t,
+                                                   const std::string& from) {
+            ++fileCallbacks;
+            lastFrom = from;   // 面板提示文案要「谁发来的」——这里钉住回调确实带出来了
+        })) {
         std::printf("FAIL 接收端起不来：%s\n", rx.lastError().c_str());
         return 1;
     }
@@ -297,6 +302,7 @@ int main() {
 
     step("回调计数");
     CHECK(fileCallbacks == 4);   // 正常 1 + 重名 2 + sha 不符 1
+    CHECK(lastFrom == "Phone");  // 发送方 alias 一路传到回调（面板拿它做「X 发来的」提示）
 
     // ---- stop() 必须收得回来 ----
     // 这个接收端起两个常驻线程 + 4 个 worker，全部靠 select + 200ms 超时看 running 退出。

@@ -213,6 +213,62 @@ static void testBuildPrepareResponse() {
     }
 }
 
+// 面板 state 的 localsend 段：字段名是前端契约（pc/web/src/api/bridge.ts），
+// 改了就静默弄坏前端 —— 这里用断言把它钉住。
+static void testStatusJson() {
+    StatusSnapshot s;
+    s.running = true;
+    s.port = 53318;              // 回退过的端口要如实报出来
+    s.dir = "/tmp/Downloads/AllPeriph";
+    s.received = 7;
+    s.error = "";
+    s.warn = "";
+    Device d;
+    d.alias = "ææº";   // 「手机」的 UTF-8 字节：JSON 必须原样带出去
+    d.deviceType = "phone";
+    d.ip = "192.168.1.5";
+    d.port = 53317;
+    d.lastSeenMs = 4200;
+    s.devices.push_back(d);
+    s.devices.push_back(Device{"Tablet", "tablet", "192.168.1.6", "FP2", 53317, 100});
+
+    std::string err;
+    const apxpc::net::Json j = apxpc::net::Json::parse(statusJson(s), &err);
+    CHECK(err.empty());
+    CHECK(j.isObject());
+    CHECK_EQ(jStr(j, "dir"), "/tmp/Downloads/AllPeriph");
+    CHECK_EQ(jStr(j, "error"), "");
+    CHECK_EQ(jStr(j, "warn"), "");
+    CHECK_EQ(jInt(j, "port"), 53318);
+    CHECK_EQ(jInt(j, "received"), 7);
+    {
+        const apxpc::net::Json* r = j.find("running");
+        CHECK(r != nullptr && r->isBool() && r->asBool());
+    }
+    const apxpc::net::Json* devs = j.find("devices");
+    CHECK(devs != nullptr && devs->isArray());
+    if (devs && devs->isArray()) {
+        CHECK_EQ(devs->asArray().size(), size_t(2));
+        const apxpc::net::Json& e0 = devs->asArray()[0];
+        CHECK_EQ(jStr(e0, "alias"), std::string("ææº"));
+        CHECK_EQ(jStr(e0, "deviceType"), "phone");
+        CHECK_EQ(jStr(e0, "ip"), "192.168.1.5");
+        CHECK_EQ(jInt(e0, "port"), 53317);
+        CHECK_EQ(jInt(e0, "lastSeenMs"), 4200);
+        CHECK_EQ(jStr(devs->asArray()[1], "alias"), "Tablet");
+    }
+
+    // 未启动形态：running=false 是布尔 false（不是缺失、不是 "false"），devices 是空数组
+    // —— 前端按类型读，缺字段或类型飘了都会显示成「已开启」或崩。
+    const apxpc::net::Json off = apxpc::net::Json::parse(statusJson(StatusSnapshot{}), &err);
+    CHECK(err.empty());
+    const apxpc::net::Json* ro = off.find("running");
+    CHECK(ro != nullptr && ro->isBool() && !ro->asBool());
+    const apxpc::net::Json* dv0 = off.find("devices");
+    CHECK(dv0 != nullptr && dv0->isArray() && dv0->asArray().empty());
+    CHECK_EQ(jInt(off, "received"), 0);
+}
+
 int main() {
     testSha256Vectors();
     testSanitizeName();
@@ -220,6 +276,7 @@ int main() {
     testJsonBuilders();
     testParsePrepareRequest();
     testBuildPrepareResponse();
+    testStatusJson();
     if (g_fail == 0) {
         std::printf("localsend_protocol_test: ALL PASS\n");
         return 0;
