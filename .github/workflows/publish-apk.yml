@@ -1,0 +1,35 @@
+name: Publish APK
+
+# 临时用途：把最近一次成功 Build 产出的 app-release.apk 发成公开 Release。
+# 原因：Actions artifact 下载必须带 token，手机端无法匿名下载；
+# Release 资产公开可匿名下载，装到真机验证完即可删除本文件与对应 Release。
+# 触发条件限定为本文件自身变化，避免每次 push 都跑。
+
+on:
+  push:
+    branches: [master]
+    paths: ['.github/workflows/publish-apk.yml']
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Repack latest Build APK into a public Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          RID=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow build.yml \
+                  --status success --limit 1 --json databaseId -q '.[0].databaseId')
+          echo "source Build run: $RID"
+          gh run download "$RID" --repo "$GITHUB_REPOSITORY" -n apk-app -D dist
+          ls -la dist
+          TAG="ci-apk-$(date -u +%Y%m%d-%H%M%S)"
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --prerelease \
+            --title "$TAG" --notes "临时真机验证包，来源 Build run $RID；验证完可删" \
+            dist/app-release.apk
+          echo "https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/app-release.apk"
