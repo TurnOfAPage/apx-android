@@ -288,8 +288,9 @@ jobs:
           }
 
       # --- 单元测试（离线可跑；此前从未进过 CI）---
-      # 五个用例属于 pc/host 工程：arbiter / utf16_convert / ctrl_frame /
-      # wireless_session_lifecycle / localsend_protocol。tcp_transport_test 在 pc/display 那个独立工程里
+      # 六个用例属于 pc/host 工程：arbiter / utf16_convert / ctrl_frame /
+      # wireless_session_lifecycle / localsend_protocol / localsend_upload。
+      # tcp_transport_test 在 pc/display 那个独立工程里
       # （CMakeLists 也是另一份），build_host 里根本没有这个 target —— 列在这里会让
       # MSBuild 直接 MSB1009「Project file does not exist」，整步红掉。
       # 这些在 CMake 里一直有 add_test，但 pc job 只有 configure→build→upload，
@@ -300,7 +301,8 @@ jobs:
         run: |
           cmake --build build_host --config Release --target `
             arbiter_test utf16_convert_test ctrl_frame_test `
-            wireless_session_lifecycle_test localsend_protocol_test 2>&1 | `
+            wireless_session_lifecycle_test localsend_protocol_test `
+            localsend_upload_test 2>&1 | `
             Tee-Object -FilePath test_build.log | Select-Object -Last 20
           if ($LASTEXITCODE -ne 0) { Get-Content test_build.log -Tail 60; exit $LASTEXITCODE }
 

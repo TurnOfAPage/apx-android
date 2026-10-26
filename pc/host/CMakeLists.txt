@@ -564,6 +564,16 @@ if(APXPC_BUILD_TESTS)
                  "${APXPC_ROOT}/tests/localsend_protocol_test.cpp")
   target_link_libraries(localsend_protocol_test PRIVATE apxpc_localsend)
   add_test(NAME localsend_protocol_test COMMAND localsend_protocol_test)
+
+  # LocalSend 接收端「真开端口」的集成测试：prepare-upload → upload → 落盘 → 校验，
+  # 外加重名、未知会话、缺 Content-Length、清单不合法、stop() 收得回来。
+  # 只在 127.0.0.1 上收发（不依赖局域网/组播），客户端自带 5s 超时，
+  # 所以出问题会是「这条用例失败」而不是「整步卡到 workflow 超时」。
+  add_executable(localsend_upload_test
+                 "${APXPC_ROOT}/tests/localsend_upload_test.cpp")
+  target_link_libraries(localsend_upload_test PRIVATE apxpc_localsend)
+  add_test(NAME localsend_upload_test COMMAND localsend_upload_test)
+  set_tests_properties(localsend_upload_test PROPERTIES TIMEOUT 120)
 endif()
 
 # ---------------------------------------------------------------- 安装

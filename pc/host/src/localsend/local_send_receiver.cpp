@@ -626,7 +626,14 @@ struct LocalSendReceiver::Impl {
         std::string sender;
         const std::vector<PreparedFile> files =
             LocalSendReceiver::parsePrepareRequest(body, &err, &sender);
-        if (!err.empty()) APX_LOGW("LocalSend prepare-upload 解析失败：{}", err.c_str());
+        if (!err.empty() || files.empty()) {
+            // 以前这里只打一行日志、照样建空会话并回 200：对端以为清单已受理，
+            // 接着 upload 却 404，问题被藏到下一步才以「找不到会话」的形式冒出来。
+            // 现在直接 400，且不留下空会话（返回空串 = 调用方回 400）。
+            APX_LOGW("LocalSend prepare-upload 已拒绝：{}",
+                     err.empty() ? "清单里一个文件都没有" : err.c_str());
+            return std::string();
+        }
 
         const std::string sid = randomIdImpl();
         Session s;
@@ -845,7 +852,9 @@ struct LocalSendReceiver::Impl {
                 if (!rd.readInto(body, contentLength)) {
                     respondEmpty(c, 400);
                 } else {
-                    respondJson(c, 200, handlePrepare(body));
+                    const std::string resp = handlePrepare(body);
+                    if (resp.empty()) respondEmpty(c, 400);   // 清单不合法：明确拒绝，别回 200
+                    else respondJson(c, 200, resp);
                 }
             }
         } else if ((method == "post" || method == "put") && path == kPathUpload) {

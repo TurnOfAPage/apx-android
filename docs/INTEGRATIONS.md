@@ -61,7 +61,7 @@
 
 **现状最接近可用**：Android 端协议层完整，`LocalSendHttpServer` 已经能收（`prepare-upload` → `upload` → `cancel`），`LocalSendClient` 已经能发，`SendActivity` 是发送界面，`LocalSendService` 是前台接收服务。也就是说手机侧不需要再动协议。
 
-**PC 端已在本次补齐**（`pc/host/src/localsend/local_send_receiver.cpp` + `sha256.cpp`）：\n多播收发、五个端点、落盘「下载/AllPeriph」、sha256 校验、`apxhost localsend` 子命令，\n协议层单测已进 CI 门禁。剩余未接线的是**面板/常驻服务里的「互传」入口**（发现列表与收到文件的展示），\n那部分要同时改 `HostBundle`、`panel_http` 与 WebView2 壳的前端，属于下一步。
+**PC 端已在本次补齐**（`pc/host/src/localsend/local_send_receiver.cpp` + `sha256.cpp`）：\n多播收发、五个端点、落盘「下载/AllPeriph」、sha256 校验、`apxhost localsend` 子命令，\n协议层单测 + 真开端口的集成测试（prepare-upload → upload → 落盘 → 摘要校验）都已进 CI 门禁。剩余未接线的是**面板/常驻服务里的「互传」入口**（发现列表与收到文件的展示），\n那部分要同时改 `HostBundle`、`panel_http` 与 WebView2 壳的前端，属于下一步。
 
 **三条路**
 

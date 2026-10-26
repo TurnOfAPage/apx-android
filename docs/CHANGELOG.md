@@ -22,7 +22,11 @@
   - 自实现的 SHA-256（仓库此前只有 crc32），用 NIST 向量钉住（含 100 万字节那条）。
   - 用法：`apxhost localsend [端口] [秒数] [目录]`。
   - 单元测试 `pc/host/tests/localsend_protocol_test.cpp`（SHA-256 向量 + prepare-upload JSON 契约 +
-    文件名清洗）已进 CTest 与两端 CI 门禁。
+    文件名清洗）与集成测试 `pc/host/tests/localsend_upload_test.cpp`（真开端口走完
+    prepare-upload → upload → 落盘 → 摘要校验，外加重名、未知会话、缺 Content-Length、
+    清单不合法、`stop()` 收得回来）都已进 CTest 与两端 CI 门禁。
+  - 清单不合法（不是 JSON / 一个文件都没有）直接回 **400**，不再回 200 建一个空会话 ——
+    那样对端以为清单已受理，下一步 upload 才 404，问题被藏到更晚才冒出来。
   - 尚未接线：桌面面板 / `apxhost serve` 里的「互传」卡片与发现列表（需要动 HostBundle 与前端）。
 
 ### 修复
