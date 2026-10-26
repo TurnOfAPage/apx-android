@@ -72,7 +72,11 @@ object GestureShield {
     private fun prefs(ctx: Context) =
         ctx.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
-    fun isEnabled(ctx: Context): Boolean = prefs(ctx).getBoolean(KEY_ON, false)
+    /**
+     * 默认开启：本机没有 UI 开关时也要生效（开关 UI 在 feat/gesture-shield-settings-ui 分支，
+     * 等有 git 推送通道时再合入；prefs 里写成 false 也能关）。
+     */
+    fun isEnabled(ctx: Context): Boolean = prefs(ctx).getBoolean(KEY_ON, true)
 
     fun setEnabled(ctx: Context, on: Boolean) {
         prefs(ctx).edit().putBoolean(KEY_ON, on).apply()
