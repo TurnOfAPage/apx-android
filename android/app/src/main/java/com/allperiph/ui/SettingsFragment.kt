@@ -238,7 +238,7 @@ class SettingsFragment : Fragment() {
                 android.os.Handler(android.os.Looper.getMainLooper()).post {
                     Toast.makeText(act, msg, Toast.LENGTH_LONG).show()
                 }
-            }.apply { isDaemon = true; name = "apx-log-export" }.start()
+            }.apply { isDaemon = true; setName("apx-log-export") }.start()
         }
         bindCategoryNav()
         showHome()
@@ -814,7 +814,7 @@ class SettingsFragment : Fragment() {
      * 设置页三条导出口径（「导出运行日志」行、运行日志对话框、Logcat 对话框）共用这里，
      * MediaStore 那段只此一份（无需存储权限；同名自动加后缀，不会互相覆盖）。
      */
-    private fun exportLog(name: String, text: String) {
+    private fun exportLog(logName: String, text: String) {
         val ctx = activity?.applicationContext ?: return
         Toast.makeText(ctx, getString(R.string.ui_log_collecting), Toast.LENGTH_SHORT).show()
         Thread {
@@ -822,7 +822,7 @@ class SettingsFragment : Fragment() {
                 if (text.isBlank()) {
                     ctx.getString(R.string.ui_log_empty)
                 } else {
-                    val fileName = "${name}_${System.currentTimeMillis()}.txt"
+                    val fileName = "${logName}_${System.currentTimeMillis()}.txt"
                     saveToDownloads(ctx, fileName, logHead() + text.takeLast(890_000))
                     ctx.getString(R.string.ui_log_exported, fileName)
                 }
@@ -832,7 +832,7 @@ class SettingsFragment : Fragment() {
             android.os.Handler(android.os.Looper.getMainLooper()).post {
                 Toast.makeText(ctx, msg, Toast.LENGTH_LONG).show()
             }
-        }.apply { isDaemon = true; name = "apx-log-export" }.start()
+        }.apply { isDaemon = true; setName("apx-log-export") }.start()
     }
 
     /** 正文写进 Download/AllPeriph/&lt;fileName&gt;（MediaStore，免存储权限），返回 uri。 */
