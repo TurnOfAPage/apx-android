@@ -33,21 +33,29 @@
         android:layout_height="match_parent"
         android:orientation="horizontal">
 
-        <!-- 左栏（weight=1 → 1/3）：独立滚动 -->
+        <!-- 左栏（weight=1 → 1/3）：独立滚动 + 整栏一张卡。
+             fillViewport + 内容容器 match_parent：状态块内容不长，但栏是整屏高的 ——
+             卡片跟着栏一起撑满，左栏才和右栏一样「到底」，不再是一小坨内容浮在灰底上
+             （真机反馈「设置页没有全屏」的另一半）。 -->
         <ScrollView
             android:id="@+id/paneStatusScroll"
             android:layout_width="0dp"
             android:layout_height="match_parent"
             android:layout_weight="1"
             android:clipToPadding="false"
+            android:fillViewport="true"
             android:scrollbars="none">
 
             <LinearLayout
                 android:id="@+id/paneStatus"
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content"
+                android:layout_height="match_parent"
+                android:background="@drawable/bg_card"
                 android:orientation="vertical"
-                android:paddingTop="@dimen/space_4">
+                android:paddingStart="@dimen/space_8"
+                android:paddingEnd="@dimen/space_8"
+                android:paddingTop="@dimen/space_4"
+                android:paddingBottom="@dimen/space_8">
 
                 <!-- 状态块（原状态页并入设置页顶，反馈#10）：状态概览 + 传输按钮。 -->
                 <include
