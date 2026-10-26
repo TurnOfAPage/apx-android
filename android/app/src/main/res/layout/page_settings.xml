@@ -243,6 +243,31 @@
                 android:checked="true" />
         </LinearLayout>
 
+        <!-- 三指手势遮蔽（root 动态；无 root 时点行看手动兜底路径） -->
+        <LinearLayout
+            android:id="@+id/rowGestureShield"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:padding="@dimen/space_12"
+            android:background="@drawable/bg_card"
+            android:layout_marginBottom="@dimen/space_6">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/lay_settings_gesture_shield_title"
+                android:textColor="@color/md_on_surface"
+                android:textSize="14sp" />
+
+            <Switch
+                android:id="@+id/switchGestureShield"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content" />
+        </LinearLayout>
+
         <!-- 快捷键模板：默认折叠，只显示当前这一套 -->
         <TextView
             style="@style/APSectionTitle"
@@ -791,6 +816,13 @@
                     android:layout_height="wrap_content"
                     android:paddingTop="@dimen/space_8"
                     android:text="@string/ui_help_cursor_lock"
+                    android:textAppearance="@style/APTextCaption" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:paddingTop="@dimen/space_6"
+                    android:text="@string/ui_help_gesture_shield"
                     android:textAppearance="@style/APTextCaption" />
 
                 <TextView

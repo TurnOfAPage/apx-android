@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.Context
 import com.allperiph.controlled.ControlledService
 import com.allperiph.shared.inject.KeepAlive
+import com.allperiph.touchpad.GestureShield
 
 /**
  * 应用入口：在进程启动早期把平台特定的被控服务控制器注入共享 [KeepAlive]。
@@ -29,5 +30,8 @@ class App : Application() {
         context = this
         // ControlledService companion 实现了 ServiceController；交给共享 KeepAlive 使用。
         KeepAlive.controller = ControlledService
+        // 三指手势遮蔽的自愈：上次进程被杀时可能还留着「系统三指手势被改掉」的状态。
+        // 必须在这里做 —— 用户可能再也不会打开触控板，靠界面还原就永远等不到。
+        GestureShield.healIfNeeded(this)
     }
 }

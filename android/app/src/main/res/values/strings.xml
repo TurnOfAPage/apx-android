@@ -436,6 +436,13 @@ TV/PC 控制 · 诊断 · 文件 · 自检/日志/悬浮球</string>
 
     <!-- 开关行：分组里只留一行标题，说明文字搬去帮助页（真机反馈「还有很多长文没移到帮助页」） -->
     <string name="lay_settings_cursor_lock_title">触摸板光标锁定</string>
+    <!-- 三指手势遮蔽（root 动态）：触控板里三指滑动不再触发 MIUI 截屏 -->
+    <string name="lay_settings_gesture_shield_title">三指手势遮蔽</string>
+    <string name="ui_gesture_shield_dialog_title">三指手势遮蔽</string>
+    <string name="ui_gesture_shield_dialog_msg">触控板里三指滑动会先被系统当成截屏 —— 手指还没抬起，截图就已经存了。\n\n开启后：进入触控板期间用 root 临时把系统的「三指下滑截屏 / 三指长按区域截屏」改成无动作，退出触控板立刻还原（进程被杀也会在下一次启动时自动还原）。\n\n没 root 的兜底：手动关掉系统手势 —— 设置 → 更多设置 → 快捷手势 → 截屏，关掉「三指下拉」，截图改用音量下 + 电源键。</string>
+    <string name="ui_gesture_shield_btn_settings">打开系统设置</string>
+    <string name="ui_gesture_shield_toast_no_root">没有 root，遮蔽未生效：请手动关掉系统三指手势（设置 → 更多设置 → 快捷手势 → 截屏）</string>
+    <string name="ui_help_gesture_shield">三指手势遮蔽：开 = 进触控板期间用 root 临时关掉系统的三指下滑截屏与三指长按区域截屏，退出即还原；无 root 时请手动在系统设置里关闭。</string>
     <string name="lay_settings_localsend_title">互传（LocalSend）</string>
     <string name="lay_settings_export_log_title">导出运行日志</string>
     <string name="lay_settings_group_interact">交互开关</string>

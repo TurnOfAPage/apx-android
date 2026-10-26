@@ -168,6 +168,8 @@ class TouchpadActivity : Activity() {
      */
     override fun onDestroy() {
         ControlTarget.controlClient?.onReverseClipboard = null
+        // 退出操控面立刻还原系统三指手势（进程被杀的情况交给 App 启动时的自愈）
+        com.allperiph.touchpad.GestureShield.release(this, HOLDER_CONSOLE)
         super.onDestroy()
     }
 
@@ -218,6 +220,24 @@ class TouchpadActivity : Activity() {
         showPage(intent?.getIntExtra(EXTRA_PAGE, PAGE_TOUCHPAD) ?: PAGE_TOUCHPAD)
         // 预启动 TV 发现（监听 APX1TV 信标），让设备列表在打开选择器时已就绪
         TvDiscovery.start()
+    }
+
+    /**
+     * 只在前台时遮蔽三指手势：退到后台（Home / 切应用 / 锁屏）立刻还原 ——
+     * 否则用户在桌面想三指下拉截屏时会发现按不动。
+     *
+     * 说明：本操控面前台期间，MIUI 的「三指下滑截屏 / 三指长按区域截屏」被临时
+     * 改成无动作（root），否则三指滑动还没做完，截图就已经存进相册了。
+     * 开关在 设置 → 交互开关 → 三指手势遮蔽；无 root 时只提示一次，走手动兜底。
+     */
+    override fun onResume() {
+        super.onResume()
+        com.allperiph.touchpad.GestureShield.acquireWithHint(this, HOLDER_CONSOLE)
+    }
+
+    override fun onPause() {
+        com.allperiph.touchpad.GestureShield.release(this, HOLDER_CONSOLE)
+        super.onPause()
     }
 
     override fun onNewIntent(intent: Intent?) {
@@ -1275,5 +1295,8 @@ class TouchpadActivity : Activity() {
         private const val PAGE_TOUCHPAD = 0
         private const val PAGE_KEYBOARD = 1
         private const val PAGE_DISPLAY = 2
+
+        /** 三指手势遮蔽的持有者标识（与 MainActivity 的 main 区分开） */
+        private const val HOLDER_CONSOLE = "console"
     }
 }

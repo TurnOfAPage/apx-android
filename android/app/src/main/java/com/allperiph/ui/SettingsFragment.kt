@@ -195,6 +195,16 @@ class SettingsFragment : Fragment() {
         cursorLockSwitch?.setOnCheckedChangeListener { _, isChecked ->
             apxPrefs.edit().putBoolean("cursor_lock", isChecked).apply()
         }
+        // 三指手势遮蔽（root 动态）：开关只写偏好，真正的系统键值切换在进/出触控板时做
+        // （见 GestureShield）；点行主体 = 说明 + 无 root 的手动兜底路径。
+        val shieldSwitch = act.findViewById<android.widget.Switch>(R.id.switchGestureShield)
+        shieldSwitch?.isChecked = com.allperiph.touchpad.GestureShield.isEnabled(act)
+        shieldSwitch?.setOnCheckedChangeListener { _, isChecked ->
+            com.allperiph.touchpad.GestureShield.setEnabled(act, isChecked)
+        }
+        act.findViewById<android.view.View>(R.id.rowGestureShield)?.setOnClickListener {
+            showGestureShieldHelp()
+        }
         // 批G：LocalSend 互传开关（issue#45）——开=启动接收前台服务，关=停止
         val localSendSwitch = act.findViewById<android.widget.Switch>(R.id.switchLocalSend)
         localSendSwitch?.isChecked = apxPrefs.getBoolean("localsend_enabled", false)
@@ -713,6 +723,23 @@ class SettingsFragment : Fragment() {
             setPadding(host?.dp(4) ?: 0, host?.dp(8) ?: 0, host?.dp(4) ?: 0, host?.dp(2) ?: 0)
         }
         tvBox.addView(tvStatusView)
+    }
+
+    /**
+     * 三指手势遮蔽说明：root 动态方案 + 无 root 时的手动兜底路径。
+     * 兜底不做自动跳转 —— MIUI 快捷手势页的 Activity 名不公开，跳错页面更迷惑，
+     * 只给准确路径 + 一个「打开系统设置」。
+     */
+    private fun showGestureShieldHelp() {
+        val act = activity ?: return
+        AlertDialog.Builder(act, R.style.Theme_AllPeriph_Miuix_Dialog)
+            .setTitle(getString(R.string.ui_gesture_shield_dialog_title))
+            .setMessage(getString(R.string.ui_gesture_shield_dialog_msg))
+            .setPositiveButton(getString(R.string.ui_gesture_shield_btn_settings)) { _, _ ->
+                runCatching { startActivity(Intent(Settings.ACTION_SETTINGS)) }
+            }
+            .setNegativeButton(getString(R.string.ui_common_close), null)
+            .show()
     }
 
     private fun showControlledCaps() {

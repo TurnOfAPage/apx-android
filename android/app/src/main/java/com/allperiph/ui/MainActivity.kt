@@ -267,12 +267,19 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
         // 剪贴板同步：前台才监听（v196 接线 —— 此前 ClipboardSync 从未被注册，
         // 「手机复制 → 电脑粘贴」功能等于不存在）。onPause 注销。
         ClipboardSync.register(this)
+        // 三指手势遮蔽：只在触控板页在前台时上（切到键盘/设置页立刻还原，
+        // 免得用户在这两页想用系统三指截屏时发现按不动）
+        if (::pager.isInitialized && pager.displayedChild == PAGE_TOUCHPAD) {
+            com.allperiph.touchpad.GestureShield.acquireWithHint(this, HOLDER_MAIN)
+        }
     }
 
     override fun onPause() {
         handler.removeCallbacks(ticker)
         orientListener?.disable()
         ClipboardSync.unregister(this)
+        // 退到后台立刻还原系统手势（遮蔽只服务于前台操控面）
+        com.allperiph.touchpad.GestureShield.release(this, HOLDER_MAIN)
         super.onPause()
     }
 
@@ -935,7 +942,13 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
         pager.displayedChild = i
         tvPageTitle.text = getString(PAGE_TITLES[i])
         tvPageSub.text = getString(PAGE_SUBS[i])
-        if (i == PAGE_TOUCHPAD) renderChips()
+        if (i == PAGE_TOUCHPAD) {
+            renderChips()
+            // 切回触控板页 = 重新上遮蔽；切走 = 放掉（引用计数，另一操控面同时在时仍生效）
+            com.allperiph.touchpad.GestureShield.acquireWithHint(this, HOLDER_MAIN)
+        } else {
+            com.allperiph.touchpad.GestureShield.release(this, HOLDER_MAIN)
+        }
         // 反馈#10 批 B：进设置页一律落回分类首页（setupSettingsTabs 内部 showHome）
         if (i == PAGE_SETTINGS) settingsFragment?.setupSettingsTabs()
         val activeTab = tabIndexFor(i)
@@ -2243,6 +2256,9 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
         private const val PAGE_KEYBOARD = 1
         // 状态页已并入设置页（反馈#10）：设置成为第 3 个也是最后一个孩子
         private const val PAGE_SETTINGS = 2
+
+        /** 三指手势遮蔽的持有者标识（与 TouchpadActivity 的 console 区分开） */
+        private const val HOLDER_MAIN = "main"
 
         /**
          * 底栏页签 → ViewFlipper 页面 index 的映射。
