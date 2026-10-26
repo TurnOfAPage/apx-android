@@ -242,7 +242,8 @@ class FloatingBallService : Service() {
     private fun collapse() {
         detach(panel)
         panel = null
-        com.allperiph.touchpad.GestureShield.release(this, HOLDER_BALL)
+        // 收起就走延迟还原（1.2s 内又展开就不用白跑两次 su）
+        com.allperiph.touchpad.GestureShield.releaseSoon(this, HOLDER_BALL)
         addBall()
     }
 }
