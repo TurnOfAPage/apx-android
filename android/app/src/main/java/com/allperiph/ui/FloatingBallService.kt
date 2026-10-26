@@ -48,6 +48,9 @@ class FloatingBallService : Service() {
         const val ACTION_TOGGLE = "com.allperiph.ui.floating_ball.toggle"
         const val ACTION_STOP = "com.allperiph.ui.floating_ball.stop"
 
+        /** 三指手势遮蔽的持有者标识（与主页 / 独立操控面区分开） */
+        private const val HOLDER_BALL = "ball"
+
         /** 服务实际存活状态（设置行显示用，比持久化的开关位更真实） */
         @Volatile
         var isRunning: Boolean = false
@@ -141,6 +144,8 @@ class FloatingBallService : Service() {
 
     private fun shutdown() {
         getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_ON, false).apply()
+        // 服务被杀/关闭时面板可能还开着：遮蔽必须一起还，否则系统三指截屏一直被关着
+        com.allperiph.touchpad.GestureShield.release(this, HOLDER_BALL)
         detach(ball)
         detach(panel)
         ball = null
@@ -227,6 +232,9 @@ class FloatingBallService : Service() {
         ).apply { gravity = Gravity.BOTTOM }
         wm.addView(v, lp)
         panel = v
+        // 悬浮球的触控板同样是三指滑动面：展开期间一并遮蔽系统三指截屏，
+        // 收起就还（这个面板压在别的应用上，不还的话用户在桌面想三指截屏会按不动）
+        com.allperiph.touchpad.GestureShield.acquireWithHint(this, HOLDER_BALL)
         // 展开时收起球（避免叠在面板上）
         ball?.let { if (ballAttached) { detach(it); ballAttached = false } }
     }
@@ -234,6 +242,7 @@ class FloatingBallService : Service() {
     private fun collapse() {
         detach(panel)
         panel = null
+        com.allperiph.touchpad.GestureShield.release(this, HOLDER_BALL)
         addBall()
     }
 }
