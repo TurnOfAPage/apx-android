@@ -26,10 +26,8 @@
 
     <string name="section_settings">设置</string>
     <!-- 底部导航页名（触控板 / 键盘 / 状态 / 设置）：另三个复用上面的既有资源 -->
-    <string name="ui_page_state">状态</string>
 
     <string name="common_unknown">未知</string>
-    <string name="common_ok">正常</string>
     <string name="common_warn">降级</string>
     <string name="common_error">异常</string>
     <string name="common_off">未启用</string>
@@ -54,7 +52,6 @@
     <string name="label_usb_gadget">USB 外设状态</string>
     <string name="label_service">后台运行</string>
     <string name="label_battery">省电白名单</string>
-    <string name="label_link_rt">延迟 / 丢包</string>
 
     <string name="value_root_ok">已授权</string>
     <string name="value_root_missing">没授权（当外设用不了）</string>
@@ -75,8 +72,6 @@
     <string name="action_refresh">重新检测</string>
 
     <!-- 原「延迟预算 / 触控上行 ≤2ms」：那是研发指标，用户要的是"跟不跟手、不跟手怎么办" -->
-    <string name="feel_title">跟手程度</string>
-    <string name="feel_body">连同一个 Wi‑Fi 时光标几乎跟手；如果发飘、卡顿，把手机和电脑都靠近路由器，或者改成插线。</string>
 
     <string name="accessibility_desc">全能外设「被控模式」：把本机作为被控设备，接收另一台设备发来的光标、点击、键盘输入、文件与剪贴板，并作用到本机系统（无需 root）。需要在系统「无障碍」里启用本服务，并允许「显示在其他应用上层」以显示光标。</string>
     <string name="controlled_enable_hint">被控模式已打开：请到系统「无障碍」里启用「全能外设」，并允许「显示在其他应用上层」，手机发来的操作才能真正作用到本机（没授权时只能看到一个跟着动的光标）。</string>
@@ -100,7 +95,6 @@
     <string name="ui_main_dialog_touchpad">触控板控制目标</string>
     <string name="ui_main_toast_done_to_local_local">已回本机</string>
     <string name="ui_main_label_device_connect">连接 / 切换设备</string>
-    <string name="ui_main_btn_pick">去选择</string>
     <string name="ui_main_label_connect_disconnect">断开连接</string>
     <string name="ui_main_btn_to_local_local">回本机</string>
     <!-- v223 设置页行：标题只留词组，括号里的解释下沉到「行内说明」一行（右栏只有屏幕 2/3，
@@ -113,7 +107,6 @@
     <string name="ui_main_label_screen_touchpad_keyboard_fullscreen">全屏操控面</string>
     <string name="ui_main_hint_console">触控板 / 键盘 / 副屏</string>
     <string name="ui_main_label_state_channel_inject">被控状态与权限</string>
-    <string name="ui_main_btn_selftest">自检</string>
     <string name="ui_main_label_log_view">查看运行日志</string>
     <string name="ui_main_label_recent_devices">最近连过的设备</string>
     <string name="ui_main_text_no_recent">还没有记录 —— 连上一次就会出现在这里</string>
@@ -125,7 +118,6 @@
     <string name="ui_main_btn_file">选文件</string>
     <string name="ui_main_label_file_panel">文件面板</string>
     <string name="ui_main_hint_file_panel">收到的文件都在这里</string>
-    <string name="ui_main_btn_forward_view">查看并转发</string>
     <string name="ui_main_text_file_connect_first">发文件前先在「连接」里选好设备；收到的文件都在「收到的文件」里</string>
     <string name="ui_main_toast_device_not">还没选设备</string>
     <string name="ui_main_toast_file_send">正在发送文件…</string>
@@ -142,7 +134,6 @@
     <string name="ui_main_label_sound">音效</string>
     <string name="ui_main_label_keyrow_arrange">键位排列</string>
     <string name="ui_main_label_keycap_density">键帽密度</string>
-    <string name="ui_main_item_gallery_image">从相册选图片…</string>
     <string name="ui_main_toast_no_gallery">没有可用的图库</string>
     <string name="ui_main_dialog_color">%1$s 配色</string>
     <string name="ui_main_toast_file_no">没有可用的文件管理器</string>
@@ -151,7 +142,6 @@
     <string name="ui_main_toast_background_done_settings">背景已设置</string>
     <string name="ui_common_got_it">知道了</string>
     <string name="ui_main_toast_clipboard_done">已同步剪贴板：%1$s</string>
-    <string name="ui_touchpad_item_quick">快捷</string>
     <string name="ui_touchpad_text_controlled">被控</string>
     <string name="ui_touchpad_text_remote">遥控</string>
     <string name="ui_touchpad_text_file">文件</string>
@@ -232,7 +222,6 @@
     <string name="ui_main_dialog_log">运行日志（最近 %1$s 条）</string>
     <string name="ui_main_item_hotkey_touchpad_home">方向 / OK / 返回 / 主页：连上 TV 或电脑后自动生效（主页的触控板与快捷键条会一起发过去）；OK = 回车，返回 = Esc，主页 = Home。对方显示「点不动」是还没开权限，不是没连上</string>
     <string name="ui_main_item_remote_device_only_cursor">方向键是真的方向键：正常情况下它会像实体遥控一样移动对方屏幕上的焦点；如果那台设备只允许「点按控制」，方向键就只会移动光标 —— 它的界面上会写清是哪种</string>
-    <string name="ui_main_item_perm_no_home">OK = 回车，返回 = Esc，主页 = Home。对方显示「点不动」时说明它还没开权限，不是没连上</string>
     <string name="ui_main_item_remote_keyboard_reboot_poweroff">音量 / 电源：键盘页「遥控」布局第三行有「电源 / 关机 / 重启」（关机与重启需要对方有 root，点了会先弹确认框；没有 root 只会退回待机）；切到 TV 目标时，触摸板下方的快捷键条会自动换成「TV 遥控」预设，可长按编辑、改动单独保存</string>
     <string name="ui_main_template_custom_count">自定义 · %1$s 项</string>
     <string name="ui_main_template_name_custom">%1$s · 自建</string>
@@ -243,7 +232,6 @@
     <string name="ui_main_text_not_2">未配置</string>
     <string name="ui_main_text_done_3">已配置</string>
     <string name="ui_main_item_hotkey_send_cursor_swipe">滑动控制光标 · 快捷键轻点发送 / 长按按住</string>
-    <string name="ui_main_item_state">启动开关 · 启动后显示链路与运行状态</string>
     <string name="ui_main_item_template_theme">模板与排序 · 功能开关 · 主题 · 维护</string>
     <string name="ui_touchpad_dialog_control_state">现在的控制方式：%2$s\n\n%1$s</string>
 
@@ -293,7 +281,6 @@
     <string name="lay_transport_bt">蓝牙</string>
     <string name="lay_transport_bt_cd">蓝牙开关</string>
     <string name="lay_transport_usb_cd">USB 开关</string>
-    <string name="lay_status_text_open">打开开关后，手机就变成电脑的外设</string>
     <string name="lay_status_text_touchpad_cursor_swipe">触控板 —— 手机当鼠标：滑动控光标，轻点左键、双指右键、长按拖选</string>
     <string name="lay_status_text_remote_keyboard">键盘 —— 8 套布局（快捷 / 遥控 / 游戏 / 数字 / 九宫格 / 方向 / F 区 / 自定义），插线与 Wi‑Fi 都能用，电脑免驱</string>
     <string name="lay_status_text_hotkey_template">常用快捷键 —— 多套场景模板一键铺开，可拖拽排序、长按按住不放</string>
@@ -302,21 +289,15 @@
     <string name="lay_status_text_speaker">音响 —— 电脑出声，手机响：把手机当电脑音箱（需插线）</string>
     <string name="lay_idle_bluetooth">蓝牙 —— 电脑有蓝牙时，不插线也能当鼠标用</string>
     <string name="lay_status_text_hotkey_touchpad_keyboard">Wi‑Fi 控制 —— 电脑没有蓝牙也能用：连同一个 Wi‑Fi，电脑端自动发现手机，触控板 / 键盘 / 快捷键立刻生效</string>
-    <string name="lay_howto_title">怎么用（三步）</string>
     <string name="lay_status_text_disconnect_open">① 手机：打开本页上方开关。插数据线时 PC 的 USB 会短暂断开重连，属正常现象</string>
     <string name="lay_status_text_open_menu">② PC：安装并打开「全能外设」（开始菜单里），它会自动发现同一局域网内的手机</string>
     <string name="lay_status_text_hotkey_mic_touchpad_keyboard">③ 使用：不插线时在手机侧打开「Wi‑Fi 控制」模块，触控板 / 键盘 / 快捷键随即生效；麦克风与音响走 USB，需插线并开启对应模块</string>
-    <string name="lay_running_summary">运行摘要</string>
-    <string name="lay_settings_tab_general">通用</string>
-    <string name="lay_settings_tab_look">外观</string>
     <string name="lay_settings_tab_about">关于</string>
     <string name="lay_settings_text_hotkey_template">快捷键模板</string>
     <string name="lay_settings_text_hotkey_template_touchpad">按场景一键铺满触控板页的快捷键条；也可以把当前这条存成自己的模板</string>
-    <string name="lay_settings_modules">功能开关</string>
     <string name="lay_transport_usb_group">有线（USB）</string>
     <string name="lay_settings_text_hotkey">快捷键排序</string>
     <string name="lay_settings_hint_hotkey">最常用排前；手动拖过就关</string>
-    <string name="lay_settings_text_manual">最常用的自动排到前面；手动拖过就自动关掉</string>
     <string name="lay_settings_cd_hotkey">快捷键自动排序开关</string>
 
     <string name="ui_main_btn_orient_lock">锁定</string>
@@ -326,7 +307,6 @@
     <string name="lay_settings_text_orient_lock">方向锁定</string>
     <string name="lay_settings_hint_orient_lock">关掉横竖自动切换，横持不弹键盘</string>
     <string name="lay_settings_cd_orient_lock">屏幕方向锁定开关</string>
-    <string name="lay_settings_env">环境摘要</string>
     <string name="lay_settings_text_theme">主题方案</string>
     <string name="lay_settings_text_color">模块配色</string>
     <string name="lay_settings_text_hotkey_theme_touchpad_keyboard">给触控板、键盘、快捷键分别选一套色调；不选就是跟随主题色</string>
