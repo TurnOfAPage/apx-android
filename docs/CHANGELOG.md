@@ -6,6 +6,21 @@
 
 ---
 
+## v223.5（2026-10-27）
+
+### 修复（v223.4 里「发送」在 Safari 上点了没反应）
+v223.4 的浏览器上传给 `<input type=file>` 用了 `hidden`（`display:none`）。
+**WebKit/Safari 上 `display:none` 的 file input 不响应程序化 `click()`** ——
+点「发送」不会弹选择器，按钮等于死的。mac 上 `apxhost panel` 用 `open` 起默认浏览器，
+默认浏览器就是 Safari，所以这条路必须自己绕开：
+改用 `sr-only`（`position:absolute` + 1px + `clip`）—— 视觉上一样看不见，
+但元素仍处于渲染状态，WebKit 认它。
+（顺带 `tabIndex={-1}`，免得那个 1px 的输入框占一个 Tab 停位。）
+
+其余与 v223.4 相同；v223.4 可忽略，直接用 v223.5。
+
+---
+
 ## v223.4（2026-10-27）
 
 ### 新增（浏览器面板：互传发送不再只有桌面壳能用）
