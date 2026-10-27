@@ -3,11 +3,12 @@ name: Build
 # 触发：
 #   push master        —— 只做构建验证（Android + PC），不发 release
 #   push tag v*        —— 构建三端产物并自动创建 GitHub Release
+#   push feat/1.0_test —— 发版 1.0_test（版本号由 Set release version 固定）
 #   pull_request→master—— PR 上先构建验证，编译错误在合入前拦下
 #   workflow_dispatch  —— 手动构建验证
 on:
   push:
-    branches: [master]
+    branches: [master, feat/1.0_test]
     tags: ['v*']
   pull_request:
     branches: [master]
@@ -16,12 +17,6 @@ on:
 permissions:
   contents: write
   checks: write       # 失败时把编译错误写进 check-run annotation（公开仓库匿名可读）
-
-# ---- 官方 runner 版本（最简单最快，零配置零硬件零维护）----
-# GitHub Free 仓库：Android + Linux + PC 原生编译 + Release 全跑在官方 runner 上。
-#
-# 如果你哪天 CI 配额用爆 / 敏感代码不能过第三方机器 / 外网出不去：
-#   备份在 .github/workflows/build.yml.selfhosted-backup 里，改回去就行。
 
 jobs:
   # ------------------------------------------------ Android（手机 + TV）
@@ -50,11 +45,6 @@ jobs:
         run: |
           SDK="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
           yes | "$SDK" --licenses > /dev/null 2>&1 || true
-
-          # 每个包独立重试：sdkmanager 偶发下载损坏（实测 run#589：
-          # "Error reading Zip content from a SeekableByteChannel" 下 CMake 包，
-          # 退出码 1 → 整个 android job 判失败，而后面步骤全被跳过，
-          # 明明只差一个可选的包，却让整轮构建白跑）。
           for pkg in "platform-tools" "build-tools;35.0.0" "platforms;android-35" \
                      "platforms;android-34" "ndk;27.2.12479018" "cmake;3.22.1"; do
             for i in 1 2 3; do
@@ -64,9 +54,6 @@ jobs:
               sleep 15
             done
           done
-
-          # 最终以**目录是否存在**为准，而不是 sdkmanager 的退出码：
-          # ubuntu-latest 镜像自带大部分组件，装不上不等于用不了。
           missing=0
           for d in "platforms/android-35" "platforms/android-34" "build-tools/35.0.0" \
                    "ndk/27.2.12479018" "cmake/3.22.1"; do
@@ -97,16 +84,6 @@ jobs:
           echo "========== LAST 80 LINES =========="
           tail -80 /tmp/build.log 2>/dev/null || true
 
-      # 失败可见性：workflow logs API 要求仓库 admin 权限，没 PAT 的会话（云端 AI 等）
-      # 根本读不到日志，只能靠猜。
-      #
-      # 用 **workflow command**（`::error::`）而不是 check-runs API：GitHub 会把它
-      # 自动收集成该 job 的 annotation，公开仓库匿名可读，且不需要任何 token 权限
-      # —— 原先用 gh api 先查 check-run id 再 POST，实测在 job 进行中返回 404
-      # （Not Found），annotation 一直没写上去。
-      #
-      # 注意：GitHub 每个 step 最多保留 10 条 annotation、消息长度有限，所以取前 10 行
-      # 并截断；完整日志另有 job summary 与 artifact 两条路。
       - name: Publish build errors (annotation + summary)
         if: failure()
         continue-on-error: true
@@ -122,7 +99,6 @@ jobs:
             head -40 ci-log/errors.txt 2>/dev/null || true
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-          # workflow command 需要转义 %、CR、LF（顺序：先 % 再换行）
           n=0
           while IFS= read -r line; do
             [ -z "$line" ] && continue
@@ -146,9 +122,6 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
-      # 原生符号自检（真机教训）：只 enable CXX 的 CMake 工程会静默跳过 .c 源文件，
-      # 编译链接与 CI 全绿、运行期才报 "No implementation found ... UinputGamepad"，
-      # 虚拟手柄/摇杆静默不可用。所以构建后必须验**产物**，别信"编译通过"。
       - name: Verify native JNI symbols in APKs
         run: |
           python3 - <<'PY'
@@ -217,8 +190,6 @@ jobs:
           retention-days: 14
 
   # ------------------------------------------------ PC（Windows 三件套 + WebView2 前端）
-  # 跑在 GitHub 官方 windows-latest runner —— 自带 MSVC 2022 Build Tools + Node 20 + CMake
-  # WebView2 SDK 通过 CMake FetchContent 从 nuget v3-flatcontainer 拉（5MB zip，外网畅通）
   pc:
     runs-on: windows-latest
     timeout-minutes: 20
@@ -228,7 +199,6 @@ jobs:
         with:
           submodules: recursive
 
-      # Node 20 —— 前端 Vite 构建
       - name: Setup Node.js 20
         uses: actions/setup-node@v4
         with:
@@ -236,13 +206,11 @@ jobs:
           cache: 'npm'
           cache-dependency-path: pc/web/package-lock.json
 
-      # MSVC x64 —— C++ 原生编译（windows-latest 自带 VS 2022 Build Tools）
       - name: Setup MSVC (x64)
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
 
-      # --- 前端：npm ci + npm run build ---
       - name: Install web dependencies
         shell: pwsh
         working-directory: pc/web
@@ -255,9 +223,6 @@ jobs:
           npm run build 2>&1 | Tee-Object -FilePath web_build.log | Select-Object -Last 20
           if ($LASTEXITCODE -ne 0) { Get-Content web_build.log -Tail 40; exit $LASTEXITCODE }
 
-      # --- CMake Configure ---
-      # APXPC_BUILD_UI=ON + APXPC_BUILD_UI_WEBVIEW2=ON → 新 WebView2 面板
-      # FetchContent 拉：WebView2 SDK（nuget v3-flatcontainer，~5MB zip）+ wil（GitHub shallow，~1MB）
       - name: Configure (CMake + WebView2 SDK + wil via FetchContent)
         shell: pwsh
         run: |
@@ -273,9 +238,6 @@ jobs:
             exit $cmakeExit
           }
 
-      # --- CMake Build ---
-      # Post-build step 自动：pc/web/dist/ → build_host/Release/web/
-      #                      WebView2Loader.dll → build_host/Release/
       - name: Build (apxhost + apxdesktop + apxsetup)
         shell: pwsh
         run: |
@@ -287,16 +249,6 @@ jobs:
             exit $LASTEXITCODE
           }
 
-      # --- 单元测试（离线可跑；此前从未进过 CI）---
-      # 七个用例属于 pc/host 工程：arbiter / utf16_convert / ctrl_frame /
-      # wireless_session_lifecycle / localsend_protocol / localsend_upload /
-      # localsend_sender（发送端：真端口对假对端跑 register→prepare→upload）。
-      # tcp_transport_test 在 pc/display 那个独立工程里
-      # （CMakeLists 也是另一份），build_host 里根本没有这个 target —— 列在这里会让
-      # MSBuild 直接 MSB1009「Project file does not exist」，整步红掉。
-      # 这些在 CMake 里一直有 add_test，但 pc job 只有 configure→build→upload，
-      # 从没跑过 ctest：v198 那个「stop() 后进程退不掉」的 beacon 死锁，正是靠
-      # wireless_session_lifecycle_test 兜住的 —— 没有门禁，下次回归照样漏。
       - name: Build unit tests
         shell: pwsh
         run: |
@@ -311,7 +263,6 @@ jobs:
         shell: pwsh
         run: ctest --test-dir build_host -C Release --output-on-failure
 
-      # --- Artifacts ---
       - name: Upload PC exes + bundled UI
         if: success()
         uses: actions/upload-artifact@v4
@@ -333,7 +284,6 @@ jobs:
           path: pc/web/dist/
           retention-days: 14
 
-      # --- 失败诊断 ---
       - name: Diagnose on failure
         if: failure()
         shell: pwsh
@@ -346,7 +296,6 @@ jobs:
           Get-Content pc/web/web_build.log -Tail 40 -ErrorAction SilentlyContinue
 
   # ------------------------------------------------ Lint（clang-tidy 扫 C++ 原生模块）
-  # 跑在官方 windows-latest —— clang-tidy 跟随 VS 2022 Build Tools 一起装
   lint:
     runs-on: windows-latest
     continue-on-error: true
@@ -356,7 +305,6 @@ jobs:
         with:
           submodules: recursive
 
-      # Ninja 必须：VS 默认生成器（Visual Studio 18 2026）不导出 compile_commands.json
       - name: Generate compile_commands.json
         continue-on-error: true
         shell: pwsh
@@ -373,17 +321,12 @@ jobs:
             -DAPXPC_BUILD_UI=ON -DAPXPC_BUILD_UI_WEBVIEW2=ON
           if (-not (Test-Path build_tidy/compile_commands.json)) { throw "compile_commands.json 未生成" }
 
-      # windows-latest 镜像里 clang-tidy 不一定在 PATH（VS 自带那份的路径随版本变），
-      # 所以：先用 vswhere 动态定位（排除 ARM64），再按已知 x64 路径找，最后 choco 兜底。
-      # 注意：GitHub 的 job 级 continue-on-error 不生效，必须落在 step 上。
       - name: Locate clang-tidy
         continue-on-error: true
         shell: pwsh
         run: |
           $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
           if ($vs) {
-            # 递归查找会先命中 ARM64 版（目录排序在前），在 x64 runner 上会报
-            # "not compatible with the version of Windows" —— 必须排除，只取 x64。
             $t = Get-ChildItem "$vs\VC\Tools\Llvm" -Recurse -Filter clang-tidy.exe -ErrorAction SilentlyContinue |
               Where-Object { $_.FullName -notmatch '\\ARM64\\' } | Select-Object -First 1
             if ($t) {
@@ -392,8 +335,6 @@ jobs:
               exit 0
             }
           }
-          # vswhere 落空 -> 按已知 VS 路径找（都是 x64\bin，非递归，不会命中 ARM64）
-          # VS 18 (2026) / VS 17 (2022) 路径都试一下
           $vsLlvm = @(
             "C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\Llvm\x64\bin",
             "C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\Llvm\x64\bin",
@@ -426,7 +367,6 @@ jobs:
           clang-tidy -p build_tidy -checks="%CHECKS%" pc\host\src\ui\web_panel.cpp
 
   # ------------------------------------------------ 协议一致性（跨端常量 / 命令号）
-  # 纯 Python，跑 ubuntu-latest 最稳
   protocol:
     runs-on: ubuntu-latest
     steps:
@@ -438,26 +378,27 @@ jobs:
       - name: 跨端协议一致性校验
         run: python3 scripts/check_protocol.py
 
-      # 清单里的类名写错了**不会**让构建变红（清单合并只认字符串），只会静默失效：
-      # 本仓库已踩过 4 次（AppxImeService / AppxAccessibilityService / KeepAliveReceiver
-      # 包名错误 / ExternalSendActivity 从未实现）。这里按 namespace 拼全限定名核对。
       - name: Manifest 声明 vs 源文件
         run: python3 scripts/check_manifest_classes.py
 
-      # UI 一致性：布局/drawable 里的字面色值、布局里的硬编码文案（见 docs/UI-CHECKLIST.md）。
-      # 这两类编译器都不报，只在真机上以「深色看不清」「换肤没跟着变」暴露。
       - name: UI 一致性（色值令牌化 + 文案入资源）
         run: python3 scripts/check_ui_tokens.py
 
-  # ------------------------------------------------ Release（仅 tag v*）
-  # 跑在 windows-latest 上 —— Inno Setup 编译器只在 Windows 上有
-  # macOS 资产由 macos.yml 的 tag 构建独立上传（两边对同一 Release 幂等协作：
-  # 谁先完成谁建 Release，后到者 --clobber 追加 —— 见 macos.yml Upload to GitHub Release）
+  # ------------------------------------------------ Release（tag v* 或 feat/1.0_test 分支）
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/feat/1.0_test'
     needs: [pc, android]
     runs-on: windows-latest
     steps:
+      - name: Set release version
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            echo "REL_VERSION=$GITHUB_REF_NAME" >> "$GITHUB_ENV"
+          else
+            echo "REL_VERSION=1.0_test" >> "$GITHUB_ENV"
+          fi
+
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
@@ -490,7 +431,7 @@ jobs:
           New-Item -ItemType Directory -Force out | Out-Null
           $out = (Resolve-Path out).Path
           & $iscc "scripts/installer/AllPeriph.iss" `
-            "/DMyAppVersion=${env:GITHUB_REF_NAME}" `
+            "/DMyAppVersion=$env:REL_VERSION" `
             "/DArtifactsDir=$art" `
             "/DIconDir=$ico" `
             "/DOutputDir=$out"
@@ -501,7 +442,7 @@ jobs:
       - name: Build portable zip
         run: |
           Set-Location $env:GITHUB_WORKSPACE
-          $VER = $env:GITHUB_REF_NAME
+          $VER = $env:REL_VERSION
           New-Item -ItemType Directory -Force portable | Out-Null
           Copy-Item dist/pc-exes-webview2/apxdesktop.exe portable/
           Copy-Item dist/pc-exes-webview2/apxhost.exe portable/
@@ -514,7 +455,7 @@ jobs:
       - name: Collect Android APKs
         run: |
           Set-Location $env:GITHUB_WORKSPACE
-          $VER = $env:GITHUB_REF_NAME
+          $VER = $env:REL_VERSION
           Copy-Item dist/apk-app/app-release.apk "out/AllPeriph-${VER}-app.apk"
           Copy-Item dist/apk-tv/tv-release.apk "out/AllPeriph-${VER}-tv.apk"
           Get-ChildItem out/
@@ -523,31 +464,30 @@ jobs:
       - name: Upload Release
         uses: softprops/action-gh-release@v2
         with:
-          name: 全能外设 ${{ github.ref_name }}
+          name: 全能外设 ${{ env.REL_VERSION }}
           files: out/*
           generate_release_notes: true
           make_latest: true
           body: |
-            ## 全能外设 ${{ github.ref_name }}
+            ## 全能外设 ${{ env.REL_VERSION }}
 
             ### 推荐：单文件安装包（Windows）
-            下载 **AllPeriph-${{ github.ref_name }}-Setup.exe** —— 一个 exe 搞定一切：
+            下载 **AllPeriph-${{ env.REL_VERSION }}-Setup.exe** —— 一个 exe 搞定一切：
             - 双击进入现代 Windows 安装向导（欢迎 → 功能勾选 → 进度 → 完成）
             - 默认装到 `%LOCALAPPDATA%\Programs\AllPeriph`（免管理员）
             - 向导里可勾选「创建桌面图标」「开机自启」
             - 自动检测 WebView2 Runtime，缺失时后台静默装（Win10 旧版无感知）
             - 卸载自动进「应用和功能」
-            - 安装包自动压缩了 apxdesktop + apxhost + WebView2Loader + web/* 全部资源
 
             ### 便携版（Windows zip）
             解压到任意目录直接双击 apxdesktop.exe 运行，绿色免安装。
 
             ### macOS（arm64，测试版）
-            下载 **AllPeriph-${{ github.ref_name }}-macos-arm64.zip**（由 macos.yml 独立上传）：
+            下载 **AllPeriph-${{ env.REL_VERSION }}-macos-arm64.zip**（由 macos.yml 独立上传）：
             - 解压后 `./apxdesktop` 桌面壳 或 `./apxhost panel` 浏览器面板（自动开浏览器，自带 9511 受控端）
             - **未签名**：首次打开需 系统设置 → 隐私与安全性 → 仍要打开（README 内有 xattr 一行命令）
             - 音箱首次使用需授权「系统音频录制」；副屏暂不支持（虚拟显示器仅 Windows）
 
             ### Android
-            - **AllPeriph-${{ github.ref_name }}-app.apk** —— 手机端（触控板/键盘/副屏）
-            - **AllPeriph-${{ github.ref_name }}-tv.apk** —— 电视端（被控/接收）
+            - **AllPeriph-${{ env.REL_VERSION }}-app.apk** —— 手机端（触控板/键盘/副屏）
+            - **AllPeriph-${{ env.REL_VERSION }}-tv.apk** —— 电视端（被控/接收）
