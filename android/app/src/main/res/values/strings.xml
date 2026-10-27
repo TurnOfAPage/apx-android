@@ -63,11 +63,7 @@
     <string name="hint_usb_ok">USB 3.0 高速已就绪。</string>
     <string name="hint_idle">未启动 · 打开上方开关后显示连接与运行状态</string>
     <string name="hint_root_dialog_title">为什么需要 Root？</string>
-    <string name="hint_root_dialog_body">要把手机变成电脑的外设（鼠标 / 键盘 / 多媒体），必须往系统的 USB 配置里写入设备描述 —— 这块只有 root 能改，Android 没有给第三方应用留别的方式。
-
-没有 root 时：界面、快捷键与模板编辑、状态诊断都照常可用，但所有「当外设」的能力（含触控板与音频）都无法启动，蓝牙键鼠也会因系统权限限制注册不上。
-
-怎么获取：解锁 Bootloader 后刷入 Magisk 或 KernelSU（有些内核自带，不用额外刷），重启后授予本应用 root 权限即可。</string>
+    <string name="hint_root_dialog_body">要把手机变成电脑的外设（鼠标 / 键盘 / 多媒体），必须往系统的 USB 配置里写入设备描述 —— 这块只有 root 能改，Android 没有给第三方应用留别的方式。\n\n没有 root 时：界面、快捷键与模板编辑、状态诊断都照常可用，但所有「当外设」的能力（含触控板与音频）都无法启动，蓝牙键鼠也会因系统权限限制注册不上。\n\n怎么获取：解锁 Bootloader 后刷入 Magisk 或 KernelSU（有些内核自带，不用额外刷），重启后授予本应用 root 权限即可。</string>
     <string name="action_battery_whitelist">加入白名单</string>
     <string name="action_refresh">重新检测</string>
 
@@ -335,9 +331,13 @@
     <string name="ui_main_label_floating_ball">悬浮球</string>
     <string name="ui_main_floating_ball_on">已开启</string>
     <string name="ui_main_floating_ball_off">未开启</string>
-    <string name="ui_main_floating_ball_note">单击展开触控板，长按关闭</string>
+    <string name="ui_main_floating_ball_note">单击展开菜单，长按移动</string>
     <string name="ui_main_floating_ball_hint">单指移动 · 双指滚动 · 三指滑动</string>
     <string name="ui_main_floating_ball_collapse">收起</string>
+    <string name="ui_main_floating_ball_close">关闭悬浮球</string>
+    <string name="ui_main_floating_ball_open">打开 App</string>
+    <string name="ui_main_floating_ball_mode">模式切换</string>
+    <string name="ui_main_floating_ball_custom">自定义功能</string>
     <string name="ui_main_cat_general">通用</string>
     <string name="ui_main_cat_general_hint">模板 · 功能开关 · 方向锁定</string>
     <string name="ui_main_cat_look">外观</string>
