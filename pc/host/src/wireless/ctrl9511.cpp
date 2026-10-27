@@ -21,6 +21,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #if defined(_WIN32)
