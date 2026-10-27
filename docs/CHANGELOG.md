@@ -27,7 +27,10 @@ Tag `v223.1`，只含 `pc/host` 与 Android 客户端改动，设置页 UI 未�
     收发/信标线程、删注入器），整函数 try/catch 兜底（对象已自助登记时走 `stop()`，否则 `cleanup`）。
   - `desktop_main.cpp`：**mac 不再创建 9511**，受控端只由面板入口创建（`#if _WIN32` 分支保留原行为）。
   - 回归用例 `testCtrl9511StartFailIsSafe()`（`pc/host/tests/wireless_session_lifecycle_test.cpp`）：
-    同端口双实例第二个必须返回 false 且进程不 abort、未启动实例 `stop()` 幂等、同对象重复 `start()`
+    「端口被占时 `start()` 必须返回 false 且进程不 abort」（前提由用例自带的 `PortBlocker` 制造：
+    自己开监听 socket 占住端口，Windows 侧补 `SO_EXCLUSIVEADDRUSE`。**不能**靠「两个 server 实例
+    互相撞端口」—— Windows 下双方都设 `SO_REUSEADDR` 时同一 addr:port 允许重复 bind，那条断言
+    在 Windows 上不成立，首版就在 CI 上红了）、未启动实例 `stop()` 幂等、同对象重复 `start()`
     必须 false、`stop()` 两次后还能重启。修前用真实 `ctrl9511.cpp` + v223 语义平台层存根做的复现
     harness 稳定 `exit 134`，修后连续 5 次 `ALL PASS`。
 - **macOS 退出后进程不消失（只能 `pkill -9`）**：`Ctrl9511Server` 停服时只用 `close(listenFd)` 去唤醒
