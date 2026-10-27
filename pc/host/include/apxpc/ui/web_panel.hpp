@@ -44,6 +44,7 @@
 namespace apxpc::wireless {
 class WirelessSession;
 class FileReceiver;
+class Ctrl9511Server;
 }
 
 namespace apxpc::media {
@@ -78,6 +79,9 @@ struct HostBundle {
     media::ScreenPush*           screenPush   = nullptr;
     media::AudioCapture*         audio        = nullptr;
     media::MicBridge*            micBridge    = nullptr;
+
+    // 9511 受控端（手机控本机；Windows 桌面壳由 desktop_main 创建并传入，mac/Linux 为空）
+    wireless::Ctrl9511Server*    ctrlSrv      = nullptr;
 
     // 托盘 / 热键
     tray::TrayIcon*              tray         = nullptr;
