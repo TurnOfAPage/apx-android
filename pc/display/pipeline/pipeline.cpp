@@ -5,7 +5,9 @@
 #endif
 
 #include <chrono>
+#include <cstdint>
 #include <cstring>
+#include <string>
 #include <thread>
 
 #include "capture/i_capture.hpp"
@@ -18,6 +20,47 @@
 #include "transport/i_transport.hpp"
 
 namespace apxdisp {
+
+namespace {
+
+/// 宽字符 → UTF-8。Windows 走 WideCharToMultiByte（wchar_t 是 UTF-16，要考虑代理对）；
+/// POSIX 的 wchar_t 是 4 字节 UTF-32，自己编就行。
+///
+/// 原先这里直接调 `::WideCharToMultiByte(CP_UTF8, …)`，只有 Windows 分支能编 ——
+/// Linux/macOS 上既没有这个函数也没有 CP_UTF8 常量，`pc/display` 因此在本平台整体编不过
+/// （连带 pc/host 的 apxdisp_in_host 目标一起挂）。
+std::string wideToUtf8(const wchar_t* w) {
+    std::string out;
+    if (!w) return out;
+#if defined(_WIN32)
+    const int n = ::WideCharToMultiByte(CP_UTF8, 0, w, -1, nullptr, 0, nullptr, nullptr);
+    if (n <= 1) return out;
+    out.resize(static_cast<size_t>(n) - 1);
+    ::WideCharToMultiByte(CP_UTF8, 0, w, -1, out.data(), n, nullptr, nullptr);
+#else
+    for (; *w; ++w) {
+        const uint32_t cp = static_cast<uint32_t>(*w);
+        if (cp < 0x80) {
+            out.push_back(static_cast<char>(cp));
+        } else if (cp < 0x800) {
+            out.push_back(static_cast<char>(0xC0 | (cp >> 6)));
+            out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+        } else if (cp < 0x10000) {
+            out.push_back(static_cast<char>(0xE0 | (cp >> 12)));
+            out.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+            out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+        } else {
+            out.push_back(static_cast<char>(0xF0 | (cp >> 18)));
+            out.push_back(static_cast<char>(0x80 | ((cp >> 12) & 0x3F)));
+            out.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+            out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+        }
+    }
+#endif
+    return out;
+}
+
+}  // namespace
 
 Pipeline::Pipeline() = default;
 Pipeline::~Pipeline() { stop(); }
@@ -32,9 +75,7 @@ std::string Pipeline::captureDeviceName() const {
     wchar_t buf[64]{};
     size_t i = 0;
     for (const auto& w : n) { if (i + 1 >= sizeof(buf) / sizeof(buf[0])) break; buf[i++] = w; }
-    char out[64]{};
-    ::WideCharToMultiByte(CP_UTF8, 0, buf, -1, out, sizeof(out), nullptr, nullptr);
-    return out;
+    return wideToUtf8(buf);
 }
 
 bool Pipeline::handshake(std::string* err) {

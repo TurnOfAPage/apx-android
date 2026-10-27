@@ -6,7 +6,7 @@
 
 ---
 
-## 未发布
+## v223.2（2026-10-27）
 
 ### 新增
 - **全屏触控板（Android 操控面）** —— #47 第 1 条。用户原话是「虚拟触控板的页能不能加个
@@ -26,6 +26,14 @@
     免得给用户一个按了没反应的操作）。
   - 进入时弹一次说明条（2.6s 淡出）：全屏里没有标题头可看，必须先告诉人怎么出去。
     这段说明与退出胶囊都挂在新增的外层 `FrameLayout` 上，非全屏时 `GONE`、不吃触摸。
+
+### 修复（Linux 构建）
+- `pc/display/pipeline/pipeline.cpp` 的 `captureDeviceName()` 直接调 Win32 的
+  `::WideCharToMultiByte(CP_UTF8, …)` —— Linux/macOS 上既没有这个函数也没有 `CP_UTF8`，
+  整个 `pc/display` 在本平台编不过（连带 `pc/host` 的 `apxdisp_in_host` 目标一起挂）。
+  改成一个小 `wideToUtf8()`：Windows 仍走 `WideCharToMultiByte`（wchar_t 是 UTF-16，
+  要处理代理对），POSIX 自行编 UTF-8（wchar_t 是 4 字节 UTF-32）。本机现已全量编过、
+  7/7 测试通过。
 
 ### 修复（文档）
 - `docs/ROADMAP.md` 的 `0x01` 载荷表补第 6 字节 `pan`（原表停在 v223 的 5 字节形态，
