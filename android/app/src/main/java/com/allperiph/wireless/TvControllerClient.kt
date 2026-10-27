@@ -59,6 +59,7 @@ class TvControllerClient(
         thread(name = "tvctrl-reader") { readerLoop(s) }
         startTx()
         Log.i("TvCtrl", "已连 TV $host:$port")
+        reportPadKeyboardState()
         true
     } catch (t: Throwable) { Log.e("TvCtrl", "连 TV 失败：${t.message}"); runCatching { s_close() }; false }
 
@@ -75,9 +76,6 @@ class TvControllerClient(
             for (b in pumpFrames()) handleServerFrame(b)
         }
         ready = false
-        // v184：被动断线（对端重启/网络抖动）自动重连 —— 此前断开后 ready=false 且
-        // connect() 被 running 短路，副屏/触控板触摸全部静默丢失，只能手动重选设备。
-        // 用户主动 disconnect() 会先置 running=false，这里自然不进入。
         if (running.get()) {
             Log.w("TvCtrl", "连接断开（$why），启动自动重连 $host:$port")
             thread(name = "tvctrl-reconn") {
@@ -106,8 +104,6 @@ class TvControllerClient(
         synchronized(rxLock) {
             var off = 0
             while (rxLen - off >= ApxFrame.HEADER_SIZE) {
-                // v184：magic / 长度异常改为**逐字节重同步**（原 off = rxLen 会因一次错位
-                // 丢掉后续全部合法帧）；并补上尾部 CRC32 校验。
                 if (!ApxFrame.isMagic(rxBuf, off, rxLen)) { off++; continue }
                 val payloadLen = ApxFrame.payloadLenAt(rxBuf, off)
                 if (payloadLen < 0 || payloadLen > ApxFrame.MAX_PAYLOAD) { off++; continue }
@@ -134,7 +130,6 @@ class TvControllerClient(
                 if (body.size >= 3 + len && len > 0) { onReverseClipboard?.invoke(String(body.copyOfRange(3, 3 + len), Charsets.UTF_8)) }
             }
             0x25 -> {
-                // REQUEST_INPUT: [0x25, hintLen, hint...]
                 if (body.size < 2) return
                 val hintLen = body[1].toInt() and 0xFF
                 if (body.size < 2 + hintLen) return
@@ -143,7 +138,6 @@ class TvControllerClient(
                 if (cb != null) cb(host, hint) else handleRequestInputFallback(hint)
             }
             0x26 -> {
-                // INPUT_TEXT: [0x26, flags, textLen, text...]
                 if (body.size < 4) return
                 val flags = body[1].toInt() and 0xFF
                 val textLen = (body[2].toInt() and 0xFF) or ((body[3].toInt() and 0xFF) shl 8)
@@ -156,14 +150,6 @@ class TvControllerClient(
         }
     }
 
-    /**
-     * 0x25 兜底（新）：对端输入框获焦 → 请求本机代输。
-     * 此前 onRemoteInputRequest 全项目零赋值 —— 帧到了没人弹窗、静默丢弃：
-     * 手机控手机 / 手机控 TV 时「对端获焦自动请本机代输」整个是死的
-     * （PC 端 Ctrl9511Client 早有接线，手机端漏了这半边）。
-     * 回调在 reader 线程，弹窗必须切主线程；Android 10+ 后台启动 Activity 受限，
-     * 但收到此帧时用户正在操作控制端（前台），直接启动与被控侧 RemoteInputActivity.start 同口径。
-     */
     private fun handleRequestInputFallback(hint: String) {
         val ctx = com.allperiph.App.context
         if (ctx == null) { Log.w("TvCtrl", "收到代输请求，但 App.context 未就绪"); return }
@@ -174,11 +160,6 @@ class TvControllerClient(
         }
     }
 
-    /**
-     * 0x26 兜底（新）：对端替本机打的字落到本机获焦输入框。
-     * 与 ControlledService.injectRemoteText 同口径：退格删一格 / 正文走无障碍
-     * typeText→paste 兜底；CANCEL 留空（三端都未实现整段撤销，保留帧语义）。
-     */
     private fun injectRemoteTextFallback(text: String, flags: Int) {
         val svc = com.allperiph.shared.accessibility.ApxAccessibilityService.instance
         if (svc == null) { Log.w("TvCtrl", "代输没落地：无障碍服务未就绪"); return }
@@ -206,15 +187,10 @@ class TvControllerClient(
                 val target = out
                 if (target == null) continue
                 try { target.write(frame); target.flush() } catch (t: Throwable) {
-                    // fix：写失败必须区分「旧连接残留写」与「当前连接真死」。
-                    // 旧写法无条件 ready=false —— 自动重连刚把 ready 置回 true 后，
-                    // 残留在队列里的旧帧写旧流抛错会把它再次覆盖成 false，而 reader
-                    // 侧无异常、永不触发重连 → 链路钉死在「连着但 sendControl 全部
-                    // 静默丢帧」：蓝点定格、滑动/点按无反应，直到下次被动断线。
                     if (out === target) {
                         Log.w("TvCtrl", "写出失败：${t.message} → 关闭连接触发自动重连")
                         ready = false
-                        runCatching { sock?.close() }   // 借 readerLoop 退出走既有重连路径
+                        runCatching { sock?.close() }
                     } else {
                         Log.w("TvCtrl", "忽略旧连接残留写失败：${t.message}")
                     }
@@ -225,8 +201,6 @@ class TvControllerClient(
 
     fun sendControl(body: ByteArray): Boolean {
         if (!ready) {
-            // 断线期输入帧全部静默丢弃是「功能像坏了但界面毫无提示」的元凶：
-            // 这里节流记一条（运行日志可见），链路恢复时另记一条。
             val now = System.currentTimeMillis()
             if (now - lastDropLogAt >= 5000) {
                 lastDropLogAt = now
@@ -260,7 +234,6 @@ class TvControllerClient(
     // 远程输入发送
     fun requestInput(hint: String) {
         val hintBytes = hint.toByteArray(Charsets.UTF_8)
-        // 格式：[0x25, hintLen, hint...] — 与接收端 ControlServer onRequestInput 一致
         val body = ByteArray(1 + 1 + hintBytes.size)
         body[0] = ApxFrame.INPUT_REQUEST.toByte()
         body[1] = hintBytes.size.toByte()
@@ -278,6 +251,35 @@ class TvControllerClient(
     }
 
     fun sendInputDone() { sendControl(byteArrayOf(ApxFrame.INPUT_DONE.toByte())) }
+
+    /** 实体键盘状态上报（0x30）：[0x30, avail, nameLen, name...]，PC 端 web 面板据此显示。 */
+    fun reportPadKeyboard(available: Boolean, name: String = "") {
+        val nb = name.toByteArray(Charsets.UTF_8).take(255).toByteArray()
+        val body = ByteArray(3 + nb.size)
+        body[0] = 0x30.toByte()
+        body[1] = (if (available) 1 else 0).toByte()
+        body[2] = nb.size.toByte()
+        nb.copyInto(body, 3)
+        sendControl(body)
+    }
+
+    /** 检测本机实体键盘（排除软键盘），连接建立后上报给 PC。 */
+    private fun reportPadKeyboardState() {
+        val ctx = com.allperiph.App.context ?: return
+        val im = ctx.getSystemService(android.content.Context.INPUT_SERVICE)
+            as? android.hardware.input.InputManager ?: return
+        var found = false
+        var name = ""
+        for (id in im.inputDeviceIds) {
+            val d = im.getInputDevice(id) ?: continue
+            if (id >= 0 && d.sources and android.view.InputDevice.SOURCE_KEYBOARD != 0) {
+                found = true
+                name = d.name
+                break
+            }
+        }
+        reportPadKeyboard(found, name)
+    }
 
     companion object { const val PORT = 9511 }
 }
