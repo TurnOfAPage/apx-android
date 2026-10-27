@@ -84,7 +84,11 @@ bool parseBeacon(const char* buf, size_t n, std::string& host, uint16_t& port,
 // 非阻塞 connect + select 探测单个 IP:port 是否可达。
 static bool portOpen(const std::string& ip, uint16_t port, int timeoutMs) {
     Sock s = socket(AF_INET, SOCK_STREAM, 0);
-    if (s == kBadSock) return false;
+#if defined(_WIN32)
+    if (s == INVALID_SOCKET) return false;
+#else
+    if (s < 0) return false;
+#endif
     bool ok = false;
 #if defined(_WIN32)
     u_long nb = 1; ioctlsocket(s, FIONBIO, &nb);
@@ -144,7 +148,11 @@ std::vector<std::string> scanLan9511(int timeoutMs) {
     std::string prefix;
     {
         Sock s = socket(AF_INET, SOCK_DGRAM, 0);
-        if (s != kBadSock) {
+#if defined(_WIN32)
+        if (s != INVALID_SOCKET) {
+#else
+        if (s >= 0) {
+#endif
             sockaddr_in remote{};
             remote.sin_family = AF_INET;
             remote.sin_port = htons(53);
