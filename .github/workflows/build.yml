@@ -3,7 +3,7 @@ name: Build
 # 触发：
 #   push master        —— 只做构建验证（Android + PC），不发 release
 #   push tag v*        —— 构建三端产物并自动创建 GitHub Release
-#   push feat/1.0_test —— 发版 1.0_test（版本号由 Set release version 固定）
+#   push feat/1.0_test —— 发版（版本号由 Set release version 固定）
 #   pull_request→master—— PR 上先构建验证，编译错误在合入前拦下
 #   workflow_dispatch  —— 手动构建验证
 on:
@@ -396,7 +396,7 @@ jobs:
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
             echo "REL_VERSION=$GITHUB_REF_NAME" >> "$GITHUB_ENV"
           else
-            echo "REL_VERSION=1.0_test" >> "$GITHUB_ENV"
+            echo "REL_VERSION=1.0.1" >> "$GITHUB_ENV"
           fi
 
       - uses: actions/checkout@v4
