@@ -155,7 +155,11 @@ std::vector<std::string> scanLan9511(int timeoutMs) {
 #endif
             if (connect(s, reinterpret_cast<sockaddr*>(&remote), sizeof(remote)) == 0) {
                 sockaddr_in local{};
+#if defined(_WIN32)
+                int l = sizeof(local);
+#else
                 socklen_t l = sizeof(local);
+#endif
                 if (getsockname(s, reinterpret_cast<sockaddr*>(&local), &l) == 0) {
                     std::string ip;
 #if defined(_WIN32)
