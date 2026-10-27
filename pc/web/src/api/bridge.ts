@@ -8,12 +8,16 @@
 //        · 状态流   → 400ms GET /api/state（与 WebView2 的 400ms PostWebMessage 等价）
 //        · 事件     → 400ms GET /api/events?since=N（增量轮询；**不做 SSE** ——
 //                     宿主 panel_http 是单线程 accept 模型，长连接会占死 accept 循环）
+//        · 上传     → POST /api/upload?ip&port，body=文件原始字节，文件名走 X-File-Name 头
+//                     （浏览器页面拿不到真实路径，系统文件对话框只有桌面壳有；
+//                      桌面壳仍走 open-file + localsend.send，这条路不参与）
 //   ③ mock：开发期无宿主时的假状态（原有 fallback，保留）
 //
 // 协议（与 web_panel.cpp 顶部注释一致）：
 //   前端 → 后端：{kind:'act', id, name, payload} | {kind:'query', id, name} | {kind:'open-file', id, filter}
 //   后端 → 前端：{kind:'act-response', id, ok, data} | {kind:'query-response', id, ok, data}
 //                | {kind:'open-file-response', id, ok, path} | {kind:'state', t, data} | {kind:'event', name, hint}
+//                | {kind:'upload-response', ok, queued, name, path, size, warn|error}   （仅 HTTP 通道）
 //
 // 所有请求用 id 做 correlation，响应 Promise 化。状态推流独立走 state 订阅。
 
@@ -263,6 +267,45 @@ class Bridge {
   }
   openFile(filter: string): Promise<any> {
     return this.request('open-file', 'dummy', { filter });
+  }
+
+  /**
+   * 浏览器面板的「互传发送」：把选中的文件字节直接 POST 给宿主。
+   *
+   * 为什么不用 openFile：浏览器页面拿不到本地文件的真实路径（<input type=file> 只有名字），
+   * 系统文件对话框又只有 WebView2 桌面壳有 —— 于是浏览器模式下「发送」以前只能报错。
+   * 这里把文件内容本身送上去，宿主（panel_http.cpp handleUpload）落到互传目录后
+   * 再进 LocalSend 发送队列；发送结果仍由 on-localsend-sent 事件回来，与本方法无关。
+   *
+   * 文件名走 X-File-Name 头（header 只能放 ASCII，所以 percent-encode 成 UTF-8 字节），
+   * 宿主 percentDecode 还原 —— 中文名不会丢。
+   */
+  async uploadFile(ip: string, port: number, file: File): Promise<any> {
+    if (this.transport !== 'http') throw new Error('uploadFile 仅用于浏览器面板（桌面壳请走 openFile + localsend.send）');
+    const qs = `?ip=${encodeURIComponent(ip)}&port=${encodeURIComponent(String(port))}`;
+    let resp: Response;
+    try {
+      resp = await fetch(`/api/upload${qs}`, {
+        method: 'POST',
+        headers: {
+          'X-File-Name': encodeURIComponent(file.name),
+          'Content-Type': 'application/octet-stream',
+        },
+        body: file,     // File 是 Blob：浏览器自动带 Content-Length，宿主按声明长度流式收
+      });
+    } catch (e: any) {
+      // fetch 层失败（宿主没起、连接断）——给一句人话，不要把 TypeError: Failed to fetch 直接甩出去
+      throw new Error('上传失败：连不上宿主服务（浏览器面板是否已关闭？）');
+    }
+    let box: any = null;
+    try { box = await resp.json(); } catch {}
+    if (box && box.kind === 'upload-response') {
+      if (box.ok === false) throw new Error(box.error || '上传失败');
+      return box;
+    }
+    if (!resp.ok) throw new Error(`上传失败（HTTP ${resp.status}）`);
+    // 宿主回了 200 但 body 不是 upload-response：不装作成功
+    throw new Error('上传失败：宿主响应无法识别');
   }
   subscribeState(listener: Listener): () => void {
     this.stateListeners.add(listener);

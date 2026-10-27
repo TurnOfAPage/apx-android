@@ -14,6 +14,12 @@ interface Props { state: HostState }
  *   列表：400ms 的 state.localsend 刷新（附近设备由多播 announce 积累）
  *   目录：act localsend.openDir → 系统文件管理器打开落盘目录（下载/AllPeriph）
  *
+ * 发送（点设备右侧「发送」）两条路，按 bridge.mode 分：
+ *   WebView2 桌面壳：act / open-file 的系统对话框选路径 → act localsend.send {paths}
+ *   浏览器面板（mac / 浏览器）：页面拿不到真实路径，改走 POST /api/upload ——
+ *     <input type=file> 选中的字节上传给宿主，宿主落到互传目录再由它入队发送
+ *   （发送结果两边同源：都等 on-localsend-sent 事件）
+ *
  * 字段口径由 apxpc::localsend::statusJson 统一给出（C++ 侧 testStatusJson 钉住），
  * 前端不各取各的字段名 —— 改名即破坏这里，所以两边一起改。
  */
@@ -55,11 +61,22 @@ export const LocalSendCard: React.FC<Props> = ({ state }) => {
     }
   };
 
-  // 选设备 → 系统文件对话框 → 发送。openFile 只有 WebView2 桌面壳支持；
-  // 浏览器面板（apxhost panel）里 bridge 会直接抛「不支持系统文件对话框」，
-  // 这里如实显示出来，而不是让按钮点了没反应。
+  // 选设备 → 选文件 → 发送。两条路：
+  //   WebView2 桌面壳：openFile 走系统对话框拿真实路径，再让宿主按路径发（原路径）
+  //   浏览器面板：页面拿不到真实路径，改用页面自带的 <input type=file>，
+  //               把字节 POST /api/upload 上去（bridge.uploadFile），宿主落盘后入队
+  const browserMode = bridge.mode === 'http';
+  const [pending, setPending] = useState<{ ip: string; port: number; alias: string } | null>(null);
+  const fileRef = React.useRef<HTMLInputElement | null>(null);
+
   const sendTo = async (dev: { ip: string; port: number; alias: string }) => {
     setErr('');
+    if (browserMode) {
+      setPending(dev);
+      setStatus(`选择要发送到 ${dev.alias || dev.ip} 的文件…`);
+      fileRef.current?.click();
+      return;
+    }
     setStatus(`正在发送到 ${dev.alias || dev.ip}…`);
     try {
       const pick: any = await bridge.openFile('全部文件|*.*');
@@ -69,6 +86,31 @@ export const LocalSendCard: React.FC<Props> = ({ state }) => {
       setStatus('');
       setErr(e?.message || '发送失败');
     }
+  };
+
+  // 浏览器模式选完文件：逐个上传（宿主一个请求收一个文件），全部落盘后才算「已发送」
+  const onFilesPicked = async (ev: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(ev.target.files ?? []);
+    ev.target.value = '';        // 清空：同一个文件连选两次也要能触发 change
+    const dev = pending;
+    setPending(null);
+    if (!dev || files.length === 0) { setStatus(''); return; }
+    setStatus(`正在上传 0/${files.length} …`);
+    let done = 0;
+    for (const f of files) {
+      try {
+        const r: any = await bridge.uploadFile(dev.ip, dev.port, f);
+        done++;
+        setStatus(`正在上传 ${done}/${files.length} …`);
+        if (r?.warn) setErr(r.warn);      // 上一批还在发：文件已存好但没入队，如实说
+      } catch (e: any) {
+        setErr(e?.message || `「${f.name}」上传失败`);
+        setStatus('');
+        return;
+      }
+    }
+    setStatus('');
+    setLastFrom(`已发送 ${files.length} 个文件到 ${dev.alias || dev.ip}`);
   };
 
   const openDir = async () => {
@@ -82,6 +124,14 @@ export const LocalSendCard: React.FC<Props> = ({ state }) => {
 
   return (
     <div className="card card-inner animate-slide-up flex flex-col gap-3">
+      {/* 浏览器面板的发送入口：页面的原生文件选择器（桌面壳不用它，走 openFile） */}
+      <input
+        ref={fileRef}
+        type="file"
+        multiple
+        className="hidden"
+        onChange={onFilesPicked}
+      />
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <span className="section-title">互传</span>

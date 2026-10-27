@@ -6,6 +6,34 @@
 
 ---
 
+## v223.4（2026-10-27）
+
+### 新增（浏览器面板：互传发送不再只有桌面壳能用）
+- **macOS / 浏览器面板里「互传 → 发送」现在能用了** —— #47 第 6 条的后备项。
+  此前这条路的实现是「系统文件对话框选路径 → `act localsend.send {paths}`」，
+  而系统文件对话框只有 Windows 的 WebView2 桌面壳有；mac 与浏览器页面点「发送」
+  只会得到一句「不支持系统文件对话框」，等于该模式下无法把本机文件传出去。
+  - 前端：`bridge.uploadFile()` —— 用页面自带的 `<input type=file>` 选文件，
+    把字节 `POST /api/upload?ip=&port=` 交给宿主；文件名走 `X-File-Name` 头
+    （percent-encoded UTF-8，中文名不会丢）。桌面壳仍走原来的 `openFile`，
+    两条路在 `LocalSendCard` 里按 `bridge.mode` 分派，发送结果同源
+    （都等 `on-localsend-sent` 事件）。
+  - 后端：`panel_http.cpp` 新增 `POST /api/upload`。body 是**流式**收的
+    ——不整段进内存，也不受一问一答那条 512KB body 闸门限制（单文件上限 4 GiB）：
+    先写 `<名字>.part`，收齐再改名落进互传目录、交 `localsend.send` 同一套发送队列。
+    中途断线只留临时文件，且会被删掉 —— 不会出现半截文件顶着正式名字被别的程序读到。
+  - 同名文件落盘自动让路（`名字 (2).ext`），不覆盖互传目录里已有的文件。
+  - 落盘目录与接收端同一处（`下载/AllPeriph`），发出去的文件在「文件」面板里也看得见。
+
+### 测试
+- 端到端真机验证（Linux 本地跑 `apxhost panel`，直接打 HTTP 接口）：
+  2 MiB 中文名二进制上传 → 落盘 sha256 与源完全一致、文件名原样还原；
+  同名再传 → `测试 文件 (2).bin`；目标缺 ip/port → HTTP 400；
+  声明 1 MiB 只发 4 KiB 就断开 → 临时文件被丢弃、目录无 `.part` 残留。
+- 本地 `ctest` 8/8 通过；web 前端 `tsc -b && vite build` 通过。
+
+---
+
 ## v223.3（2026-10-27）
 
 ### 修复（macOS 触控板完全没反应）

@@ -3,7 +3,10 @@
 // 与 web_panel.cpp（WebView2 壳）同构 —— 协议、状态结构、动作分发完全一致：
 //   GET  /api/state           → {"kind":"state","data":{…}}（前端 400ms 轮询；每次请求前触发媒体建链泵/USB 节流）
 //   GET  /api/events?since=N  → {"events":[{…event…,"seq":N}]}（事件增量轮询，环形缓冲最近 256 条）
-//   POST /api/act|query       → web_panel 同款 handleAct/handleQuery（响应体即 act-response/query-response 协议）
+//   POST /api/act|query       → web_panel 同款 handleAct/query（响应体即 act-response/query-response 协议）
+//   POST /api/upload?ip&port  → 浏览器面板的「互传发送」：body=文件原始字节，文件名走 X-File-Name 头，
+//                               流式落盘到互传目录后进 LocalSend 发送队列（浏览器拿不到系统文件对话框，
+//                               只能这么送；响应是 upload-response，发送结果仍走 on-localsend-sent 事件）
 //   POST /api/open-file       → {"kind":"open-file-response","ok":false}（浏览器沙箱拿不到系统路径；前端 http 模式已自行拒绝，此处兕底）
 //   GET  /*                   → 静态 serve 前端 dist（exe 旁 web/，防目录穿越）
 //
@@ -398,6 +401,41 @@ Json localSendStatusJson(const HostBundle& b) {
 }
 
 // ——— 动作分发（与 web_panel.cpp handleAct 逐分支一致；Win 专属分支按平台能力改写）———
+
+/// 把一批本机文件投进 LocalSend 发送队列。
+/// 在后台线程发（大文件要传几十秒，不能卡住单线程的 accept 循环），结果通过
+/// on-localsend-sent 事件推回前端，调用方先回「已开始」。
+/// 返回 false = 上一批还在发送中（调用方据此回 failResp）。
+/// 两个入口共用：动作 localsend.send（桌面壳选了路径）与 POST /api/upload（浏览器上传落盘后）。
+bool startLocalSendToPeer(HttpPanel* p, const std::string& ip, uint16_t port,
+                          const std::vector<std::string>& paths) {
+    if (p->sendBusy.exchange(true)) return false;
+    apxpc::localsend::Target target;
+    target.ip = ip;
+    target.port = port;
+    std::vector<apxpc::localsend::OutgoingFile> files;
+    files.reserve(paths.size());
+    for (const auto& f : paths) files.push_back({f, {}});
+
+    if (p->sendThread.joinable()) p->sendThread.join();
+    p->sendThread = std::thread([p, target, files] {
+        apxpc::localsend::LocalSendSender tx;
+        apxpc::localsend::SenderIdentity self;
+        const auto res = tx.send(target, self, files);
+        p->sendBusy.store(false);
+        Json d = Json::makeObject();
+        d["ok"] = res.ok;
+        d["ip"] = target.ip;
+        d["port"] = static_cast<double>(target.port);
+        d["peerAlias"] = res.peerAlias;
+        d["error"] = res.error;
+        d["count"] = static_cast<double>(res.deliveredNames.size());
+        d["bytes"] = static_cast<double>(res.bytesSent);
+        pushEvent("on-localsend-sent", d);
+    });
+    return true;
+}
+
 void handleAct(HttpPanel* p, const std::string& id, const std::string& name, const Json& payload) {
     APX_LOGI("handleAct: name={} id={}", name.c_str(), id.c_str());
     const HostBundle& b = p->bundle;
@@ -603,32 +641,8 @@ void handleAct(HttpPanel* p, const std::string& id, const std::string& name, con
         if (ip.empty() || port <= 0 || port > 65535)
             return postResponse(p, id, failResp("目标设备不合法（需要 ip 与 port）"));
         if (paths.empty()) return postResponse(p, id, failResp("未选择文件"));
-        if (p->sendBusy.exchange(true))
+        if (!startLocalSendToPeer(p, ip, static_cast<uint16_t>(port), paths))
             return postResponse(p, id, failResp("上一批文件还在发送中"));
-
-        apxpc::localsend::Target target;
-        target.ip = ip;
-        target.port = static_cast<uint16_t>(port);
-        std::vector<apxpc::localsend::OutgoingFile> files;
-        files.reserve(paths.size());
-        for (const auto& f : paths) files.push_back({f, {}});
-
-        if (p->sendThread.joinable()) p->sendThread.join();
-        p->sendThread = std::thread([p, target, files] {
-            apxpc::localsend::LocalSendSender tx;
-            apxpc::localsend::SenderIdentity self;
-            const auto res = tx.send(target, self, files);
-            p->sendBusy.store(false);
-            Json d = Json::makeObject();
-            d["ok"] = res.ok;
-            d["ip"] = target.ip;
-            d["port"] = static_cast<double>(target.port);
-            d["peerAlias"] = res.peerAlias;
-            d["error"] = res.error;
-            d["count"] = static_cast<double>(res.deliveredNames.size());
-            d["bytes"] = static_cast<double>(res.bytesSent);
-            pushEvent("on-localsend-sent", d);
-        });
         return postResponse(p, id, okResp());
     }
     if (name == "localsend.openDir") {
@@ -700,7 +714,17 @@ std::string percentDecode(const std::string& s) {
 struct Req {
     std::string method, path, query, body;
     bool ok = false;
+    // —— 浏览器上传（POST /api/upload）用 ——
+    // 这条路径的 body 可能是几百 MB：整段读进内存既浪费又会被下面的 512KB 闸门拒掉，
+    // 所以 body 走「流式」——readRequest 只把头部之后顺手收到的那点字节放进 body，
+    // 剩下的由 handleUpload 从 fd 继续读到文件里。
+    bool streamBody = false;
+    size_t contentLength = 0;   // 声明长度（流式路径用它判断剩余量）
+    std::string fileName;       // X-File-Name 头（percent-encoded UTF-8）
 };
+
+/// 单个上传的大小上限。超了直接 413 —— 免得一颗没上限的 body 把磁盘写满。
+constexpr size_t kMaxUploadBytes = 4ull * 1024 * 1024 * 1024;   // 4 GiB
 
 Req readRequest(int fd) {
     Req r;
@@ -737,8 +761,33 @@ Req readRequest(int fd) {
     if (cl != std::string::npos) {
         contentLength = static_cast<size_t>(
             std::strtoull(lowerHead.c_str() + cl + 15, nullptr, 10));
-        if (contentLength > 512 * 1024) return r;   // body 过大拒绝
     }
+
+    // 文件名头（浏览器上传：页面上的 <input type=file> 拿不到真实路径，只能把名字带过来）
+    const size_t fn = lowerHead.find("x-file-name:");
+    if (fn != std::string::npos) {
+        const size_t lineEnd = head.find("\r\n", fn);
+        std::string v = head.substr(fn + 12,
+            (lineEnd == std::string::npos ? head.size() : lineEnd) - (fn + 12));
+        const size_t b = v.find_first_not_of(" \t");
+        const size_t e = v.find_last_not_of(" \t");
+        v = (b == std::string::npos) ? std::string() : v.substr(b, e - b + 1);
+        r.fileName = percentDecode(v);
+    }
+
+    // —— 上传：body 不在这里读 ——
+    // 它可能有几百 MB，整段读进内存既浪费又会撞上面那道 512KB 闸门；
+    // 这里只把「读完头顺手多收到的那点字节」交出去（body），其余由 handleUpload 从 fd 续读。
+    if (r.method == "POST" && r.path == "/api/upload") {
+        if (contentLength == 0 || contentLength > kMaxUploadBytes) return r;
+        r.contentLength = contentLength;
+        r.streamBody = true;
+        r.body = rest;
+        r.ok = true;
+        return r;
+    }
+
+    if (contentLength > 512 * 1024) return r;   // body 过大拒绝
     while (rest.size() < contentLength) {
         const ssize_t n = ::recv(fd, tmp, sizeof(tmp), 0);
         if (n <= 0) return r;
@@ -856,6 +905,135 @@ void dispatchEnvelope(HttpPanel* p, const std::string& body, bool isAct) {
     }
 }
 
+/// 取 URL 查询参数（`?ip=1.2.3.4&port=53317`）。找不到返回空串。
+std::string queryValue(const std::string& query, const std::string& key) {
+    const std::string pat = key + "=";
+    size_t i = 0;
+    while ((i = query.find(pat, i)) != std::string::npos) {
+        // 只在参数边界上匹配，避免 "xip=" 命中 "ip="
+        const bool atStart = (i == 0) || query[i - 1] == '&';
+        if (atStart) {
+            const size_t b = i + pat.size();
+            const size_t e = query.find('&', b);
+            return percentDecode(query.substr(b, (e == std::string::npos ? query.size() : e) - b));
+        }
+        i += pat.size();
+    }
+    return std::string();
+}
+
+/// 同名不覆盖：加 " (2)"、" (3)"…（与接收端 / 私有通道同策略，别把用户已有文件冲掉）。
+fs::path dedupePath(const fs::path& dir, const std::string& name) {
+    const fs::path first = dir / name;
+    std::error_code ec;
+    if (!fs::exists(first, ec)) return first;
+    const std::string stem = first.stem().string();
+    const std::string ext = first.extension().string();
+    for (int i = 2; i < 1000; ++i) {
+        const fs::path cand = dir / (stem + " (" + std::to_string(i) + ")" + ext);
+        if (!fs::exists(cand, ec)) return cand;
+    }
+    return first;
+}
+
+/// 浏览器面板上传：`POST /api/upload?ip=..&port=..`，body 是文件原始字节，
+/// 文件名走 `X-File-Name` 头（percent-encoded UTF-8，页面上的 <input type=file> 拿不到真实路径）。
+///
+/// 为什么要有这条路：桌面壳（WebView2）的「选文件」是系统对话框，浏览器页面拿不到；
+/// 于是 mac / 浏览器面板里「互传发送」以前只能报错。浏览器自带 <input type=file>，
+/// 把选中的字节直接 POST 上来即可 —— 文件落进互传默认目录（与 file.list / 接收端同一目录，
+/// 发出去的文件在这里也看得见），落完就进 LocalSend 发送队列。
+///
+/// 落盘用「先写 .part → 收齐再改名」：中途断线只留一个临时文件，不会出现
+/// 半截文件顶着正式名字被别的程序读到。临时文件会删掉。
+void handleUpload(HttpPanel* p, int fd, const Req& req) {
+    const std::string ip = queryValue(req.query, "ip");
+    const long portL = std::strtol(queryValue(req.query, "port").c_str(), nullptr, 10);
+    std::string rawName = req.fileName.empty() ? queryValue(req.query, "name") : req.fileName;
+    if (rawName.empty()) rawName = "upload.bin";
+
+    auto fail = [&](int code, const std::string& msg) {
+        Json r = Json::makeObject();
+        r["kind"] = std::string("upload-response");
+        r["ok"] = false;
+        r["error"] = msg;
+        respond(fd, code, code == 200 ? "OK" : "Bad Request",
+                "application/json; charset=utf-8", r.stringify());
+    };
+
+    if (ip.empty() || portL <= 0 || portL > 65535) {
+        fail(400, "目标设备不合法（需要 ip 与 port）");
+        return;
+    }
+
+    // 上传可能持续几十秒（大文件 + 慢 Wi-Fi），把接收超时放宽；连接默认 5s 是给一问一答用的。
+    timeval tv{60, 0};
+    ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+    const fs::path dir = fs::path(apxpc::wireless::FileReceiver::defaultDir());
+    std::error_code ec;
+    fs::create_directories(dir, ec);
+    const std::string safe = apxpc::localsend::LocalSendReceiver::sanitizeName(rawName);
+    const fs::path finalPath = dedupePath(dir, safe.empty() ? std::string("upload.bin") : safe);
+    const fs::path tmpPath = finalPath.string() + ".part";
+
+    std::ofstream out(tmpPath, std::ios::binary | std::ios::trunc);
+    if (!out) {
+        fail(500, "无法写入互传目录：" + dir.string());
+        return;
+    }
+
+    size_t written = 0;
+    std::string chunk = req.body;    // readRequest 读完头之后顺手收到的那点字节
+    if (chunk.size() > req.contentLength) chunk.resize(req.contentLength);
+    if (!chunk.empty()) {
+        out.write(chunk.data(), static_cast<std::streamsize>(chunk.size()));
+        written = chunk.size();
+    }
+    char buf[64 * 1024];
+    while (written < req.contentLength) {
+        const size_t want = std::min(sizeof(buf), req.contentLength - written);
+        const ssize_t n = ::recv(fd, buf, want, 0);
+        if (n <= 0) break;   // 断线 / 超时：下面是「收齐了吗」的统一判断
+        out.write(buf, static_cast<std::streamsize>(n));
+        written += static_cast<size_t>(n);
+    }
+    out.flush();
+    const bool streamOk = out.good();
+    out.close();
+
+    if (written != req.contentLength || !streamOk) {
+        std::error_code rmEc;
+        fs::remove(tmpPath, rmEc);
+        APX_LOGW("上传中断：收到 {} / {} 字节，已丢弃临时文件", written, req.contentLength);
+        fail(400, "上传中断（收到 " + std::to_string(written) + " / " +
+                  std::to_string(req.contentLength) + " 字节）");
+        return;
+    }
+
+    fs::rename(tmpPath, finalPath, ec);
+    if (ec) {
+        std::error_code rmEc;
+        fs::remove(tmpPath, rmEc);
+        fail(500, "落盘失败：" + ec.message());
+        return;
+    }
+    APX_LOGI("浏览器上传已落盘：{}（{} 字节）→ 发送给 {}:{}",
+             finalPath.string().c_str(), written, ip.c_str(), static_cast<int>(portL));
+
+    const bool queued = startLocalSendToPeer(p, ip, static_cast<uint16_t>(portL),
+                                             {finalPath.string()});
+    Json r = Json::makeObject();
+    r["kind"] = std::string("upload-response");
+    r["ok"] = true;
+    r["queued"] = queued;
+    r["name"] = finalPath.filename().string();
+    r["path"] = finalPath.string();
+    r["size"] = static_cast<double>(written);
+    if (!queued) r["warn"] = std::string("上一批文件还在发送中，本次未入队（文件已保存在互传目录）");
+    respond(fd, 200, "OK", "application/json; charset=utf-8", r.stringify());
+}
+
 void handleConnection(HttpPanel* p, int fd) {
     timeval tv{5, 0};
     ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
@@ -901,6 +1079,9 @@ void handleConnection(HttpPanel* p, int fd) {
     } else if (req.method == "POST" && req.path == "/api/query") {
         dispatchEnvelope(p, req.body, false);
         respond(fd, 200, "OK", "application/json; charset=utf-8", p->resp.stringify());
+    } else if (req.method == "POST" && req.path == "/api/upload" && req.streamBody) {
+        // 浏览器上传（互传发送）。body 由 handleUpload 从 fd 流式读，不经过上面的 512KB 闸门。
+        handleUpload(p, fd, req);
     } else if (req.method == "POST" && req.path == "/api/open-file") {
         // 兑底（前端 http 模式已自行拒绝；协议内回应让漏网请求不悬挂）
         std::string err;
