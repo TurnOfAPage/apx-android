@@ -29,6 +29,7 @@
 //            ★ 由敲字的一方发给被注入的一方（同上，双向）；flags bit1(0x02)=退格，
 //              此时文本为空、接收侧应发一次退格键而非注入空串。
 //       0x27 输入完成（同 0x26 方向）无 payload
+//       0x30 实体键盘状态 [1]=avail(0/1) [2]=nameLen [3..]=name（手机端上报）
 //       'p'  ping（控制端 1s 心跳）；受控端回 'pong'
 //   * 发现信标：受控端每 1.5s 向 9501 广播
 //       "APX1TV|APX1PC|APX1PH <name> <port> <token>"（UTF-8；前缀 = 电视 / PC / 手机被控），
@@ -44,6 +45,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <vector>
 
 #if defined(_WIN32)
 #if !defined(WIN32_LEAN_AND_MEAN)
@@ -136,6 +138,12 @@ struct Ctrl9511ServerStatus {
     uint64_t requestInput = 0;
     uint64_t inputText = 0;
     uint64_t inputDone = 0;
+
+    // 最近输入事件（新→旧，最多 20 条，人读描述）。用于键盘/触摸板诊断。
+    std::vector<std::string> recentInputs;
+    // 实体键盘状态（手机端经 0x30 帧上报）：是否检测到实体键盘 + 名称。
+    bool padKbAvailable = false;
+    std::string padKbName;
 };
 
 class Ctrl9511Server {
