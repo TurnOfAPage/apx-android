@@ -21,20 +21,6 @@ import com.allperiph.R
 import com.allperiph.shared.util.Log
 import kotlin.math.abs
 
-/**
- * 悬浮球（v1.0_test 重设计）：圆形半透明磨砂球 + 环绕一圈的菜单圆钮。
- *
- * 交互：
- *  - 单击小球：展开 / 收起围绕球一圈的菜单圆钮；
- *  - 长按小球（400ms）：进入拖动模式，可移动悬浮球位置（松手落位）；
- *  - 菜单圆钮（环绕一圈）：
- *      关闭悬浮球 · 打开 App · 无线/蓝牙/USB 模式切换 · 自定义功能。
- *
- * 移除了旧版的「底部触控板面板」（虚拟触控板 GUI）—— 输入仍走 App 内触控板页，
- * 悬浮球只做快捷入口与模式切换。
- *
- * 权限：复用 SYSTEM_ALERT_WINDOW；入口：设置页「工具」小节 → 悬浮球。
- */
 class FloatingBallService : Service() {
 
     companion object {
@@ -44,11 +30,9 @@ class FloatingBallService : Service() {
         private const val KEY_ON = "on"
         const val ACTION_TOGGLE = "com.allperiph.ui.floating_ball.toggle"
         const val ACTION_STOP = "com.allperiph.ui.floating_ball.stop"
-
-        /** 菜单环半径（球心到圆钮心）。 */
+        private const val BALL_SIZE_DP = 44
         private const val MENU_RADIUS_DP = 82
 
-        /** 服务实际存活状态。 */
         @Volatile
         var isRunning: Boolean = false
             private set
@@ -78,8 +62,9 @@ class FloatingBallService : Service() {
     private var ball: View? = null
     private var ballAttached = false
     private var menu: View? = null
+    private var ballX = 0
+    private var ballY = 0
 
-    // 球拖动 / 点击判定
     private var dragDX = 0f
     private var dragDY = 0f
     private var downRawX = 0f
@@ -88,8 +73,7 @@ class FloatingBallService : Service() {
     private var longPress = false
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density + 0.5f).toInt()
-
-    // ————————————————————————— 生命周期 —————————————————————————
+    private val ballSize get() = dp(BALL_SIZE_DP)
 
     override fun onCreate() {
         super.onCreate()
@@ -149,13 +133,15 @@ class FloatingBallService : Service() {
         v?.let { runCatching { wm.removeView(it) } }
     }
 
-    // ————————————————————————— 小球 —————————————————————————
-
     private fun addBall() {
         if (ballAttached) return
         val v = ball
             ?: LayoutInflater.from(ThemePref.wrap(this)).inflate(R.layout.view_floating_ball, null)
                 .also { ball = it }
+        if (ballX == 0 && ballY == 0) {
+            ballX = resources.displayMetrics.widthPixels - ballSize - dp(8)
+            ballY = resources.displayMetrics.heightPixels / 3
+        }
         wm.addView(v, ballLayoutParams())
         ballAttached = true
         setupBallTouch(v)
@@ -163,24 +149,23 @@ class FloatingBallService : Service() {
     }
 
     private fun ballLayoutParams() = WindowManager.LayoutParams(
-        WindowManager.LayoutParams.WRAP_CONTENT,
-        WindowManager.LayoutParams.WRAP_CONTENT,
+        ballSize, ballSize,
         WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
         WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
             WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
         PixelFormat.TRANSLUCENT,
     ).apply {
         gravity = Gravity.TOP or Gravity.START
-        x = resources.displayMetrics.widthPixels - dp(72)
-        y = resources.displayMetrics.heightPixels / 3
+        x = ballX
+        y = ballY
     }
 
     private fun setupBallTouch(v: View) {
         v.setOnTouchListener { view, ev ->
             when (ev.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
-                    dragDX = view.x - ev.rawX
-                    dragDY = view.y - ev.rawY
+                    dragDX = ballX - ev.rawX
+                    dragDY = ballY - ev.rawY
                     downRawX = ev.rawX
                     downRawY = ev.rawY
                     downAt = System.currentTimeMillis()
@@ -190,15 +175,17 @@ class FloatingBallService : Service() {
                     if (!longPress && System.currentTimeMillis() - downAt >= 400) {
                         longPress = true
                         com.allperiph.ui.Feedback.haptic(this)
+                        collapseMenu()
                     }
                     if (longPress) {
-                        view.x = ev.rawX + dragDX
-                        view.y = ev.rawY + dragDY
+                        ballX = (ev.rawX + dragDX).toInt()
+                        ballY = (ev.rawY + dragDY).toInt()
+                        runCatching { wm.updateViewLayout(view, ballLayoutParams()) }
                     }
                 }
                 MotionEvent.ACTION_UP -> {
                     if (longPress) {
-                        // 长按拖动结束：落位即可
+                        // 落位
                     } else if (abs(ev.rawX - downRawX) < 12 && abs(ev.rawY - downRawY) < 12) {
                         toggleMenu()
                     }
@@ -208,49 +195,39 @@ class FloatingBallService : Service() {
         }
     }
 
-    // ————————————————————————— 菜单环 —————————————————————————
-
     private fun toggleMenu() {
         if (menu != null) collapseMenu() else expandMenu()
     }
 
-    /** 展开：以球为圆心，环绕一圈菜单圆钮（上/右/下/左）。 */
     private fun expandMenu() {
         if (menu != null) return
-        val b = ball ?: return
-        val cx = b.x + b.width / 2f
-        val cy = b.y + b.height / 2f
-
         val radius = dp(MENU_RADIUS_DP)
         val btnSize = dp(44)
         val size = (radius + btnSize / 2) * 2
         val center = size / 2
+        val cx = ballX + ballSize / 2
+        val cy = ballY + ballSize / 2
 
         val container = FrameLayout(ThemePref.wrap(this)).apply {
             setBackgroundResource(android.R.color.transparent)
         }
-
-        // 中心占位区（覆盖球位）：点击 = 收起菜单
-        val ballSlot = dp(60)
         val slot = TextView(ThemePref.wrap(this)).apply {
             setBackgroundResource(android.R.color.transparent)
             isClickable = true
             isFocusable = true
             setOnClickListener { collapseMenu() }
         }
-        val slp = FrameLayout.LayoutParams(ballSlot, ballSlot)
-        slp.leftMargin = center - ballSlot / 2
-        slp.topMargin = center - ballSlot / 2
+        val slp = FrameLayout.LayoutParams(ballSize, ballSize)
+        slp.leftMargin = center - ballSize / 2
+        slp.topMargin = center - ballSize / 2
         container.addView(slot, slp)
 
         val items = listOf(
             MenuItem("✕", getString(R.string.ui_main_floating_ball_close)) { onMenuClose() },
             MenuItem("⌂", getString(R.string.ui_main_floating_ball_open)) { onMenuApp() },
-            MenuItem(modeGlyph(), getString(R.string.ui_main_floating_ball_mode)) { onMenuMode() },
+            MenuItem("⇄", getString(R.string.ui_main_floating_ball_mode)) { onMenuMode() },
             MenuItem("⚙", getString(R.string.ui_main_floating_ball_custom)) { onMenuCustom() },
         )
-
-        // 4 个圆钮按上/右/下/左排列（角度 -90°、0°、90°、180°）
         val angles = intArrayOf(-90, 0, 90, 180)
         items.forEachIndexed { i, item ->
             val btn = TextView(ThemePref.wrap(this)).apply {
@@ -284,8 +261,8 @@ class FloatingBallService : Service() {
             PixelFormat.TRANSLUCENT,
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = (cx - center).toInt()
-            y = (cy - center).toInt()
+            x = cx - center
+            y = cy - center
         }
         wm.addView(container, lp)
         menu = container
@@ -298,8 +275,6 @@ class FloatingBallService : Service() {
         Log.i(TAG, "菜单环收起")
     }
 
-    // ————————————————————————— 菜单动作 —————————————————————————
-
     private fun onMenuClose() = shutdown()
 
     private fun onMenuApp() {
@@ -310,7 +285,6 @@ class FloatingBallService : Service() {
         }
     }
 
-    /** 无线 → 蓝牙 → USB → 无线 循环切换（复用 AgentController 的传输开关语义）。 */
     private fun onMenuMode() {
         val transports = listOf("wifi", "bt", "usb")
         val current = transports.firstOrNull { AgentController.isTransportEnabled(this, it) }
@@ -328,10 +302,8 @@ class FloatingBallService : Service() {
             AgentController.setModuleEnabled(this, id, true)
         }
         Log.i(TAG, "模式切换到：${AgentController.transportLabel(next)}")
-        updateBallLabel()
     }
 
-    /** 自定义功能：默认打开 App 设置页（后续可在设置里把该圆钮换成任意功能）。 */
     private fun onMenuCustom() {
         runCatching {
             startActivity(
@@ -341,20 +313,9 @@ class FloatingBallService : Service() {
         }
     }
 
-    // ————————————————————————— 状态 —————————————————————————
-
-    private fun modeGlyph(): String = when (
-        listOf("wifi", "bt", "usb").firstOrNull { AgentController.isTransportEnabled(this, it) }
-    ) {
-        "wifi" -> "W"
-        "bt" -> "B"
-        "usb" -> "U"
-        else -> "M"
-    }
-
     private fun updateBallLabel() {
         val tv = ball?.findViewById<TextView>(R.id.tvBallState) ?: return
-        tv.text = modeGlyph()
+        tv.text = "apx"
     }
 
     private data class MenuItem(
