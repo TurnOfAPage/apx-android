@@ -80,8 +80,6 @@ namespace {
 
 #if defined(_WIN32)
 // —————— 防火墙放行（与 host_service.cpp 同款做法）——
-// apxdesktop 会 bind UDP 9501 收手机信标；Public 网络 Windows 默认拦入站，
-// 没有这条规则状态会永远停在"正在发现"。首次启动提权(netsh runas)放行本 exe。
 bool firewallRuleExists(const char* name) {
     std::string cmd = std::string("netsh advfirewall firewall show rule name=\"") + name + "\"";
     FILE* f = _popen(cmd.c_str(), "r");
@@ -167,8 +165,6 @@ void writeCrashText(const char* what) {
     ::CloseHandle(f);
 }
 
-// 与 POSIX 侧 writeCrashReport 同名同签名：让 main 的兜底 catch 两个平台一份代码。
-// Win 已有的取证比 POSIX 版本更全（VEH + minidump），这里只补「kind + 原因」这条缝。
 void writeCrashReport(const char* kind, const char* why, int sig) {
     (void)sig;
     char buf[1024];
@@ -265,11 +261,6 @@ void crashForensicsSelfCheck() {
     APX_LOGI("崩溃取证就绪：模块快照 {} 个；地址翻译自检 = {}", g_modCount, probe);
 }
 
-// —————— GUI 日志落盘 ——————
-// apxdesktop 是 WIN32 子系统程序，没有 stderr/stdout 可看；注册文件 sink，
-// 把日志追加写到 %LOCALAPPDATA%\AllPeriph\apxdesktop.log（与 media_debug.log 同目录约定）。
-// 超过 2MB 时清空重来，避免无限增长。
-// 用 CreateFileW(FILE_SHARE_READ) 而非 CRT stdio：行为可控，外部工具可随时读取。
 void startFileLogging() {
     wchar_t dir[MAX_PATH]{};
     if (::GetEnvironmentVariableW(L"LOCALAPPDATA", dir, MAX_PATH) == 0) return;
@@ -278,9 +269,8 @@ void startFileLogging() {
     static std::mutex g_mu;
     static HANDLE g_hf = nullptr;
 
-    ::CreateDirectoryW(g_dir.c_str(), nullptr);  // 已存在则忽略
+    ::CreateDirectoryW(g_dir.c_str(), nullptr);
 
-    // 超过 2MB 就删除重建（诊断只需要最近一次运行的日志）
     WIN32_FILE_ATTRIBUTE_DATA fa{};
     if (::GetFileAttributesExW(g_path.c_str(), ::GetFileExInfoStandard, &fa) &&
         fa.nFileSizeHigh > 0) {
@@ -305,15 +295,6 @@ void startFileLogging() {
     });
 }
 #else  // —————— POSIX（macOS / Linux）：崩溃取证 + 日志落盘 ——————
-//
-// mac 桌面壳是**双击启动的 GUI 程序**：没有终端，stderr 看不见。v223 的 mac 崩溃
-// （issue#47）正好踩在这个盲区上 —— 用户拿到的问题报告里只有地址、没有原因，只能
-// 事后反汇编。这里把 Win 侧那套取证补齐：
-//   · set_terminate：C++ 未捕获异常 → 把 what() + 回溯落盘（std::terminate 前最后机会）；
-//   · 致命信号：同样落盘，然后恢复默认处理并重发 —— 系统自己的崩溃报告（mac 的 .ips）
-//     照旧生成，我们只做补充，不替代系统取证。
-// 报告与日志同目录：mac = ~/Library/Logs/AllPeriph，Linux = $XDG_STATE_HOME|~/.local/state。
-
 std::string logDir() {
     const char* home = std::getenv("HOME");
     const std::string h = (home && *home) ? home : ".";
@@ -326,9 +307,7 @@ std::string logDir() {
 #endif
 }
 
-// 崩溃处理器跑在**信号上下文**里：不能 malloc、不能 stdio（会死锁在崩溃点上）。
-// 所以整张报告在栈上的固定数组里拼，写盘只用 open/write。
-size_t hexStr(char* out, uintptr_t v) {           // "0x…"，最长 18 字节 + NUL
+size_t hexStr(char* out, uintptr_t v) {
     char tmp[16];
     size_t n = 0;
     if (v == 0) tmp[n++] = '0';
@@ -344,7 +323,7 @@ size_t hexStr(char* out, uintptr_t v) {           // "0x…"，最长 18 字节 
     return k;
 }
 
-size_t decStr(char* out, long long v) {           // 十进制，最长 20 字节 + NUL
+size_t decStr(char* out, long long v) {
     char tmp[24];
     size_t n = 0;
     unsigned long long u = (v < 0) ? static_cast<unsigned long long>(-v)
@@ -376,10 +355,6 @@ void bufAppendDec(char* dst, size_t cap, size_t& off, long long v) {
     bufAppend(dst, cap, off, tmp);
 }
 
-// 一张报告覆盖「terminate」与「致命信号」两种入口（kind 区分）。内容刻意对齐苹果
-// 崩溃报告的读法：先给帧地址，再给 imageOffset（= 帧地址 − 主可执行文件加载地址）。
-// 后者是跨机器可比的 PIE 偏移，配未 strip 二进制跑 `nm -n` 就能直接对到函数名 ——
-// 不用再像 v223 那样手工反汇编。
 void writeCrashReport(const char* kind, const char* why, int sig) {
     char report[8192];
     size_t off = 0;
@@ -408,7 +383,7 @@ void writeCrashReport(const char* kind, const char* why, int sig) {
     bufAppend(report, sizeof(report), off,
               "调用栈（#0 是最内层；mac 上 imageOffset 与苹果崩溃报告同口径）:\n");
     void* frames[40];
-    const int n = ::backtrace(frames, 40);   // 信号上下文里是尽力而为，可能不满
+    const int n = ::backtrace(frames, 40);
     for (int i = 0; i < n; ++i) {
         const uintptr_t a = reinterpret_cast<uintptr_t>(frames[i]);
         bufAppend(report, sizeof(report), off, "  #");
@@ -439,7 +414,6 @@ void writeCrashReport(const char* kind, const char* why, int sig) {
         }
         ::close(fd);
     }
-    // 终端里启动时（./apxdesktop）stderr 仍是最快的现场，直接给一份
     if (off > 0) { const ssize_t r = ::write(STDERR_FILENO, report, off); (void)r; }
 }
 
@@ -457,14 +431,13 @@ void apxTerminateHandler() {
 
 void apxSignalHandler(int sig) {
     writeCrashReport("fatal signal", "进程收到致命信号", sig);
-    // 恢复默认处理并重发：既让系统生成自己的崩溃报告，也让退出码/信号语义不被我们改写
     ::signal(sig, SIG_DFL);
     ::raise(sig);
 }
 
 void installCrashForensics() {
     std::set_terminate(apxTerminateHandler);
-    {   // 预热：首次 backtrace 可能内部加载符号表/分配内存，放在正常上下文里做
+    {
         void* warm[4];
         (void)::backtrace(warm, 4);
     }
@@ -472,16 +445,13 @@ void installCrashForensics() {
     for (const int s : sigs) {
         struct sigaction sa{};
         sa.sa_handler = apxSignalHandler;
-        sa.sa_flags = SA_NODEFER;   // 处理器内要重发同一信号，不能被自身屏蔽
+        sa.sa_flags = SA_NODEFER;
         sigemptyset(&sa.sa_mask);
         ::sigaction(s, &sa, nullptr);
     }
     APX_LOGI("崩溃取证就绪：报告目录 {}", logDir().c_str());
 }
 
-// —————— 日志落盘 ——————
-// 双击 .app 启动时没有终端，`APX_LOG*` 不落盘就等于没有。约定与 Win 侧一致：
-// 超过 2MB 先清空（诊断只看最近一次运行），每行 flush（崩溃时最后几行必须已在盘上）。
 void startFileLogging() {
     const std::string dir = logDir();
     std::error_code ec;
@@ -496,7 +466,7 @@ void startFileLogging() {
     static std::FILE* f = std::fopen(path.c_str(), "a");
     if (f == nullptr) { std::fprintf(stderr, "[AllPeriph] 日志落盘不可用: %s\n", path.c_str()); return; }
     apxpc::Logger::instance().setSink([](apxpc::LogLevel, const std::string& line) {
-        std::lock_guard<std::mutex> g(mu);   // 回调在锁外被调用；这里只保护文件句柄
+        std::lock_guard<std::mutex> g(mu);
         if (f == nullptr) return;
         std::fwrite(line.data(), 1, line.size(), f);
         std::fputc('\n', f);
@@ -504,40 +474,30 @@ void startFileLogging() {
     });
     APX_LOGI("日志落盘：{}", path.c_str());
 }
-#endif  // GUI 基础设施（Win：防火墙/VEH/文件日志；POSIX：terminate+信号取证/文件日志）
+#endif  // GUI 基础设施
 
 }  // namespace
 
 int runDesktopMain() {
 #if defined(_WIN32)
-    // DPI 感知必须在任何 GDI/User32 调用之前设置
-    // Win10 1703+ 用 SetProcessDpiAwarenessContext；老系统动态加载失败即跳过（manifest 兑底）
     {
         HMODULE user32 = ::GetModuleHandleW(L"user32.dll");
         using SetCtx_t = BOOL (WINAPI*)(void*);
         auto setCtx = reinterpret_cast<SetCtx_t>(user32
             ? ::GetProcAddress(user32, "SetProcessDpiAwarenessContext") : nullptr);
-        if (setCtx) setCtx((void*)(intptr_t)-4);  // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = -4
+        if (setCtx) setCtx((void*)(intptr_t)-4);
     }
 
     ::AddVectoredExceptionHandler(1, apxVehHandler);
     ::SetUnhandledExceptionFilter(apxCrashFilter);
     std::set_terminate(apxTerminateHandler);
     _set_invalid_parameter_handler(apxInvalidParamHandler);
-    startFileLogging();  // GUI 子系统没有 stderr，日志必须落盘（错误排查依赖它）
+    startFileLogging();
     ensurePanelFirewallRule();
     snapshotModules();
     crashForensicsSelfCheck();
 #endif
 
-    // —————— 宿主栈创建 & 注册顺序 ——————
-    // 销毁顺序**必须**反过来，以下所有对象都是 unique_ptr：
-    //   9511 受控端 → WirelessSession（9511 客户端）→ MediaSession（媒体通道）
-    //   → AudioCapture/ScreenPush/MicBridge → FileReceiver → TrayIcon
-    // 析构时反向运行，保证"托盘退出 → 所有子系统已停"。
-
-    // 9511 受控端（广播 APX1PC 信标，手机/TV 可选本机控制）
-    // 主机名获取分平台：Win=GetComputerNameW（UTF-8 转换），POSIX=gethostname。
     std::string hostUtf8;
 #if defined(_WIN32)
     wchar_t hostW[64] = {};
@@ -555,27 +515,20 @@ int runDesktopMain() {
             hn[sizeof(hn) - 1] = '\0';
             hostUtf8 = hn;
         }
-        if (hostUtf8.empty()) hostUtf8 = "Mac";   // gethostname 失败时的诚实兑底名
+        if (hostUtf8.empty()) hostUtf8 = "Mac";
     }
 #endif
 #if defined(_WIN32)
-    // Win：面板入口（web_panel/runWebPanel）**不**创建 9511，所以由本文件创建。
     apxpc::wireless::Ctrl9511Server ctrlSrv;
     if (!ctrlSrv.start(9511, "", hostUtf8))
         APX_LOGW("9511 受控端启动失败（端口可能已被 apxhost 占用）");
     else
         APX_LOGI("9511 受控端已启动（桌面端自带）");
 #else
-    // mac/Linux：9511 受控端**不在本文件创建** —— 面板入口（runWebPanelHttp 内的
-    // HttpPanel::ctrlSrv）已经是唯一创建点。v223「mac 打开即崩溃」（issue#47）的根因
-    // 正是两处都起：本文件先占住 9511 → 面板里再起必然 bind 失败 → 旧失败路径
-    // `delete Impl` 时析构了「已经在跑」的剪贴板监视线程（未 join 的 std::thread）
-    // → std::terminate → abort。消除重复创建 + ctrl9511.cpp 的失败路径加固，两条都必要。
-    apxpc::wireless::Ctrl9511Server ctrlSrv;   // 空对象：下方 stop() 幂等，无需特判
+    apxpc::wireless::Ctrl9511Server ctrlSrv;
     APX_LOGI("9511 受控端由面板入口创建（本进程不重复创建，主机名 {}）", hostUtf8.c_str());
 #endif
 
-    // 配置
     std::string cfgPath = apxpc::config::defaultConfigPath();
     auto cfg = apxpc::config::loadConfig(cfgPath);
     if (cfg.logLevel == "debug") apxpc::Logger::instance().setLevel(apxpc::LogLevel::Debug);
@@ -583,24 +536,14 @@ int runDesktopMain() {
     else if (cfg.logLevel == "error") apxpc::Logger::instance().setLevel(apxpc::LogLevel::Error);
     APX_LOGI("全能外设宿主启动（WebView2 面板）");
 
-    // —— 宿主栈 ——
     auto session     = std::make_unique<apxpc::wireless::WirelessSession>();
     auto media       = std::make_unique<apxpc::media::MediaSession>();
 #if defined(_WIN32)
     auto screenPush  = std::make_unique<apxpc::media::ScreenPush>();
 #endif
-    // mac：**连 unique_ptr 声明都不做**（链接错误教训，CI run 首次踩出）：
-    //   ① unique_ptr<T> 的析构 deleter 是无条件模板实例化，会引用 T::~T() ——
-    //      运行时对象为 null 不豁免链接期符号需求；
-    //   ② `if (ptr) ptr->stop()` 的 guard 是**运行时**判断，调用指令本身仍产生
-    //      ScreenPush::stop() 的符号引用 —— 链接器不认运行时可达性。
-    // 因此 mac 分支不声明该对象，下面打包与退出两处也用 #if 同步条件编译。
     auto audio       = std::make_unique<apxpc::media::AudioCapture>();
     auto micBridge   = std::make_unique<apxpc::media::MicBridge>();
     auto fileRecv    = std::make_unique<apxpc::wireless::FileReceiver>();
-    // 互传（LocalSend）接收端：对象在此、起停交给面板入口（Win=runWebPanel / mac=runWebPanelHttp
-    // 启动时 start、退出时 stop）。理由与 9512 的 FileReceiver 相同：面板入口才知道
-    // 「落盘目录 = FileReceiver::defaultDir()」与「头像/alias 用本机名」这两件宿主侧的事。
     auto localSend   = std::make_unique<apxpc::localsend::LocalSendReceiver>();
     auto tray        = std::make_unique<apxpc::tray::TrayIcon>();
     auto hk          = std::make_shared<apxpc::hotkey::HotkeyManager>();
@@ -609,29 +552,21 @@ int runDesktopMain() {
     router->config() = cfg;
     router->setHotkeyManager(hk);
 
-    // 托盘：「打开面板」暂不注册（WebView2 窗口句柄在 runWebPanel 内部）
-    // runWebPanel 会在退出前把窗口句柄传回给 tray 的 setOpenCallback。
 #if defined(_WIN32)
     tray->setQuitCallback([] { ::PostQuitMessage(0); });
 #endif
-    // mac 托盘为空实现（无菜单无回调源）；面板退出走 SIGINT / window.quit，无需此处接线。
     if (!tray->create("全能外设 · WebView2"))
         APX_LOGW("托盘图标创建失败");
 
     if (cfg.autostart) apxpc::tray::setAutostart(true);
 
 #if defined(_WIN32)
-    // FileReceiver 后台监听（9512 端口）—— 收到文件：托盘气泡提示 + 推给前端文件面板。
-    // 回调跑在接收线程；notifyFileReceived 内部 PostWebMessageAsJson（线程安全）。
-    // mac/HTTP 分支**不在这里 start**：9512 由 runWebPanelHttp 内部统一启动（事件+托盘回调一体），
-    // 重复 start 会端口冲突。
     fileRecv->start(9512, std::string{}, [](const std::string& path, uint64_t size) {
         APX_LOGI("收到对端文件: {}（{} 字节）", path.c_str(), size);
         apxpc::ui::notifyFileReceived(path);
     });
 #endif
 
-    // 打包进 HostBundle
     apxpc::ui::HostBundle bundle;
     bundle.session      = session.get();
     bundle.fileReceiver = fileRecv.get();
@@ -640,23 +575,19 @@ int runDesktopMain() {
 #if defined(_WIN32)
     bundle.screenPush   = screenPush.get();
 #else
-    bundle.screenPush   = nullptr;   // 副屏不可用（虚拟显示器仅 Win；panel_http 已按未初始化形态呈现）
+    bundle.screenPush   = nullptr;
 #endif
     bundle.audio        = audio.get();
     bundle.micBridge    = micBridge.get();
+    bundle.ctrlSrv      = &ctrlSrv;
     bundle.tray         = tray.get();
     bundle.hotkey       = hk.get();
     bundle.cfg          = &cfg;
     bundle.configPath   = cfgPath;
 
-    // —— 启动面板 ——
 #if defined(_WIN32)
     const int rc = apxpc::ui::runWebPanel(bundle);
 #elif defined(__APPLE__)
-    // mac 桌面壳 = 与 apxhost panel 同一 HTTP 面板入口（webDir 空 = exe 旁 web/）。
-    // 9511 受控端由 runWebPanelHttp 内部的 HttpPanel::ctrlSrv **唯一**创建
-    // （本文件上方对 mac 已不再创建 —— 重复创建就是 v223 打开即崩的根因，见上方注释）。
-    // 其余（startAuto / 9512 收文件事件 / 媒体泵 / 麦克风接线）由 runWebPanelHttp 统一负责。
     const int rc = apxpc::ui::runWebPanelHttp(bundle, {});
 #else
     std::fprintf(stderr,
@@ -664,14 +595,13 @@ int runDesktopMain() {
     const int rc = 1;
 #endif
 
-    // —— 退出清理（反向顺序）——
     APX_LOGI("宿主栈关闭中…");
-    localSend->stop();   // 面板入口已 stop 过；重复停止是幂等的
+    localSend->stop();
     fileRecv->stop();
     audio->stop();
     micBridge->stop();
 #if defined(_WIN32)
-    screenPush->stop();   // mac 无此对象（唯一调用点同条件编译 —— 链接期零引用）
+    screenPush->stop();
 #endif
     media->disconnect();
     session->stop();
@@ -682,15 +612,10 @@ int runDesktopMain() {
     return rc;
 }
 
-// 入口。两类崩溃兜底：
-//   ① 未捕获异常 → 这里 catch（写报告 + 落一行 stderr）；
-//   ② 致命信号 / 漏出到 terminate 的异常 → 由 installCrashForensics 装的处理函数落盘。
-// POSIX 侧此前完全没有这两层：apxdesktop 一旦抛异常就直接 abort，用户只看到窗口一闪、
-// 报告里只有地址没有原因（issue#47 的 mac 崩溃就是这么发生的）。
 int main(int /*argc*/, char** /*argv*/) {
 #if !defined(_WIN32)
-    installCrashForensics();   // 必须在任何业务代码之前：后面每一步挂了都要留下现场
-    startFileLogging();        // 双击启动没有终端，日志不落盘等于没有
+    installCrashForensics();
+    startFileLogging();
 #endif
     try {
         return runDesktopMain();
