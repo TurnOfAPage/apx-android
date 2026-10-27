@@ -1,36 +1,12 @@
 // panel_http.cpp —— 浏览器面板后端（方案 B：本地 HTTP + React 前端）。
 //
 // 与 web_panel.cpp（WebView2 壳）同构 —— 协议、状态结构、动作分发完全一致：
-//   GET  /api/state           → {"kind":"state","data":{…}}（前端 400ms 轮询；每次请求前触发媒体建链泵/USB 节流）
-//   GET  /api/events?since=N  → {"events":[{…event…,"seq":N}]}（事件增量轮询，环形缓冲最近 256 条）
-//   POST /api/act|query       → web_panel 同款 handleAct/query（响应体即 act-response/query-response 协议）
-//   POST /api/upload?ip&port  → 浏览器面板的「互传发送」：body=文件原始字节，文件名走 X-File-Name 头，
-//                               流式落盘到互传目录后进 LocalSend 发送队列（浏览器拿不到系统文件对话框，
-//                               只能这么送；响应是 upload-response，发送结果仍走 on-localsend-sent 事件）
-//   POST /api/open-file       → {"kind":"open-file-response","ok":false}（浏览器沙箱拿不到系统路径；前端 http 模式已自行拒绝，此处兕底）
-//   GET  /*                   → 静态 serve 前端 dist（exe 旁 web/，防目录穿越）
-//
-// 设计取舍：
-//   · 单线程 select 模型（1s 超时 tick 跑节流任务；请求顺序处理 —— 本地 JSON 毫秒级，无并发问题）
-//   · 不做 SSE/长连接：事件与状态同用轮询，避免长连接占死 accept 循环（与 bridge.ts http 模式对应）
-//   · 仅绑定 127.0.0.1（零外网暴露）；响应 Connection: close + Cache-Control: no-store
-//   · Windows 上本文件编译为返回 -1 的 stub —— Web 面板走 web_panel.cpp，保持零交叉
-//
-// ScreenPush 边界（重要）：本入口的宿主链路（apxhost panel）**不创建、不链接**
-// ScreenPush（apxpc_screen 库未链给 apxhost；虚拟显示器仅 Windows 可用）—— 因此本文件
-// 刻意**不 include screen_push.hpp、不访问其成员**（否则编译/链接必缺符号）：
-// buildState 填「未初始化形态」的 screen Json（避免前端未做 undefined 防护时崩溃，
-// error 语义如实），handleAct 的 screen.toggle 无条件拒绝。若未来把 ScreenPush 挂进
-// 本入口，需同步链接 apxpc_screen 并恢复真实读取。
-//
-// 互传（LocalSend）接线：本入口启动 bundle.localSend —— 落盘目录显式取
-// FileReceiver::defaultDir()，与 file.list / file.delete 是同一个目录，于是互传来的文件
-// 在「文件传输」面板里直接可见、也删得掉（file.delete 的白名单就是那个目录）。
-// 动作：localsend.toggle（开关）/ localsend.status / localsend.openDir。
-//
-// 同步响应槽说明：web_panel 的异步动作（file.send 后台线程回响应）在本实现**未启用** ——
-// 浏览器无法 open-file，FilePanelModal 在 openFile 被拒后根本走不到 file.send；
-// 其余 act 全部同步完成，响应槽仅在请求线程写入，无锁安全（事件队列除外，跨线程有锁）。
+//   GET  /api/state           → {"kind":"state","data":{…}}（前端 400ms 轮询）
+//   GET  /api/events?since=N  → {"events":[{…event…,"seq":N}]}（事件增量轮询）
+//   POST /api/act|query       → web_panel 同款 handleAct/query
+//   POST /api/upload?ip&port  → 浏览器面板的「互传发送」
+//   POST /api/open-file       → {"kind":"open-file-response","ok":false}
+//   GET  /*                   → 静态 serve 前端 dist
 
 #include "apxpc/ui/panel_http.hpp"
 
@@ -85,18 +61,16 @@ using apxpc::wireless::LinkPhase;
 
 namespace fs = std::filesystem;
 
-// ——— 时钟 ———
 uint64_t steadyMs() {
     return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now().time_since_epoch()).count());
 }
 
-// ——— 事件队列（轮询消费；push 可能来自接收线程/会话回调线程，需锁）———
 struct EventEntry { long long seq = 0; std::string json; };
 std::mutex g_evMu;
 std::deque<EventEntry> g_events;
 long long g_evSeq = 0;
-constexpr size_t kEvCap = 256;   // 环形上限：轮询断开重连最多补看最近 256 条
+constexpr size_t kEvCap = 256;
 
 void pushEvent(const std::string& name, Json data = Json::makeObject()) {
     Json e = Json::makeObject();
@@ -109,36 +83,26 @@ void pushEvent(const std::string& name, Json data = Json::makeObject()) {
     while (g_events.size() > kEvCap) g_events.pop_front();
 }
 
-// ——— HTTP 面板状态（与 web_panel.cpp 的 Panel 同构，去掉窗口/COM）———
 struct HttpPanel {
     HostBundle bundle;
     std::atomic<bool> running{false};
     std::string webDir;
     uint16_t port = 0;
 
-    // 9511 受控端（对齐 Windows 桌面端 desktop_main）：广播 APX1PC 信标 —— 手机端
-    // 「TV 控制」设备列表才能发现本机（标为 (PC)）。缺这条时浏览器面板只能
-    // **主动连手机**（session 客户端方向），手机反过来发现不了本机，受控场景缺失。
     apxpc::wireless::Ctrl9511Server ctrlSrv;
 
-    // USB 传输探测节流（枚举较重，~10s 一次；macOS 无 /sys → enumerate 空 → 三态全 false，诚实）
     bool usbScanned = false;
     bool usbDevice = false, usbNcm = false, usbHid = false;
     std::string usbName, usbSpeed;
     uint64_t usbNextMs = 0;
 
-    // 媒体建链泵（对齐 web_panel tickState）：控制连接就绪后节流发起媒体连接（9502），
-    // 后台线程执行（connect 3s 级阻塞，不能卡 HTTP 循环）。
     std::thread mediaThread;
     std::atomic<bool> mediaBusy{false};
     uint64_t mediaNextMs = 0;
 
-    // 互传发送线程（PC → 对端）：一次只跑一批，避免用户连点把几百 MB 同时压出去；
-    // 结果走 on-localsend-sent 事件，act-response 先回「已开始」。
     std::thread sendThread;
     std::atomic<bool> sendBusy{false};
 
-    // 同步响应槽（单请求线程读写；见文件头说明）
     Json resp;
     bool hasResp = false;
 
@@ -146,7 +110,6 @@ struct HttpPanel {
 };
 HttpPanel* g_hp = nullptr;
 
-// ——— JSON 辅助（与 web_panel 同款）———
 Json okResp(const Json& data = Json::makeObject()) {
     Json r = Json::makeObject(); r["ok"] = true; r["data"] = data; return r;
 }
@@ -164,7 +127,6 @@ std::string phaseName(LinkPhase p) {
     }
 }
 
-// 响应必带 kind（bridge 只认 *-response；web_panel postResponse 同款大坑注释）
 void postResponse(HttpPanel* p, const std::string& id, Json r, const char* kind = "act-response") {
     if (!r.find("kind")) r["kind"] = std::string(kind);
     r["id"] = id;
@@ -172,7 +134,6 @@ void postResponse(HttpPanel* p, const std::string& id, Json r, const char* kind 
     p->hasResp = true;
 }
 
-// ——— USB 传输探测（gadget 挂载诊断）———
 void refreshUsbStatus(HttpPanel* p) {
     p->usbDevice = p->usbNcm = p->usbHid = false;
     p->usbName.clear();
@@ -194,7 +155,6 @@ void refreshUsbStatus(HttpPanel* p) {
     }
 }
 
-// ——— 状态构建（与 web_panel.cpp buildState 逐字段一致；GetTickCount64 → steadyMs）———
 void buildState(const HostBundle& b, Json& out, HttpPanel* p) {
     out = Json::makeObject();
     Json link = Json::makeObject();
@@ -205,7 +165,6 @@ void buildState(const HostBundle& b, Json& out, HttpPanel* p) {
 
     if (b.session) {
         const auto s = b.session->snapshot();
-        // ★ phase 必须是数字：前端 phaseSentence `case 3:` 严格比较，字符串 "3" 永远落 default
         link["phase"] = static_cast<double>(s.phase);
         link["phaseName"] = phaseName(s.phase);
         link["peer"] = s.peer;
@@ -223,6 +182,18 @@ void buildState(const HostBundle& b, Json& out, HttpPanel* p) {
         link["phaseName"] = std::string("idle");
     }
 
+    // 键盘/触摸板诊断 + 实体键盘状态（被控端 Ctrl9511Server 收到的输入）
+    {
+        auto cst = p->ctrlSrv.status();
+        Json ri = Json::makeArray();
+        for (const auto& r : cst.recentInputs) ri.push(Json(r));
+        out["recentInputs"] = ri;
+        Json pkb = Json::makeObject();
+        pkb["available"] = cst.padKbAvailable;
+        pkb["name"] = cst.padKbName;
+        out["padKb"] = pkb;
+    }
+
     if (b.media) {
         const auto st = b.media->status();
         const auto cc = b.media->counters();
@@ -235,9 +206,6 @@ void buildState(const HostBundle& b, Json& out, HttpPanel* p) {
         media["dropped"] = static_cast<double>(cc.dropped);
     }
 
-    // screen：本入口不挂 ScreenPush（见文件头边界说明）——**刻意不读 b.screenPush**，
-    // 否则要 include screen_push.hpp 且链接 apxpc_screen（apxhost 没链，符号必缺）。
-    // 填「未初始化形态」而非缺字段：前端若未做 undefined 防护也不会崩，error 如实。
     {
         Json v = Json::makeObject();
         v["running"] = false;
@@ -291,13 +259,10 @@ void buildState(const HostBundle& b, Json& out, HttpPanel* p) {
         transports["usbSpeed"] = p->usbSpeed;
     }
 
-    // 互传（LocalSend）：字段口径由 apxpc::localsend::statusJson 统一给出（单测钉住的那份），
-    // 这里只负责塞进 state —— 两个面板不各写一遍，免得字段名漂移弄坏前端。
     if (b.localSend) {
         std::string lerr;
         out["localsend"] = Json::parse(apxpc::localsend::statusJson(b.localSend->snapshot()), &lerr);
     } else {
-        // 未接线时也给「已关闭」的完整形态：前端按类型读，缺字段会显示成 undefined
         Json ls = Json::makeObject();
         ls["running"] = false;
         ls["port"] = 0;
@@ -316,7 +281,6 @@ void buildState(const HostBundle& b, Json& out, HttpPanel* p) {
     out["config"] = cfg;
 }
 
-// ——— 媒体建链泵（与 web_panel tickState 内同款；connect 在后台线程，不卡 HTTP 循环）———
 void mediaPumpTick(HttpPanel* p) {
     const HostBundle& b = p->bundle;
     if (!b.media || !b.session || b.media->status().connected) return;
@@ -328,10 +292,10 @@ void mediaPumpTick(HttpPanel* p) {
     if (p->mediaBusy.load()) return;
     const uint64_t now = steadyMs();
     if (now < p->mediaNextMs) return;
-    p->mediaNextMs = now + 4000;   // 失败 4s 后再试（同 web_panel）
+    p->mediaNextMs = now + 4000;
     if (p->mediaThread.joinable()) p->mediaThread.join();
     p->mediaBusy.store(true);
-    apxpc::media::MediaSession* media = b.media;   // 宿主栈对象，生命周期覆盖面板
+    apxpc::media::MediaSession* media = b.media;
     p->mediaThread = std::thread([p, media, host] {
         if (media->connect(host, apxpc::media::kMediaPort)) {
             APX_LOGI("媒体通道已连接 {}:{}", host.c_str(),
@@ -341,11 +305,6 @@ void mediaPumpTick(HttpPanel* p) {
     });
 }
 
-// ——— 互传（LocalSend）———
-
-/// 用系统文件管理器打开一个目录。fork + execlp，**不经 shell**：目录名来自宿主自己的
-/// 默认目录，但拼接进命令行总是坏习惯，这里从根上避开注入与引号问题。
-/// 子进程 exec 失败只 _exit(127)（异步信号安全），绝不把面板进程带下去。
 void openDirInFileManager(const std::string& dir) {
 #if defined(__APPLE__)
     const char* tool = "open";
@@ -364,11 +323,9 @@ void openDirInFileManager(const std::string& dir) {
     APX_LOGI("已请求打开互传目录: {}", dir.c_str());
 }
 
-/// 启动互传接收端。落盘目录显式取 FileReceiver::defaultDir() —— 与 file.list / file.delete
-/// 同一目录，互传来的文件在「文件传输」面板里直接可见、也删得掉；不各写一份默认值。
 bool startLocalSend(const HostBundle& b) {
     if (!b.localSend) return false;
-    if (b.localSend->running()) return true;   // 幂等：重复点开关不会撞端口
+    if (b.localSend->running()) return true;
 
     apxpc::localsend::Options opt;
     opt.dir = apxpc::wireless::FileReceiver::defaultDir();
@@ -394,19 +351,11 @@ bool startLocalSend(const HostBundle& b) {
     return ok;
 }
 
-/// 互传状态 → 响应体（toggle / status 共用；返回的就是 state 里那一段）
 Json localSendStatusJson(const HostBundle& b) {
     std::string err;
     return Json::parse(apxpc::localsend::statusJson(b.localSend->snapshot()), &err);
 }
 
-// ——— 动作分发（与 web_panel.cpp handleAct 逐分支一致；Win 专属分支按平台能力改写）———
-
-/// 把一批本机文件投进 LocalSend 发送队列。
-/// 在后台线程发（大文件要传几十秒，不能卡住单线程的 accept 循环），结果通过
-/// on-localsend-sent 事件推回前端，调用方先回「已开始」。
-/// 返回 false = 上一批还在发送中（调用方据此回 failResp）。
-/// 两个入口共用：动作 localsend.send（桌面壳选了路径）与 POST /api/upload（浏览器上传落盘后）。
 bool startLocalSendToPeer(HttpPanel* p, const std::string& ip, uint16_t port,
                           const std::vector<std::string>& paths) {
     if (p->sendBusy.exchange(true)) return false;
@@ -455,8 +404,16 @@ void handleAct(HttpPanel* p, const std::string& id, const std::string& name, con
         b.session->disconnect();
         return postResponse(p, id, okResp());
     }
+    if (name == "session.scanLan") {
+        auto ips = apxpc::wireless::scanLan9511(250);
+        Json out = Json::makeObject();
+        Json arr = Json::makeArray();
+        for (const auto& ip : ips) arr.push(Json(ip));
+        out["ips"] = arr;
+        return postResponse(p, id, okResp(out));
+    }
 
-    // —— 远程输入：对端请求本机代输 → 前端 RemoteInputModal 回传至此 ——
+    // —— 远程输入 ——
     if (name == "session.sendInputText" && b.session) {
         std::string text = payload.find("text") ? payload.find("text")->asString() : "";
         uint8_t flags = static_cast<uint8_t>(payload.find("flags") ? payload.find("flags")->asInt(0x04) : 0x04);
@@ -468,13 +425,10 @@ void handleAct(HttpPanel* p, const std::string& id, const std::string& name, con
         return postResponse(p, id, ok ? okResp() : failResp("发送完成通知失败"));
     }
 
-    // —— 副屏（本入口不挂 ScreenPush，见文件头边界说明：无条件如实拒绝，
-    //     刻意不访问 ScreenPush 成员 —— apxhost 未链接 apxpc_screen，成员访问会缺符号）——
     if (name == "screen.toggle") {
         return postResponse(p, id, failResp("此平台不支持副屏（虚拟显示器仅 Windows）"));
     }
 
-    // —— 音箱 ——
     if (name == "speaker.toggle" && b.audio) {
         if (b.audio->running()) { b.audio->stop(); return postResponse(p, id, okResp()); }
         if (!b.media || !b.media->status().connected)
@@ -488,7 +442,6 @@ void handleAct(HttpPanel* p, const std::string& id, const std::string& name, con
                                       : failResp(err.empty() ? "音箱启动失败" : err));
     }
 
-    // —— 麦克风桥（手机麦 → 本机播放设备）——
     if (name == "mic.toggle" && b.micBridge) {
         if (b.micBridge->running()) { b.micBridge->stop(); return postResponse(p, id, okResp()); }
         std::string devId = payload.find("deviceId") ? payload.find("deviceId")->asString() : "";
@@ -498,7 +451,6 @@ void handleAct(HttpPanel* p, const std::string& id, const std::string& name, con
                                       : failResp(err.empty() ? "麦克风桥启动失败" : err));
     }
 
-    // —— 设置项 ——
     if (name == "config.setAdaptive" && b.cfg) {
         auto* v = payload.find("on");
         b.cfg->displayAdaptive = v ? v->asBool(b.cfg->displayAdaptive) : !b.cfg->displayAdaptive;
@@ -520,7 +472,6 @@ void handleAct(HttpPanel* p, const std::string& id, const std::string& name, con
         return postResponse(p, id, okResp());
     }
 
-    // —— 窗口语义（浏览器无宿主窗口：hide=no-op；quit=停服务并退出）——
     if (name == "window.hide") {
         return postResponse(p, id, okResp());
     }
@@ -529,7 +480,6 @@ void handleAct(HttpPanel* p, const std::string& id, const std::string& name, con
         return postResponse(p, id, okResp());
     }
 
-    // —— 开机自启（mac=LaunchAgent plist；Windows=注册表 —— 各自平台 autostart 实现）——
     if (name == "tray.setAutostart") {
         bool enable = payload.find("enable") ? payload.find("enable")->asBool(false) : false;
         const bool ok = apxpc::autostart::setAutostart(enable);
@@ -542,13 +492,10 @@ void handleAct(HttpPanel* p, const std::string& id, const std::string& name, con
         return postResponse(p, id, okResp(d3));
     }
 
-    // —— 文件传输 ——
     if (name == "file.send") {
-        // 浏览器拿不到系统路径，FilePanelModal 正常流程不会走到这里；保守回显式错误。
         return postResponse(p, id, failResp("浏览器面板不支持发送本机文件（无系统文件对话框），请在桌面客户端操作"));
     }
     if (name == "file.list") {
-        // 列出收到的文件（与接收端同一 defaultDir），按修改时间新→旧
         struct Ent { std::string name; std::string path; long long size; long long ftick; };
         std::vector<Ent> ents;
         std::error_code ec;
@@ -559,7 +506,6 @@ void handleAct(HttpPanel* p, const std::string& id, const std::string& name, con
                 std::error_code fec;
                 if (!it->is_regular_file(fec)) continue;
                 Ent e;
-                // macOS 原生路径就是 UTF-8 字节串，直接 string() 无损（不走 Win 的 wide 转换）
                 e.path  = it->path().string();
                 e.name  = it->path().filename().string();
                 e.size  = static_cast<long long>(it->file_size(fec));
@@ -581,7 +527,6 @@ void handleAct(HttpPanel* p, const std::string& id, const std::string& name, con
         return postResponse(p, id, okResp(arr));
     }
     if (name == "file.delete") {
-        // 白名单：只允许删接收目录内的文件 —— weakly_canonical 解析 ../ 与符号链接后比前缀，防穿越
         const std::string path = payload.find("path") ? payload.find("path")->asString() : "";
         if (path.empty()) return postResponse(p, id, failResp("未指定文件"));
         std::error_code ec1, ec2, ec3;
@@ -606,16 +551,12 @@ void handleAct(HttpPanel* p, const std::string& id, const std::string& name, con
         return postResponse(p, id, okResp());
     }
 
-    // —— 互传（LocalSend）：手机端「互传（LocalSend）」发现本机并直接发文件 ——
-    // 与旧 9512 私有通道并存：9512 走「手机 ↔ 本工程」，这里是协议开放的那一半，
-    // 官方 LocalSend 桌面版/macOS/iOS 也能发过来。
     if (name == "localsend.status") {
         if (!b.localSend) return postResponse(p, id, failResp("互传接收端未初始化"));
         return postResponse(p, id, okResp(localSendStatusJson(b)));
     }
     if (name == "localsend.toggle") {
         if (!b.localSend) return postResponse(p, id, failResp("互传接收端未初始化"));
-        // 不带 enable 就按当前状态取反（前端开关自己算也行，这里做兜底）
         const Json* en = payload.find("enable");
         const bool enable = (en && en->isBool()) ? en->asBool() : !b.localSend->running();
         if (enable) {
@@ -627,9 +568,6 @@ void handleAct(HttpPanel* p, const std::string& id, const std::string& name, con
         }
         return postResponse(p, id, okResp(localSendStatusJson(b)));
     }
-    // localsend.send：把本机文件发给某台设备（PC → 手机 / 官方客户端）。
-    // 在后台线程发（大文件要传几十秒，不能卡住单线程的 accept 循环），
-    // 结果通过事件 on-localsend-sent 推回前端，act-response 先回「已开始」。
     if (name == "localsend.send") {
         const std::string ip = payload.find("ip") ? payload.find("ip")->asString() : "";
         const int port = payload.find("port") ? payload.find("port")->asInt(0) : 0;
@@ -665,8 +603,6 @@ void handleQuery(HttpPanel* p, const std::string& id, const std::string& name) {
     }
     postResponse(p, id, failResp("未知查询: " + name), "query-response");
 }
-
-// ——————————————————— HTTP 层 ———————————————————
 
 std::string guessMime(const std::string& path) {
     auto ends = [&](const char* ext) {
@@ -714,17 +650,12 @@ std::string percentDecode(const std::string& s) {
 struct Req {
     std::string method, path, query, body;
     bool ok = false;
-    // —— 浏览器上传（POST /api/upload）用 ——
-    // 这条路径的 body 可能是几百 MB：整段读进内存既浪费又会被下面的 512KB 闸门拒掉，
-    // 所以 body 走「流式」——readRequest 只把头部之后顺手收到的那点字节放进 body，
-    // 剩下的由 handleUpload 从 fd 继续读到文件里。
     bool streamBody = false;
-    size_t contentLength = 0;   // 声明长度（流式路径用它判断剩余量）
-    std::string fileName;       // X-File-Name 头（percent-encoded UTF-8）
+    size_t contentLength = 0;
+    std::string fileName;
 };
 
-/// 单个上传的大小上限。超了直接 413 —— 免得一颗没上限的 body 把磁盘写满。
-constexpr size_t kMaxUploadBytes = 4ull * 1024 * 1024 * 1024;   // 4 GiB
+constexpr size_t kMaxUploadBytes = 4ull * 1024 * 1024 * 1024;
 
 Req readRequest(int fd) {
     Req r;
@@ -735,7 +666,7 @@ Req readRequest(int fd) {
         const ssize_t n = ::recv(fd, tmp, sizeof(tmp), 0);
         if (n <= 0) return r;
         buf.append(tmp, static_cast<size_t>(n));
-        if (buf.size() > 64 * 1024) return r;   // header 过大拒绝
+        if (buf.size() > 64 * 1024) return r;
         headerEnd = buf.find("\r\n\r\n");
     }
     const std::string head = buf.substr(0, headerEnd);
@@ -763,7 +694,6 @@ Req readRequest(int fd) {
             std::strtoull(lowerHead.c_str() + cl + 15, nullptr, 10));
     }
 
-    // 文件名头（浏览器上传：页面上的 <input type=file> 拿不到真实路径，只能把名字带过来）
     const size_t fn = lowerHead.find("x-file-name:");
     if (fn != std::string::npos) {
         const size_t lineEnd = head.find("\r\n", fn);
@@ -775,9 +705,6 @@ Req readRequest(int fd) {
         r.fileName = percentDecode(v);
     }
 
-    // —— 上传：body 不在这里读 ——
-    // 它可能有几百 MB，整段读进内存既浪费又会撞上面那道 512KB 闸门；
-    // 这里只把「读完头顺手多收到的那点字节」交出去（body），其余由 handleUpload 从 fd 续读。
     if (r.method == "POST" && r.path == "/api/upload") {
         if (contentLength == 0 || contentLength > kMaxUploadBytes) return r;
         r.contentLength = contentLength;
@@ -787,7 +714,7 @@ Req readRequest(int fd) {
         return r;
     }
 
-    if (contentLength > 512 * 1024) return r;   // body 过大拒绝
+    if (contentLength > 512 * 1024) return r;
     while (rest.size() < contentLength) {
         const ssize_t n = ::recv(fd, tmp, sizeof(tmp), 0);
         if (n <= 0) return r;
@@ -839,7 +766,6 @@ void serveStatic(HttpPanel* p, int fd, const std::string& uriPath) {
     const fs::path canon = fs::weakly_canonical(full, ec);
     if (ec)
         return respond(fd, 404, "Not Found", "text/plain; charset=utf-8", "not found");
-    // 前缀防护（weakly_canonical 已解析符号链接，防目录穿越）
     const std::string rootS = root.generic_string();
     const std::string canonS = canon.generic_string();
     if (canonS != rootS &&
@@ -849,7 +775,6 @@ void serveStatic(HttpPanel* p, int fd, const std::string& uriPath) {
         return respond(fd, 403, "Forbidden", "text/plain; charset=utf-8", "forbidden");
 
     if (!fs::is_regular_file(canon, ec) || ec) {
-        // 首页缺失 → 前端未打包：给获取指引（诚实降级，不白屏）
         if (uriPath == "/" || uriPath == "/index.html") {
             const std::string tip =
                 "<!doctype html><meta charset=utf-8><title>全能外设</title>"
@@ -870,7 +795,6 @@ void serveStatic(HttpPanel* p, int fd, const std::string& uriPath) {
     respond(fd, 200, "OK", guessMime(canon.generic_string()), body);
 }
 
-// ——— 协议信封分发（POST body → handleAct/handleQuery → 响应槽）———
 void dispatchEnvelope(HttpPanel* p, const std::string& body, bool isAct) {
     p->resetResp();
     std::string err;
@@ -896,7 +820,7 @@ void dispatchEnvelope(HttpPanel* p, const std::string& body, bool isAct) {
     } else {
         handleQuery(p, idStr, name ? name->asString() : "");
     }
-    if (!p->hasResp) {   // 兑底：路径没设 resp（不应发生，保险让 bridge 正常 reject）
+    if (!p->hasResp) {
         Json r = failResp("请求处理失败（空响应）");
         r["kind"] = std::string(isAct ? "act-response" : "query-response");
         r["id"] = idStr;
@@ -905,12 +829,10 @@ void dispatchEnvelope(HttpPanel* p, const std::string& body, bool isAct) {
     }
 }
 
-/// 取 URL 查询参数（`?ip=1.2.3.4&port=53317`）。找不到返回空串。
 std::string queryValue(const std::string& query, const std::string& key) {
     const std::string pat = key + "=";
     size_t i = 0;
     while ((i = query.find(pat, i)) != std::string::npos) {
-        // 只在参数边界上匹配，避免 "xip=" 命中 "ip="
         const bool atStart = (i == 0) || query[i - 1] == '&';
         if (atStart) {
             const size_t b = i + pat.size();
@@ -922,7 +844,6 @@ std::string queryValue(const std::string& query, const std::string& key) {
     return std::string();
 }
 
-/// 同名不覆盖：加 " (2)"、" (3)"…（与接收端 / 私有通道同策略，别把用户已有文件冲掉）。
 fs::path dedupePath(const fs::path& dir, const std::string& name) {
     const fs::path first = dir / name;
     std::error_code ec;
@@ -936,16 +857,6 @@ fs::path dedupePath(const fs::path& dir, const std::string& name) {
     return first;
 }
 
-/// 浏览器面板上传：`POST /api/upload?ip=..&port=..`，body 是文件原始字节，
-/// 文件名走 `X-File-Name` 头（percent-encoded UTF-8，页面上的 <input type=file> 拿不到真实路径）。
-///
-/// 为什么要有这条路：桌面壳（WebView2）的「选文件」是系统对话框，浏览器页面拿不到；
-/// 于是 mac / 浏览器面板里「互传发送」以前只能报错。浏览器自带 <input type=file>，
-/// 把选中的字节直接 POST 上来即可 —— 文件落进互传默认目录（与 file.list / 接收端同一目录，
-/// 发出去的文件在这里也看得见），落完就进 LocalSend 发送队列。
-///
-/// 落盘用「先写 .part → 收齐再改名」：中途断线只留一个临时文件，不会出现
-/// 半截文件顶着正式名字被别的程序读到。临时文件会删掉。
 void handleUpload(HttpPanel* p, int fd, const Req& req) {
     const std::string ip = queryValue(req.query, "ip");
     const long portL = std::strtol(queryValue(req.query, "port").c_str(), nullptr, 10);
@@ -966,7 +877,6 @@ void handleUpload(HttpPanel* p, int fd, const Req& req) {
         return;
     }
 
-    // 上传可能持续几十秒（大文件 + 慢 Wi-Fi），把接收超时放宽；连接默认 5s 是给一问一答用的。
     timeval tv{60, 0};
     ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
@@ -984,7 +894,7 @@ void handleUpload(HttpPanel* p, int fd, const Req& req) {
     }
 
     size_t written = 0;
-    std::string chunk = req.body;    // readRequest 读完头之后顺手收到的那点字节
+    std::string chunk = req.body;
     if (chunk.size() > req.contentLength) chunk.resize(req.contentLength);
     if (!chunk.empty()) {
         out.write(chunk.data(), static_cast<std::streamsize>(chunk.size()));
@@ -994,7 +904,7 @@ void handleUpload(HttpPanel* p, int fd, const Req& req) {
     while (written < req.contentLength) {
         const size_t want = std::min(sizeof(buf), req.contentLength - written);
         const ssize_t n = ::recv(fd, buf, want, 0);
-        if (n <= 0) break;   // 断线 / 超时：下面是「收齐了吗」的统一判断
+        if (n <= 0) break;
         out.write(buf, static_cast<std::streamsize>(n));
         written += static_cast<size_t>(n);
     }
@@ -1041,7 +951,6 @@ void handleConnection(HttpPanel* p, int fd) {
     if (!req.ok) { ::close(fd); return; }
 
     if (req.method == "GET" && req.path == "/api/state") {
-        // 轮询触发节流任务（与 web_panel 的 400ms tick 等价；select tick 另有一份兑底）
         const uint64_t now = steadyMs();
         if (now >= p->usbNextMs) {
             refreshUsbStatus(p);
@@ -1080,10 +989,8 @@ void handleConnection(HttpPanel* p, int fd) {
         dispatchEnvelope(p, req.body, false);
         respond(fd, 200, "OK", "application/json; charset=utf-8", p->resp.stringify());
     } else if (req.method == "POST" && req.path == "/api/upload" && req.streamBody) {
-        // 浏览器上传（互传发送）。body 由 handleUpload 从 fd 流式读，不经过上面的 512KB 闸门。
         handleUpload(p, fd, req);
     } else if (req.method == "POST" && req.path == "/api/open-file") {
-        // 兑底（前端 http 模式已自行拒绝；协议内回应让漏网请求不悬挂）
         std::string err;
         auto j = Json::parse(req.body, &err);
         std::string idStr;
@@ -1113,7 +1020,6 @@ int runWebPanelHttp(const HostBundle& bundle, const std::string& webDir) {
     if (!webDir.empty()) {
         panel.webDir = webDir;
     } else {
-        // exe 旁 web/（与 apxdesktop 约定一致）
         const std::string exe = apxpc::autostart::getExePath();
         const size_t slash = exe.find_last_of('/');
         const std::string exeDir =
@@ -1124,7 +1030,6 @@ int runWebPanelHttp(const HostBundle& bundle, const std::string& webDir) {
     g_hp = &panel;
     panel.running.store(true);
 
-    // 启动时同步 autostart（runWebPanel 同款；mac=LaunchAgent plist 补写）
     if (panel.bundle.cfg && panel.bundle.cfg->autostart) {
         if (!apxpc::autostart::isAutostartEnabled()) {
             APX_LOGI("启动同步: config autostart=true 但自启项缺失，补写");
@@ -1132,16 +1037,11 @@ int runWebPanelHttp(const HostBundle& bundle, const std::string& webDir) {
         }
     }
 
-    // 自动发现（runWebPanel 关键修复同款：缺这步永远 Idle 不收 APX1PH 信标）
     if (panel.bundle.session) {
         panel.bundle.session->startAuto();
         APX_LOGI("无线自动发现已启动（等待手机 APX1PH 信标）");
     }
 
-    // 9511 受控端（对齐 Windows 桌面端 desktop_main 的既有语义）：广播 APX1PC 信标 ——
-    // 手机端「TV 控制」的设备列表才能发现本机（标为 (PC)）。缺这条时浏览器面板只能
-    // **主动连手机**（session 客户端方向），手机反过来发现不了本机 —— 受控场景缺失。
-    // 主机名：POSIX gethostname（Win 版 desktop_main 用 GetComputerNameW 同义）。
     {
         char hname[256] = {};
         if (gethostname(hname, sizeof(hname) - 1) == 0 && hname[0] != '\0') {
@@ -1153,10 +1053,6 @@ int runWebPanelHttp(const HostBundle& bundle, const std::string& webDir) {
         }
     }
 
-    // 麦克风收流接线：对齐老 Win32 面板（panel_win32）的既有语义 ——
-    // streamId==kStreamMic 且麦克风桥在跑 → feed。回调在媒体收流线程上执行，
-    // feed 自身加锁不阻塞 ✓。注：Win 的 web_panel 模式此前未接这条线（既有缺口，
-    // 不在本 PR 范围），HTTP 面板补上。
     if (panel.bundle.media && panel.bundle.micBridge) {
         apxpc::media::MediaSession* media = panel.bundle.media;
         apxpc::media::MicBridge* mic = panel.bundle.micBridge;
@@ -1168,7 +1064,6 @@ int runWebPanelHttp(const HostBundle& bundle, const std::string& webDir) {
         });
     }
 
-    // 文件接收（TCP 9512）：收到 → 托盘气泡（mac no-op）+ 推事件给前端文件面板
     if (panel.bundle.fileReceiver) {
         const bool ok = panel.bundle.fileReceiver->start(
             9512, "",
@@ -1188,7 +1083,6 @@ int runWebPanelHttp(const HostBundle& bundle, const std::string& webDir) {
                      panel.bundle.fileReceiver->lastError().c_str());
     }
 
-    // 互传（LocalSend）随面板一起起来（面板开了就该能被手机发现；用户也能从卡片关掉）
     if (panel.bundle.localSend) {
         if (!startLocalSend(panel.bundle))
             APX_LOGW("互传接收端未启动：{}", panel.bundle.localSend->lastError().c_str());
@@ -1196,7 +1090,6 @@ int runWebPanelHttp(const HostBundle& bundle, const std::string& webDir) {
         APX_LOGI("互传接收端未接线（bundle.localSend 为空）");
     }
 
-    // 远程输入请求（0x25）→ 事件（前端弹浮层；回调可能来自 9511 reader 线程，pushEvent 有锁）
     if (panel.bundle.session) {
         panel.bundle.session->setOnRequestInput([](const std::string& hint) {
             Json d = Json::makeObject();
@@ -1205,7 +1098,6 @@ int runWebPanelHttp(const HostBundle& bundle, const std::string& webDir) {
         });
     }
 
-    // —— 监听 127.0.0.1:0（临时端口，零外网暴露）——
     const int lfd = ::socket(AF_INET, SOCK_STREAM, 0);
     if (lfd < 0) {
         APX_LOGE("socket 创建失败");
@@ -1234,12 +1126,10 @@ int runWebPanelHttp(const HostBundle& bundle, const std::string& webDir) {
     std::fflush(stdout);
     APX_LOGI("浏览器面板就绪: {}（webDir={}）", url.c_str(), panel.webDir.c_str());
 
-    // 自动打开浏览器（macOS `open`；其他 POSIX 仅打印地址）
 #if defined(__APPLE__)
     (void)std::system(("open '" + url + "'").c_str());
 #endif
 
-    // 信号：SIGINT/SIGTERM → 优雅退出；SIGPIPE 忽略（写到断开的连接不崩）
     ::signal(SIGPIPE, SIG_IGN);
     struct sigaction sa {};
     sa.sa_handler = [](int) {
@@ -1248,7 +1138,6 @@ int runWebPanelHttp(const HostBundle& bundle, const std::string& webDir) {
     ::sigaction(SIGINT, &sa, nullptr);
     ::sigaction(SIGTERM, &sa, nullptr);
 
-    // —— select 主循环（1s 超时 tick：USB 10s / 媒体泵 4s 节流任务的兑底时机）——
     while (panel.running.load()) {
         fd_set rfds;
         FD_ZERO(&rfds);
@@ -1256,7 +1145,7 @@ int runWebPanelHttp(const HostBundle& bundle, const std::string& webDir) {
         timeval tv{1, 0};
         const int r = ::select(lfd + 1, &rfds, nullptr, nullptr, &tv);
         if (r < 0) {
-            if (errno == EINTR) continue;   // 信号打断（退出标志由 handler 置）
+            if (errno == EINTR) continue;
             break;
         }
         if (r == 0) {
@@ -1270,15 +1159,12 @@ int runWebPanelHttp(const HostBundle& bundle, const std::string& webDir) {
         }
         const int fd = ::accept(lfd, nullptr, nullptr);
         if (fd < 0) continue;
-        handleConnection(&panel, fd);   // 单请求同步处理完即关（本地毫秒级）
+        handleConnection(&panel, fd);
     }
 
-    // —— 清理：只 join 本文件创建的线程；宿主对象生命周期在调用方 ——
     ::close(lfd);
-    panel.ctrlSrv.stop();   // 9511 受控端 + APX1PC 信标广播停止
-    // 互传接收端也停掉：它的回调会 pushEvent，面板都撤了就不该再往里写
+    panel.ctrlSrv.stop();
     if (panel.bundle.localSend) panel.bundle.localSend->stop();
-    // 发送线程持 HttpPanel*（栈对象）：先 join 再出栈，否则发送中退出会悬空崩溃
     if (panel.sendThread.joinable()) panel.sendThread.join();
     if (panel.mediaThread.joinable()) panel.mediaThread.join();
     g_hp = nullptr;
@@ -1292,7 +1178,7 @@ int runWebPanelHttp(const HostBundle& bundle, const std::string& webDir) {
 
 namespace apxpc::ui {
 int runWebPanelHttp(const HostBundle&, const std::string&) {
-    return -1;   // Windows 走 web_panel.cpp（WebView2 壳），本实现不启用（零交叉）
+    return -1;
 }
 }  // namespace apxpc::ui
 
