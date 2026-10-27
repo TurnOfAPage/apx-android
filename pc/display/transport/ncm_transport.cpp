@@ -294,7 +294,8 @@ bool NcmTransport::isLinkUp() const {
     struct ifreq ifr={}; strncpy(ifr.ifr_name,impl_->adapterName.c_str(),IFNAMSIZ-1);
     bool up=false;
     if(ioctl(fd,SIOCGIFFLAGS,&ifr)==0) up=(ifr.ifr_flags&IFF_RUNNING)!=0;
-    close(fd); return up;
+    // 必须写 ::close —— 类内成员 close() 会遮蔽全局的，Linux 上这一行一直编不过
+    ::close(fd); return up;
 #endif
 }
 

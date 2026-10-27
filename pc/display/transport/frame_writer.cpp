@@ -1,5 +1,6 @@
 #include "transport/frame_writer.hpp"
 
+#include <atomic>   // std::atomic<int> s_failHint（此前靠间接包含，Linux/g++ 下编不过）
 #include <cstring>
 #include <vector>
 

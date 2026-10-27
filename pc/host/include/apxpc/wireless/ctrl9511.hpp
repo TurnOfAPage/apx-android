@@ -11,7 +11,8 @@
 //     逐字节一致：APX1 16 字节头（streamId=3）+ body + u32 CRC32。
 //   * 握手：客户端先发 u32 LE 令牌长度 + UTF-8 令牌（空令牌也发那 4 字节长度）。
 //   * 控制子命令（body[0]）：
-//       0x01 鼠标   [1]=buttons [2]=dx(i8) [3]=dy(i8) [4]=wheel(i8)
+//       0x01 鼠标   [1]=buttons [2]=dx(i8) [3]=dy(i8) [4]=wheel(i8) [5]=pan(i8，可选)
+//                   pan 右滚为正；旧控制端只发 5 字节，此时按 0 处理（协议向后兼容）
 //       0x02 多媒体 [1..2]=u16 位图（LE），位序见 android CONSUMER_MAP
 //       0x03 键盘   [1]=mod [2]=0 [3..8]=k1..k6（HID usage 页 0x07）
 //       0x04 触摸   [1]=action(0 down/1 up/2 move) [2]=0
@@ -236,7 +237,8 @@ private:
 };
 
 /// v184：特殊键/组合键注入（UTF 文本之外的方向键/删除/编辑快捷键）。
-/// mod 位图：1=Ctrl 2=Shift 4=Alt。实现见 input_injector_win.cpp。
+/// mod 位图：1=Ctrl 2=Shift 4=Alt。三端各有实现：input_injector_win.cpp /
+/// input_injector_mac.mm / input_injector_lin.cpp（Linux 侧经 /dev/uinput）。
 bool injectSpecialKey(uint8_t mod, uint8_t vk);
 
 }  // namespace apxpc::wireless

@@ -40,6 +40,23 @@ Tag `v223.1`，只含 `pc/host` 与 Android 客户端改动，设置页 UI 未�
   `~/Library/Application Support/AllPeriph/config.json`（原先落在 `LOCALAPPDATA` 这种不成规矩的路径上）。
   Linux/Windows 路径**刻意不动**，避免老用户配置看起来「消失」。
 
+### 修复（Linux 目标）
+- **`input_injector_lin.cpp` 长期编不过**（12 处 `struct uinput_setup has no member named 'absmin'`）：
+  轴范围是老 `uinput_user_dev` 时代的写法，现代内核头里 `struct uinput_setup` 只有
+  `id / name / ff_effects_max`。改为**逐轴 `UI_ABS_SETUP`**（`struct uinput_abs_setup`）设范围，
+  顺序：EV/KEY/REL/ABS 位（`UI_SET_*BIT`）→ 逐轴 `UI_ABS_SETUP` → `UI_DEV_SETUP` → `UI_DEV_CREATE`；
+  并补 `REL_HWHEEL` 相对轴位（横向滚动能落地的前提）。此前 Linux 目标整块编不过 ——
+  不只是没产物，连 `wireless_session_lifecycle_test` 都到不了「编得过」这一步（ctest 里一直是 Not Run）。
+- **补齐该文件缺失的四个自由函数**（此前只有 Win/macOS 两份实现，Linux 链接必 undefined）：
+  `setSystemClipboard` / `readSystemClipboard`（xclip 优先、Wayland 回退 wl-clipboard，
+  两个都没有就如实返回 false，不假装成功）；`injectSpecialKey`（协议 VK 码 → HID usage →
+  同一张 Linux 键码表）；`injectSystemText`（纯 ASCII 短文本按 US 布局逐键键入，不碰剪贴板；
+  含中文/换行/长文本走「写剪贴板 + Ctrl+V」并把用户原来的剪贴板还回去，与 Win/mac 同策略）。
+- **`LinClipboardWatcher` 同型隐患对齐**：补析构 `stop()`、`start()` 幂等（已有 joinable 线程即拒绝）、
+  采集线程改捕获 `shared_ptr<atomic<bool>>` + 回调副本（不再裸用 `this`），并加 600ms 回环抑制
+  （自己刚写过剪贴板时 watcher 不回传）。macOS 侧同一处正是 v223 崩溃的根因，Linux 这份当时没跟着改。
+- 本地 `ctest` 结果：Linux 上 **7/7 通过**（修前 6/7，`wireless_session_lifecycle_test` 因编译失败 Not Run）。
+
 ### 新增
 - **触控板横向滚动（四端打通）**：0x01 控制载荷补第 6 字节 `pan`（i8，可选）。
   `ctrl9511` 注入接口 `injectMouse(..., int8_t pan = 0)`；macOS 用
