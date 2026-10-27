@@ -157,13 +157,14 @@ std::vector<std::string> scanLan9511(int timeoutMs) {
                 sockaddr_in local{};
                 socklen_t l = sizeof(local);
                 if (getsockname(s, reinterpret_cast<sockaddr*>(&local), &l) == 0) {
-                    char buf[32] = {0};
+                    std::string ip;
 #if defined(_WIN32)
-                    strncpy_s(buf, sizeof(buf) - 1, inet_ntoa(local.sin_addr), _TRUNCATE);
+                    ip = inet_ntoa(local.sin_addr);
 #else
+                    char buf[32] = {0};
                     inet_ntop(AF_INET, &local.sin_addr, buf, sizeof(buf));
+                    ip = buf;
 #endif
-                    std::string ip(buf);
                     size_t d = ip.rfind('.');
                     if (d != std::string::npos) prefix = ip.substr(0, d + 1);
                 }
