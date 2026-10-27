@@ -15,28 +15,25 @@ import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
+import android.widget.FrameLayout
 import android.widget.TextView
 import com.allperiph.R
 import com.allperiph.shared.util.Log
-import com.allperiph.touchpad.TouchpadModule
 import kotlin.math.abs
 
 /**
- * 悬浮球（反馈#7）：独立系统 overlay 触控板窗口。
+ * 悬浮球（v1.0_test 重设计）：圆形半透明磨砂球 + 环绕一圈的菜单圆钮。
  *
- * 为什么需要：连接/HID 已能后台保活（AgentForegroundService + KeepAlive），但**输入面**
- * 一直挂在前台 Activity —— HyperOS 小窗失焦时系统不给它派发输入事件（freeform 未聚焦
- * 窗口不收 input），实测小窗后台无法输入、必须展开小窗，Pad 上很影响显示。
- * overlay 窗口与前台/焦点无关，其他 App 照常可点，球/面板照常收触摸。
+ * 交互：
+ *  - 单击小球：展开 / 收起围绕球一圈的菜单圆钮；
+ *  - 长按小球（400ms）：进入拖动模式，可移动悬浮球位置（松手落位）；
+ *  - 菜单圆钮（环绕一圈）：
+ *      关闭悬浮球 · 打开 App · 无线/蓝牙/USB 模式切换 · 自定义功能。
  *
- * 形态：
- *  - 小球（48dp）：单击展开/收起，拖动移位，长按关闭服务；
- *  - 面板（底部 300dp 半透卡）：整块即触控板，touch 直接喂 [TouchpadModule.feed]
- *    —— 与触控板页完全同一条手势链路（GestureEngine 的 bounds 由首个事件自适应，
- *    不需要配置 surface）；面板外屏幕区域不受影响（FLAG_NOT_TOUCH_MODAL）。
+ * 移除了旧版的「底部触控板面板」（虚拟触控板 GUI）—— 输入仍走 App 内触控板页，
+ * 悬浮球只做快捷入口与模式切换。
  *
- * 权限：复用已有 SYSTEM_ALERT_WINDOW（副屏同款）；未授权时先跳系统授权页。
- * 入口：设置页「工具」小节 → 悬浮球。
+ * 权限：复用 SYSTEM_ALERT_WINDOW；入口：设置页「工具」小节 → 悬浮球。
  */
 class FloatingBallService : Service() {
 
@@ -48,18 +45,14 @@ class FloatingBallService : Service() {
         const val ACTION_TOGGLE = "com.allperiph.ui.floating_ball.toggle"
         const val ACTION_STOP = "com.allperiph.ui.floating_ball.stop"
 
-        /** 三指手势遮蔽的持有者标识（与主页 / 独立操控面区分开） */
-        private const val HOLDER_BALL = "ball"
+        /** 菜单环半径（球心到圆钮心）。 */
+        private const val MENU_RADIUS_DP = 82
 
-        /** 服务实际存活状态（设置行显示用，比持久化的开关位更真实） */
+        /** 服务实际存活状态。 */
         @Volatile
         var isRunning: Boolean = false
             private set
 
-        /**
-         * 设置页入口：无悬浮窗权限 → 跳系统授权页（HyperOS：设置→隐私保护→显示悬浮窗）；
-         * 有权限 → 开/关切换（服务未活 = 开，已活 = 停）。
-         */
         fun requestToggle(c: Context) {
             if (!Settings.canDrawOverlays(c)) {
                 runCatching {
@@ -84,15 +77,15 @@ class FloatingBallService : Service() {
 
     private var ball: View? = null
     private var ballAttached = false
-    private var panel: View? = null
+    private var menu: View? = null
 
-    // 球拖动/点击判定
+    // 球拖动 / 点击判定
     private var dragDX = 0f
     private var dragDY = 0f
     private var downRawX = 0f
     private var downRawY = 0f
     private var downAt = 0L
-    private var moved = false
+    private var longPress = false
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density + 0.5f).toInt()
 
@@ -124,11 +117,9 @@ class FloatingBallService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        when (intent?.action) {
-            ACTION_STOP -> {
-                shutdown()
-                return START_NOT_STICKY
-            }
+        if (intent?.action == ACTION_STOP) {
+            shutdown()
+            return START_NOT_STICKY
         }
         return START_NOT_STICKY
     }
@@ -144,12 +135,12 @@ class FloatingBallService : Service() {
 
     private fun shutdown() {
         getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_ON, false).apply()
-        // 服务被杀/关闭时面板可能还开着：遮蔽必须一起还，否则系统三指截屏一直被关着
-        com.allperiph.touchpad.GestureShield.release(this, HOLDER_BALL)
+        com.allperiph.touchpad.GestureShield.release(this, "ball")
+        detach(menu)
         detach(ball)
-        detach(panel)
+        menu = null
         ball = null
-        panel = null
+        ballAttached = false
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
@@ -162,11 +153,13 @@ class FloatingBallService : Service() {
 
     private fun addBall() {
         if (ballAttached) return
-        // issue#44：悬浮球此前用 Service 自带（亮色）上下文 inflate，深色下取色永远是亮的
-        val v = ball ?: LayoutInflater.from(ThemePref.wrap(this)).inflate(R.layout.view_floating_ball, null).also { ball = it }
+        val v = ball
+            ?: LayoutInflater.from(ThemePref.wrap(this)).inflate(R.layout.view_floating_ball, null)
+                .also { ball = it }
         wm.addView(v, ballLayoutParams())
         ballAttached = true
         setupBallTouch(v)
+        updateBallLabel()
     }
 
     private fun ballLayoutParams() = WindowManager.LayoutParams(
@@ -178,7 +171,7 @@ class FloatingBallService : Service() {
         PixelFormat.TRANSLUCENT,
     ).apply {
         gravity = Gravity.TOP or Gravity.START
-        x = resources.displayMetrics.widthPixels - dp(64)
+        x = resources.displayMetrics.widthPixels - dp(72)
         y = resources.displayMetrics.heightPixels / 3
     }
 
@@ -191,19 +184,23 @@ class FloatingBallService : Service() {
                     downRawX = ev.rawX
                     downRawY = ev.rawY
                     downAt = System.currentTimeMillis()
-                    moved = false
+                    longPress = false
                 }
                 MotionEvent.ACTION_MOVE -> {
-                    if (abs(ev.rawX - downRawX) > 12 || abs(ev.rawY - downRawY) > 12) moved = true
-                    view.x = ev.rawX + dragDX
-                    view.y = ev.rawY + dragDY
+                    if (!longPress && System.currentTimeMillis() - downAt >= 400) {
+                        longPress = true
+                        com.allperiph.ui.Feedback.haptic(this)
+                    }
+                    if (longPress) {
+                        view.x = ev.rawX + dragDX
+                        view.y = ev.rawY + dragDY
+                    }
                 }
                 MotionEvent.ACTION_UP -> {
-                    val held = System.currentTimeMillis() - downAt
-                    when {
-                        moved -> { /* 拖动结束：落位即可 */ }
-                        held >= 400 -> shutdown()                            // 长按关闭悬浮球
-                        else -> if (panel == null) expand() else collapse()  // 单击展开/收起
+                    if (longPress) {
+                        // 长按拖动结束：落位即可
+                    } else if (abs(ev.rawX - downRawX) < 12 && abs(ev.rawY - downRawY) < 12) {
+                        toggleMenu()
                     }
                 }
             }
@@ -211,39 +208,158 @@ class FloatingBallService : Service() {
         }
     }
 
-    // ————————————————————————— 展开面板（底部触控板） —————————————————————————
+    // ————————————————————————— 菜单环 —————————————————————————
 
-    private fun expand() {
-        if (panel != null) return
-        val v = LayoutInflater.from(ThemePref.wrap(this)).inflate(R.layout.view_touchpad_panel, null)
-        v.findViewById<TextView>(R.id.tvPanelClose)?.setOnClickListener { collapse() }
-        v.findViewById<View>(R.id.touchSurface).setOnTouchListener { _, ev ->
-            // 与触控板页同一条链路：feed → GestureEngine → 三出口（USB 鼠标帧/蓝牙/无线）
-            (AgentController.module(com.allperiph.core.ModuleId.TOUCHPAD) as? TouchpadModule)?.feed(ev)
-            true
+    private fun toggleMenu() {
+        if (menu != null) collapseMenu() else expandMenu()
+    }
+
+    /** 展开：以球为圆心，环绕一圈菜单圆钮（上/右/下/左）。 */
+    private fun expandMenu() {
+        if (menu != null) return
+        val b = ball ?: return
+        val cx = b.x + b.width / 2f
+        val cy = b.y + b.height / 2f
+
+        val radius = dp(MENU_RADIUS_DP)
+        val btnSize = dp(44)
+        val size = (radius + btnSize / 2) * 2
+        val center = size / 2
+
+        val container = FrameLayout(ThemePref.wrap(this)).apply {
+            setBackgroundResource(android.R.color.transparent)
         }
+
+        // 中心占位区（覆盖球位）：点击 = 收起菜单
+        val ballSlot = dp(60)
+        val slot = TextView(ThemePref.wrap(this)).apply {
+            setBackgroundResource(android.R.color.transparent)
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { collapseMenu() }
+        }
+        val slp = FrameLayout.LayoutParams(ballSlot, ballSlot)
+        slp.leftMargin = center - ballSlot / 2
+        slp.topMargin = center - ballSlot / 2
+        container.addView(slot, slp)
+
+        val items = listOf(
+            MenuItem("✕", getString(R.string.ui_main_floating_ball_close)) { onMenuClose() },
+            MenuItem("⌂", getString(R.string.ui_main_floating_ball_open)) { onMenuApp() },
+            MenuItem(modeGlyph(), getString(R.string.ui_main_floating_ball_mode)) { onMenuMode() },
+            MenuItem("⚙", getString(R.string.ui_main_floating_ball_custom)) { onMenuCustom() },
+        )
+
+        // 4 个圆钮按上/右/下/左排列（角度 -90°、0°、90°、180°）
+        val angles = intArrayOf(-90, 0, 90, 180)
+        items.forEachIndexed { i, item ->
+            val btn = TextView(ThemePref.wrap(this)).apply {
+                text = item.glyph
+                contentDescription = item.label
+                setBackgroundResource(R.drawable.bg_menu_button)
+                gravity = Gravity.CENTER
+                textSize = 16f
+                setTextColor(getColor(R.color.ball_text))
+                isClickable = true
+                isFocusable = true
+                setOnClickListener {
+                    item.action()
+                    collapseMenu()
+                }
+            }
+            val a = Math.toRadians(angles[i].toDouble())
+            val bx = center + (radius * Math.cos(a)).toInt() - btnSize / 2
+            val by = center + (radius * Math.sin(a)).toInt() - btnSize / 2
+            val lp = FrameLayout.LayoutParams(btnSize, btnSize)
+            lp.leftMargin = bx
+            lp.topMargin = by
+            container.addView(btn, lp)
+        }
+
         val lp = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.MATCH_PARENT,
-            dp(300),
+            size, size,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                 WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
             PixelFormat.TRANSLUCENT,
-        ).apply { gravity = Gravity.BOTTOM }
-        wm.addView(v, lp)
-        panel = v
-        // 悬浮球的触控板同样是三指滑动面：展开期间一并遮蔽系统三指截屏，
-        // 收起就还（这个面板压在别的应用上，不还的话用户在桌面想三指截屏会按不动）
-        com.allperiph.touchpad.GestureShield.acquireWithHint(this, HOLDER_BALL)
-        // 展开时收起球（避免叠在面板上）
-        ball?.let { if (ballAttached) { detach(it); ballAttached = false } }
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            x = (cx - center).toInt()
+            y = (cy - center).toInt()
+        }
+        wm.addView(container, lp)
+        menu = container
+        Log.i(TAG, "菜单环展开")
     }
 
-    private fun collapse() {
-        detach(panel)
-        panel = null
-        // 收起就走延迟还原（1.2s 内又展开就不用白跑两次 su）
-        com.allperiph.touchpad.GestureShield.releaseSoon(this, HOLDER_BALL)
-        addBall()
+    private fun collapseMenu() {
+        detach(menu)
+        menu = null
+        Log.i(TAG, "菜单环收起")
     }
+
+    // ————————————————————————— 菜单动作 —————————————————————————
+
+    private fun onMenuClose() = shutdown()
+
+    private fun onMenuApp() {
+        runCatching {
+            startActivity(
+                Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
+        }
+    }
+
+    /** 无线 → 蓝牙 → USB → 无线 循环切换（复用 AgentController 的传输开关语义）。 */
+    private fun onMenuMode() {
+        val transports = listOf("wifi", "bt", "usb")
+        val current = transports.firstOrNull { AgentController.isTransportEnabled(this, it) }
+        val next = when (current) {
+            "wifi" -> "bt"
+            "bt" -> "usb"
+            "usb" -> "wifi"
+            else -> "wifi"
+        }
+        for (t in transports) {
+            if (t != next) AgentController.setTransportEnabled(this, t, false)
+        }
+        AgentController.setTransportEnabled(this, next, true)
+        for (id in AgentController.groupModules(next)) {
+            AgentController.setModuleEnabled(this, id, true)
+        }
+        Log.i(TAG, "模式切换到：${AgentController.transportLabel(next)}")
+        updateBallLabel()
+    }
+
+    /** 自定义功能：默认打开 App 设置页（后续可在设置里把该圆钮换成任意功能）。 */
+    private fun onMenuCustom() {
+        runCatching {
+            startActivity(
+                Intent(this, MainActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
+        }
+    }
+
+    // ————————————————————————— 状态 —————————————————————————
+
+    private fun modeGlyph(): String = when (
+        listOf("wifi", "bt", "usb").firstOrNull { AgentController.isTransportEnabled(this, it) }
+    ) {
+        "wifi" -> "W"
+        "bt" -> "B"
+        "usb" -> "U"
+        else -> "M"
+    }
+
+    private fun updateBallLabel() {
+        val tv = ball?.findViewById<TextView>(R.id.tvBallState) ?: return
+        tv.text = modeGlyph()
+    }
+
+    private data class MenuItem(
+        val glyph: String,
+        val label: String,
+        val action: () -> Unit,
+    )
 }

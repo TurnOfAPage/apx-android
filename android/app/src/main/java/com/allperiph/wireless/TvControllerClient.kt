@@ -67,9 +67,10 @@ class TvControllerClient(
 
     private fun readerLoop(s: Socket) {
         val ins = s.getInputStream(); val buf = ByteArray(4096)
+        var why = "对端关闭连接"
         while (running.get() && !s.isClosed) {
-            val n = try { ins.read(buf) } catch (_: Throwable) { -1 }
-            if (n <= 0) break
+            val n = try { ins.read(buf) } catch (t: Throwable) { why = "读取异常：${t.message}"; -1 }
+            if (n <= 0) { if (n == 0) why = "对端关闭连接"; break }
             feed(buf, n)
             for (b in pumpFrames()) handleServerFrame(b)
         }
@@ -78,12 +79,16 @@ class TvControllerClient(
         // connect() 被 running 短路，副屏/触控板触摸全部静默丢失，只能手动重选设备。
         // 用户主动 disconnect() 会先置 running=false，这里自然不进入。
         if (running.get()) {
-            Log.w("TvCtrl", "连接断开，启动自动重连 $host:$port")
+            Log.w("TvCtrl", "连接断开（$why），启动自动重连 $host:$port")
             thread(name = "tvctrl-reconn") {
+                // 指数退避：固定 2s 无限重连会对端持续拒绝时形成连接风暴，
+                // 反复「已连→断开→重连」刷屏且空耗资源；改为 1s 起、翻倍、封顶 30s。
+                var delay = 1000L
                 while (running.get() && !ready) {
-                    try { Thread.sleep(2000) } catch (_: InterruptedException) { break }
+                    try { Thread.sleep(delay) } catch (_: InterruptedException) { break }
                     if (!running.get() || ready) break
-                    if (openSocket()) break
+                    if (openSocket()) { delay = 1000L; break }
+                    delay = (delay * 2).coerceAtMost(30000L)
                 }
             }
         }
