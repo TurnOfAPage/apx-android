@@ -32,7 +32,7 @@ permissions:
 jobs:
   mac:
     name: build (macOS)
-    runs-on: macos-latest
+    runs-on: macos-14
     timeout-minutes: 60
     steps:
       - name: Checkout
