@@ -295,7 +295,8 @@ MSVC 回归），**真机实测尚未执行**（用户声明跳过）—— 下�
 | 音箱（系统声音） | ✅ | `audio_capture_mac.mm`：**CoreAudio Process Tap**（`CATapDescription` 全局立体声 + 聚合设备 + IOProc），**macOS 14.2+**，需「系统音频录制」TCC 授权；DRM 内容可能静音（平台限制）；部署目标压 12.0 使新 API 弱链接可降级 |
 | 副屏 | ❌ | 虚拟显示器仅 Windows；`screenPush=nullptr`，面板显示未初始化形态 + `screen.toggle` 明确拒绝 |
 | 音箱设备下拉 | ❌（无此概念） | Process Tap 采全局进程组混音，不挂具体端点（`listRenderDevices` 返回空、面板下拉为空，自洽） |
-| 全局热键 / USB 有线 | ❌ | 热键 Win-only；mac 无 `/sys`（`usb_enum_sysfs` 空枚举），USB 线路不可用（IOKit 枚举为后续项） |
+| 全局热键 | ❌ | 热键 Win-only（mac 侧 `HotkeyManager` 是空实现，面板如实显示不可用） |
+| USB 有线（枚举） | ◑ | v223.7 起 mac 走 **IOKit**（`usb_enum_iokit.cpp`）：VID/PID/名称/序列号/bcdUSB/速度/接口类码齐，面板 USB 状态不再恒 false；**端点/HID 集合/CDC 串口名未做**（见文件头注释），且只有编译级验证 |
 | 开机自启 | ✅ | `~/Library/LaunchAgents/` plist（`autostart.cpp` 非 Win 分支） |
 | 检查更新 | ✅ | `update_check_mac.mm`（NSURLSession + gh-proxy 镜像兑底，与 Windows 同比对算法） |
 | 发版产物 | ✅ | macos.yml `tags: ['v*']` → `AllPeriph-<tag>-macos-arm64.zip` 上传 Release（与 build.yml release job 双向幂等） |
@@ -304,9 +305,14 @@ MSVC 回归），**真机实测尚未执行**（用户声明跳过）—— 下�
 （部署目标自动压 12.0）；前端 `pc/web` npm build 后 dist 拷到 exe 旁 `web/`；日常直接用
 CI artifact 或 Release 资产。详见 [`使用说明.md`](./使用说明.md) 二/七/九章与 README。
 
-**待办（按价值排序）**：① 真机实测（面板/连接/媒体/系统授权弹窗）② NSStatusItem 托盘 +
-.app 内退出入口（`.app` 壳已交付：ad-hoc 签名 + Info.plist 授权宿主，壳内无运行时改造，
-事件循环语义待实机） ③ USB/IOKit 枚举 ④ `panel_http` 的 9511 "已在运行"检测（消除双起警告日志）。
+**待办（按价值排序）**：① 真机实测（面板/连接/媒体/系统授权弹窗）② USB/IOKit 枚举的真机校验
+（v223.7 已交付后端，端点/HID 集合/串口名仍缺）。
+
+**v223.7 已清掉的三条**：NSStatusItem 托盘 + `.app` 内退出入口（`src/tray/tray_mac.mm`，
+菜单栏图标 + 「打开面板」「退出全能外设」；托盘跑在独立 NSThread 上跑 `[NSApp run]`，
+事件循环语义仍需实机确认）· USB/IOKit 枚举（`src/discovery/usb_enum_iokit.cpp`）·
+`panel_http` 的 9511 「已在运行」检测（`apxpc::net::tcp_probe`：已在运行的实例不再重复起
+受控端、不打告警，面板显示归属）。
 
 ### 2.5 副屏与 Sunshine / Moonlight 的关系（结论，2026-10-27）
 

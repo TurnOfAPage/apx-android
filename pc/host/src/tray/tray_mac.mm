@@ -57,10 +57,17 @@ struct MenuPlan {
 
 }  // namespace
 
+namespace {
+// 真正「贴 tooltip + 发通知」的那一步：只在托盘线程上调（AppKit 规矩）。
+// 前置声明：它的实现排在下面那个匿名 namespace 里，晚于这里的 @implementation。
+void deliverNotification(NSString* title, NSString* body);
+}  // namespace
+
 /// 菜单点击的接收者。唯一的职责：把 tag 翻回 std::function 并调用。
 @interface APXTrayTarget : NSObject
 - (void)invokeAction:(id)sender;
 - (void)requestStop;
+- (void)showNotification:(NSArray*)pair;   // [title, body]：notify() 跨线程时用它
 @end
 
 @implementation APXTrayTarget
@@ -83,6 +90,11 @@ struct MenuPlan {
     } catch (const std::exception& e) {
         APX_LOGW("托盘菜单动作抛异常：{}", e.what());
     }
+}
+
+- (void)showNotification:(NSArray*)pair {
+    if ([pair count] < 2) return;
+    deliverNotification([pair objectAtIndex:0], [pair objectAtIndex:1]);
 }
 
 - (void)requestStop {
@@ -176,6 +188,26 @@ void applyStatusIcon(NSStatusItem* item) {
         }
     }
     [button setTitle:@"🖱"];
+}
+
+/// 贴 tooltip + 发一条用户通知。**调用者必须已在托盘线程上**（见 notify()）。
+void deliverNotification(NSString* title, NSString* body) {
+    if (g_statusItem) {
+        // 不管通知能不能弹出来，先把 tooltip 更新 —— 这是**一定**能生效的那条路。
+        [g_statusItem.button setToolTip:[NSString stringWithFormat:@"%@：%@", title, body]];
+    }
+    // NSUserNotification 自 macOS 11 起被标记废弃（新 API 是 UNUserNotificationCenter，
+    // 但它要求 bundle + 用户授权，本宿主未必满足）。这里仍用它：能弹就弹，
+    // 弹不出来也已经在日志与 tooltip 里留了痕，不静默。
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    NSUserNotification* n = [[NSUserNotification alloc] init];
+    if (n) {
+        [n setTitle:title];
+        [n setInformativeText:body];
+        [[NSUserNotificationCenter defaultUserNotificationCenter] deliverNotification:n];
+    }
+#pragma clang diagnostic pop
 }
 
 }  // namespace
@@ -310,22 +342,21 @@ void TrayIcon::notify(const std::string& title, const std::string& text) {
     @autoreleasepool {
         NSString* t = [NSString stringWithUTF8String:title.c_str()];
         NSString* b = [NSString stringWithUTF8String:text.c_str()];
-        if (g_statusItem) {
-            // 不管通知能不能弹出来，先把 tooltip 更新 —— 这是**一定**能生效的那条路。
-            [g_statusItem.button setToolTip:[NSString stringWithFormat:@"%@：%@", t, b]];
+        if (!t) t = @"";
+        if (!b) b = @"";
+
+        // 调用方主要是**面板线程**（收到文件时 panel_http 直接调 bundle.tray->notify）。
+        // AppKit 对象只能在自己线程上碰，跨线程直接动 NSStatusItem / 通知中心是未定义
+        // 行为 —— 所以不在托盘线程就 marshalling 回去（NSApp run 的 run loop 会处理）。
+        NSThread* tray = g_trayThread;
+        if (tray != nil && [NSThread currentThread] != tray && g_target != nil) {
+            [g_target performSelector:@selector(showNotification:)
+                             onThread:tray
+                           withObject:@[t, b]
+                        waitUntilDone:NO];
+        } else {
+            deliverNotification(t, b);
         }
-        // NSUserNotification 自 macOS 11 起被标记废弃（新 API 是 UNUserNotificationCenter，
-        // 但它要求 bundle + 用户授权，本宿主未必满足）。这里仍用它：能弹就弹，
-        // 弹不出来也已经在日志与 tooltip 里留了痕，不静默。
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
-        NSUserNotification* n = [[NSUserNotification alloc] init];
-        if (n) {
-            [n setTitle:t];
-            [n setInformativeText:b];
-            [[NSUserNotificationCenter defaultUserNotificationCenter] deliverNotification:n];
-        }
-#pragma clang diagnostic pop
         APX_LOGI("托盘通知：{} — {}", title.c_str(), text.c_str());
     }
 }
