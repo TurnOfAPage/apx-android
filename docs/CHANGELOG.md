@@ -6,6 +6,72 @@
 
 ---
 
+## v223.7（2026-10-27）
+
+### 修复（`apxhost serve` + 面板同时存在时，9511 每天一堆「已在运行」告警）
+面板（`panel_http`）与常驻服务（`apxhost serve`）都会去起 9511 受控端 —— 先起的占住端口，
+后起的 bind 失败，于是每次启动都在日志里刷一条告警。用户看到的「9511 已在运行」其实
+是**正常状态**，不是故障。现在：
+
+- 新模块 `apxpc::net::tcpPortResponds()` / `tcpPortRespondsLocal()`
+  （`include/apxpc/net/tcp_probe.hpp`，POSIX + Winsock 双实现）：非阻塞 connect + select，
+  200ms 超时。语义写清楚——**它只能说「这个端口有人在听」，说不清是谁**。
+- 面板启动前先探一次 9511：有人在听 → 标记 `ctrlShared`、**不再重复起受控端、不打告警**，
+  日志改成「9511 已有实例在跑，本面板共用」；没人听 → 正常起，bind 仍失败时再探一次，
+  以区分「被别人抢先」与「真起不来」（后者才 `APX_LOGW`，并带上错误原因）。
+- 状态里新增 `transports.ctrlServer = { listening, shared, connected, error }`，
+  面板「连接」卡多三行归属说明：**本面板提供 / 由另一个实例提供 / 未启动 + 原因**。
+  以前这类事只能翻日志，现在打开面板就能看到。
+
+### 新增（mac 托盘：菜单栏图标，终于有「退出」入口）
+mac 的 `.app` 此前**没有任何退出入口** —— 只能 `pkill -x apxdesktop` 或活动监视器。
+`src/tray/tray_mac.mm`（新文件，ARC）用 `NSStatusItem` + `NSMenu` 补上：
+`NSApplicationActivationPolicyAccessory`（只在菜单栏，不进 Dock）、SF Symbol `computermouse`
+（拿不到就退文字图标）、菜单项**谁注册才出谁** + 「退出全能外设」（⌘Q）。
+
+配套两个导出（`apxpc::ui`）：`requestPanelQuit()`（只置原子标志，面板线程 ≤1s 内自行收尾，
+托盘线程不碰面板状态）与 `panelUrl()`（端口是 `bind(0)` 运行时分配的，所以只能点击那刻取）。
+`desktop_main` 的 mac 分支接上这两个回调；「打开面板」用 `posix_spawn` 直接 exec
+`/usr/bin/open`，不经 shell（URL 里的 `?`、`&` 会被 shell 当元字符）。
+
+### 新增（mac USB 走 IOKit 枚举）
+非 Windows 侧本来只有 libusb（默认 OFF）与 sysfs（读 `/sys`）两条腿，mac 两条都够不着
+→ 枚举恒返回空，面板「USB」状态永远 false，看不出是「没插」还是「没实现」。
+新增 `src/discovery/usb_enum_iokit.cpp`：`IOServiceMatching("IOUSBHostDevice")` +
+IORegistry 属性（`idVendor`/`idProduct`/`USB Product Name`/`USB Vendor Name`/
+`USB Serial Number`/`bcdUSB`/`Device Speed`）+ 子 `IOUSBHostInterface` 节点的
+`bInterface*` 拼出与其它三端同构的 `usb::Device`。`Device Speed` 用
+`tIOUSBHostConnectionSpeed` 的**符号名**映射（不写魔法数字，免得记错值）。
+
+**诚实说明（三点没做，不假装做了）**：① 端点（Endpoint）恒为空 —— 要逐接口走
+`IOUSBHostPipe`，属性名随 SDK 漂移，没真机无法验证；② HID 集合（usagePage）恒为空 ——
+要开 `IOHIDDevice` 读元素，涉及 TCC 输入监控授权；③ CDC ACM 串口名恒为空（走
+`IOSerialBSDClient` 另需父子回溯）。角色判定（HID/UVC/UAC/NCM/CDC/Bulk）只用接口类码，
+不受影响。**本文件只做到编译级验证**（本机没有 mac），真实取值仍需真机回验。
+
+### 修复（Edge / Chromium 里面板「发送」点了没反应）#47 第 3 条
+浏览器模式下「发送」触发系统文件选择器靠的是对 `display:none`（`sr-only`）的
+`<input type=file>` 调 `click()` —— 这条路在 Safari 上踩过一次（v223.5 已改），
+Edge 上则卡在另一层：脚本内的 `click()` 缺少用户手势上下文时被静默忽略。
+这次不再跟引擎博弈：浏览器模式直接把「发送」做成**原生 `<label for=input>`**，
+点它触发的是浏览器自己的默认行为（天然带用户手势），JS 完全不介入；桌面壳仍是
+`<button>` + `window.chrome.webview` 的 `openFile`。另外补一条诚实分支：
+地址里没有 `?host=1`（= 不是从面板入口打开的静态部署页）时直接提示，而不是静默无反应。
+
+### 测试
+- 新增 `tcp_probe_test`（真起 socket 监听 → 探到 → 关 → 探不到 → 连续两次一致 →
+  边界：端口 0 / 空 host / 非法 IP），已进 `build.yml` 与 `macos.yml` 的 target 列表；
+- 本地 Linux 全量构建 + ctest 通过（`tcp_probe_test` 7 条断言全过）；
+- `pc/web`：`tsc --noEmit` 与 `vite build` 通过。
+
+### 仍待真机回验（只有编译级证据的部分）
+- mac 托盘：图标能否出现在菜单栏、菜单能否点开 —— 托盘跑在独立 NSThread 上跑
+  `[NSApp run]`（主线程被面板的 accept 循环占着）。若真机发现图标不出现或点了没反应，
+  正解是把主线程让给 AppKit、面板移进后台线程，那是另一件事，不在本版打补丁。
+- mac USB 枚举：插上手机后本机「系统信息 → USB」与面板 USB 状态是否一致。
+
+---
+
 ## v223.6（2026-10-27）
 
 ### 修复（无线模式下 macOS 端**所有输入都失效**）#47 第 6 条后半段

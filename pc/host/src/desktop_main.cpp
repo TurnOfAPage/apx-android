@@ -59,6 +59,7 @@
 #include <csignal>
 #include <cstdlib>
 #include <execinfo.h>   // backtrace / backtrace_symbols_fd（macOS 与 Linux 都有）
+#include <spawn.h>      // posix_spawn：托盘「打开面板」调 /usr/bin/open（不经 shell）
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <string>
@@ -75,6 +76,27 @@
 #include <mutex>
 #include <string>
 #include <thread>
+
+#if defined(__APPLE__)
+extern char** environ;   // posix_spawn 要传父进程环境（/usr/bin/open 依赖它）
+
+namespace {
+// 托盘「打开面板」：exec /usr/bin/open <url>。
+// 刻意不用 std::system —— 命令串要过 /bin/sh，URL 里的 ? 与 & 会被当元字符；
+// posix_spawn 直接 execve，参数边界清清楚楚。
+void openPanelInBrowser(const std::string& url) {
+    if (url.empty()) {
+        APX_LOGW("托盘「打开面板」：面板地址尚未就绪（服务还在起，稍后再点）");
+        return;
+    }
+    pid_t pid = 0;
+    char* const argv[] = {const_cast<char*>("/usr/bin/open"),
+                          const_cast<char*>(url.c_str()), nullptr};
+    const int rc = ::posix_spawn(&pid, "/usr/bin/open", nullptr, nullptr, argv, environ);
+    if (rc != 0) APX_LOGW("托盘「打开面板」失败：posix_spawn rc={}（URL {}）", rc, url.c_str());
+}
+}  // namespace
+#endif
 
 namespace {
 
@@ -613,9 +635,23 @@ int runDesktopMain() {
     // runWebPanel 会在退出前把窗口句柄传回给 tray 的 setOpenCallback。
 #if defined(_WIN32)
     tray->setQuitCallback([] { ::PostQuitMessage(0); });
+#elif defined(__APPLE__)
+    // mac 托盘（src/tray/tray_mac.mm，NSStatusItem + NSMenu）。此前 mac 侧**没有任何退出
+    // 入口**：双击起来的 .app 只能用 pkill / 活动监视器结束。这里补两条：
+    //   · 「退出」→ requestPanelQuit()：托盘在自己的线程上，不能直接碰面板状态，
+    //     只置原子标志，面板线程 ≤1s 内自行收尾（停 9511 → join 工作线程 → 关监听）；
+    //   · 「打开面板」→ 用浏览器打开 http://127.0.0.1:<port>/?host=1。端口是运行时
+    //     bind(0) 分配的，所以只能在点击那一刻取 panelUrl()，不能提前缓存。
+    tray->setQuitCallback([] { apxpc::ui::requestPanelQuit(); });
+    tray->setOpenCallback([] { openPanelInBrowser(apxpc::ui::panelUrl()); });
 #endif
-    // mac 托盘为空实现（无菜单无回调源）；面板退出走 SIGINT / window.quit，无需此处接线。
+    // 托盘本体：Windows 走 Shell_NotifyIcon（菜单在 Win32 窗口里），mac 走 NSStatusItem。
+    // 悬浮提示写清入口差异，别让人以为 mac 上也能双击某个窗口。
+#if defined(__APPLE__)
+    if (!tray->create("全能外设 · 点图标开菜单"))
+#else
     if (!tray->create("全能外设 · WebView2"))
+#endif
         APX_LOGW("托盘图标创建失败");
 
     if (cfg.autostart) apxpc::tray::setAutostart(true);

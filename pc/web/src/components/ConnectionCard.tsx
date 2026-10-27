@@ -21,6 +21,23 @@ interface UsbTransports {
   inputTrusted?: boolean;
   /** 手机上报的三种接入模式状态（9511 帧 0x31） */
   phone?: PhoneMode;
+  /** 9511 受控端的归属：listening=本面板起的；shared=端口被本机另一个实例占着（它提供） */
+  ctrlServer?: CtrlServerOwner;
+}
+
+/**
+ * 9511 受控端由谁提供。
+ *
+ * 为什么值得单独显示：面板与 `apxhost serve` / `apxdesktop` 都会起 9511，而端口独占 ——
+ * 第二个起来的实例 bind 必然失败。以前这种情况只在日志里留一句告警，用户看面板只会觉得
+ * 「手机发现不了本机」，而真实原因是**另一个实例已经提供了受控端**（功能其实是好的）。
+ * 见 ROADMAP §2.4 待办 ④。
+ */
+interface CtrlServerOwner {
+  listening?: boolean;
+  shared?: boolean;
+  connected?: boolean;
+  error?: string;
 }
 
 /**
@@ -94,6 +111,7 @@ export const ConnectionCard: React.FC<Props> = ({ state, onManualConnect }) => {
   const s = state.link;
   const tp = (state.transports ?? {}) as UsbTransports;
   const phone = tp.phone ?? {};
+  const ctrl = tp.ctrlServer;
   const usbSpeedText = tp.usbSpeed && tp.usbSpeed !== 'unknown' ? ` · ${tp.usbSpeed}` : '';
   const usbLine = !tp.usbDevice
     ? '未检测到手机（检查 USB 线 / 手机端 USB 开关）'
@@ -212,6 +230,18 @@ export const ConnectionCard: React.FC<Props> = ({ state, onManualConnect }) => {
           }
           sub={tp.usbDevice && tp.usbName ? `${tp.usbName}${usbSpeedText}` : undefined}
         />
+        {/* 受控端归属：三种事实说三种话，不把「别人在提供服务」说成故障 */}
+        {ctrl && (ctrl.listening || ctrl.shared || ctrl.error) && (
+          <div className="pt-3 border-t border-stroke">
+            <div className="data-text text-on-tertiary">
+              {ctrl.listening
+                ? '受控端：本面板提供（9511）—— 手机「TV 控制」里能看到本机'
+                : ctrl.shared
+                  ? '受控端：由本机另一个 AllPeriph 实例提供（9511 已被占用，本面板不重复起）'
+                  : `受控端未启动：${ctrl.error || '未知原因'} —— 手机将无法发现本机`}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

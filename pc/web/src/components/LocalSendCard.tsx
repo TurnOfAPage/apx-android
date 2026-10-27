@@ -68,13 +68,35 @@ export const LocalSendCard: React.FC<Props> = ({ state }) => {
   const browserMode = bridge.mode === 'http';
   const [pending, setPending] = useState<{ ip: string; port: number; alias: string } | null>(null);
   const fileRef = React.useRef<HTMLInputElement | null>(null);
+  /* 选文件的「目标设备」用 ref 存一份：picker 是**原生**打开的（label 触发），
+     用户挑文件期间会经过若干次渲染，靠 state 闭包读 pending 有读到旧值的风险。 */
+  const pendingRef = React.useRef<{ ip: string; port: number; alias: string } | null>(null);
+  const fileInputId = 'apx-localsend-file';
+
+  /* 浏览器模式：只记下「发给谁」，然后让**原生 label** 去开选择器。
+     为什么不用 fileRef.click()：程序化 click 依赖「仍在用户手势里」这一前提，
+     各家内核把握得不一样 —— v223.4/v223.5 先踩 display:none（WebKit 直接不认），
+     用户又在 Edge（Chromium 内核）上遇到同样「点了不弹、还提示不支持」。
+     label[for] 是浏览器**自身**的默认行为，不经过任何脚本，没有手势时序问题。 */
+  const armPicker = (dev: { ip: string; port: number; alias: string }) => {
+    setErr('');
+    pendingRef.current = dev;
+    setPending(dev);
+    setStatus(`选择要发送到 ${dev.alias || dev.ip} 的文件…`);
+  };
 
   const sendTo = async (dev: { ip: string; port: number; alias: string }) => {
     setErr('');
     if (browserMode) {
-      setPending(dev);
-      setStatus(`选择要发送到 ${dev.alias || dev.ip} 的文件…`);
+      // 理论上走不到（浏览器模式渲染的是 label），保底仍给一条能走通的路
+      armPicker(dev);
       fileRef.current?.click();
+      return;
+    }
+    if (bridge.mode !== 'webview') {
+      /* 页面既不是桌面壳、也不是宿主起的服务（多半是直接双击打开的 HTML，
+         或没带 ?host=1 的地址）。以前这里会静默什么都不做 —— 用户只看到「点了没反应」。 */
+      setErr('当前页面没有连上宿主（地址缺少 ?host=1）：请从 AllPeriph 面板入口打开，不要直接打开 HTML 文件。');
       return;
     }
     setStatus(`正在发送到 ${dev.alias || dev.ip}…`);
@@ -92,7 +114,8 @@ export const LocalSendCard: React.FC<Props> = ({ state }) => {
   const onFilesPicked = async (ev: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(ev.target.files ?? []);
     ev.target.value = '';        // 清空：同一个文件连选两次也要能触发 change
-    const dev = pending;
+    const dev = pendingRef.current;
+    pendingRef.current = null;
     setPending(null);
     if (!dev || files.length === 0) { setStatus(''); return; }
     setStatus(`正在上传 0/${files.length} …`);
@@ -130,6 +153,7 @@ export const LocalSendCard: React.FC<Props> = ({ state }) => {
           点了「发送」不会弹选择器（mac 的 `open` 默认浏览器就是 Safari）。 */}
       <input
         ref={fileRef}
+        id={fileInputId}
         type="file"
         multiple
         tabIndex={-1}
@@ -173,13 +197,27 @@ export const LocalSendCard: React.FC<Props> = ({ state }) => {
           {devices.slice(0, 3).map((d) => (
             <div key={d.ip + d.port} className="flex items-center justify-between gap-2">
               <span className="body-text text-on-surface truncate">{d.alias || d.ip}</span>
-              <button
-                className="btn-ghost h-[26px] px-2 text-[12px] shrink-0"
-                onClick={() => sendTo(d)}
-                title={`发送文件到 ${d.alias || d.ip}`}
-              >
-                发送
-              </button>
+              {browserMode ? (
+                /* 原生 label[for]：点它由浏览器自己打开文件选择器，不经过 JS ——
+                   这是唯一能同时躲开「display:none 不响应 click」与「手势时序」两种坑的做法 */
+                <label
+                  htmlFor={fileInputId}
+                  role="button"
+                  className="btn-ghost h-[26px] px-2 text-[12px] shrink-0 cursor-pointer inline-flex items-center"
+                  onClick={() => armPicker(d)}
+                  title={`发送文件到 ${d.alias || d.ip}`}
+                >
+                  发送
+                </label>
+              ) : (
+                <button
+                  className="btn-ghost h-[26px] px-2 text-[12px] shrink-0"
+                  onClick={() => sendTo(d)}
+                  title={`发送文件到 ${d.alias || d.ip}`}
+                >
+                  发送
+                </button>
+              )}
             </div>
           ))}
         </div>
