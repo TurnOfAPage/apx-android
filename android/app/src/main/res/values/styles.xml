@@ -108,6 +108,14 @@
     </style>
 
     <!-- 分组表头与卡内首行之间的发丝线（与卡内既有行分隔线同一支：1dp card_stroke） -->
+    <!-- 卡内列表行之间的发丝线（分类列表）：与 APGroupDivider 同一支色，但不带额外上边距 ——
+         行本身已有 12dp 上下留白，线落在正中间才是均匀的。 -->
+    <style name="APListDivider">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">1dp</item>
+        <item name="android:background">@color/card_stroke</item>
+    </style>
+
     <style name="APGroupDivider">
         <item name="android:layout_width">match_parent</item>
         <item name="android:layout_height">1dp</item>

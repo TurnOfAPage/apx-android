@@ -354,16 +354,16 @@
     <string name="ui_main_floating_ball_note">单击展开触控板，长按关闭</string>
     <string name="ui_main_floating_ball_hint">单指移动 · 双指滚动 · 三指滑动</string>
     <string name="ui_main_floating_ball_collapse">收起</string>
-    <string name="ui_main_cat_general">通用
-模板 · 功能开关 · 方向锁定</string>
-    <string name="ui_main_cat_look">外观
-主题 · 配色 · 背景 · 动效</string>
-    <string name="ui_main_cat_remote">遥控 · 工具
-TV/PC 控制 · 诊断 · 文件 · 自检/日志/悬浮球</string>
-    <string name="ui_main_cat_about">关于与维护
-版本 · 更新日志 · 反馈 · 电池白名单</string>
-    <string name="ui_main_cat_help">帮助与说明
-项目说明 · 链路解释 · 手势 · 常见问题</string>
+    <string name="ui_main_cat_general">通用</string>
+    <string name="ui_main_cat_general_hint">模板 · 功能开关 · 方向锁定</string>
+    <string name="ui_main_cat_look">外观</string>
+    <string name="ui_main_cat_look_hint">主题 · 配色 · 背景 · 动效</string>
+    <string name="ui_main_cat_remote">遥控 · 工具</string>
+    <string name="ui_main_cat_remote_hint">TV/PC · 诊断 · 文件 · 日志</string>
+    <string name="ui_main_cat_about">关于与维护</string>
+    <string name="ui_main_cat_about_hint">版本 · 更新日志 · 反馈</string>
+    <string name="ui_main_cat_help">帮助与说明</string>
+    <string name="ui_main_cat_help_hint">链路 · 手势 · 常见问题</string>
     <string name="ui_main_cat_back">‹ 返回分类列表</string>
     <string name="ui_help_title_project">项目说明</string>
     <string name="ui_help_title_link">链路与延迟</string>

@@ -10,6 +10,11 @@
   卡外不再留浮在主色里的小标题；行标题只留词组（单行、超长省略），括号里的解释下沉到
   「说明行」（APRowHint）整行排开；进下级（弹窗 / 跳页）的行用行尾箭头，取值行才用胶囊。
   起因是真机反馈「右边的分组文字太长」：右栏只占屏幕 2/3，长标题在窄列里会折成两三行。
+
+  v223 分类列表首页同理：原先「标题\n说明」挤在同一个 15sp TextView 里，最长一条 ≈254dp，
+  五行分类每行都被折成三行。现在标题 15sp 单行（超长省略）、说明下沉 12sp（APRowHint，
+  文案各拆一条 *_hint）、行尾补箭头，行间加 1dp 发丝线（APListDivider）。行容器（catXxx）
+  仍是点进二级页的入口，id 不变。
 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/pageSettings"
@@ -111,66 +116,230 @@
             android:paddingTop="@dimen/space_4"
             android:paddingBottom="@dimen/space_4">
 
-            <TextView
+            <LinearLayout
                 android:id="@+id/catGeneral"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
+                android:background="?android:attr/selectableItemBackground"
+                android:clickable="true"
+                android:focusable="true"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
                 android:paddingStart="@dimen/space_16"
                 android:paddingEnd="@dimen/space_16"
                 android:paddingTop="@dimen/space_12"
-                android:paddingBottom="@dimen/space_12"
-                android:text="@string/ui_main_cat_general"
-                android:textColor="@color/md_on_surface"
-                android:textSize="15sp" />
+                android:paddingBottom="@dimen/space_12">
 
-            <TextView
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:ellipsize="end"
+                        android:singleLine="true"
+                        android:text="@string/ui_main_cat_general"
+                        android:textColor="@color/md_on_surface"
+                        android:textSize="15sp" />
+
+                    <TextView
+                        style="@style/APRowHint"
+                        android:text="@string/ui_main_cat_general_hint" />
+                </LinearLayout>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="@dimen/space_8"
+                    android:text="@string/ui_common_chevron"
+                    android:textColor="@color/md_on_surface_variant"
+                    android:textSize="15sp" />
+            </LinearLayout>
+
+            <View style="@style/APListDivider" />
+
+            <LinearLayout
                 android:id="@+id/catLook"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
+                android:background="?android:attr/selectableItemBackground"
+                android:clickable="true"
+                android:focusable="true"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
                 android:paddingStart="@dimen/space_16"
                 android:paddingEnd="@dimen/space_16"
                 android:paddingTop="@dimen/space_12"
-                android:paddingBottom="@dimen/space_12"
-                android:text="@string/ui_main_cat_look"
-                android:textColor="@color/md_on_surface"
-                android:textSize="15sp" />
+                android:paddingBottom="@dimen/space_12">
 
-            <TextView
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:ellipsize="end"
+                        android:singleLine="true"
+                        android:text="@string/ui_main_cat_look"
+                        android:textColor="@color/md_on_surface"
+                        android:textSize="15sp" />
+
+                    <TextView
+                        style="@style/APRowHint"
+                        android:text="@string/ui_main_cat_look_hint" />
+                </LinearLayout>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="@dimen/space_8"
+                    android:text="@string/ui_common_chevron"
+                    android:textColor="@color/md_on_surface_variant"
+                    android:textSize="15sp" />
+            </LinearLayout>
+
+            <View style="@style/APListDivider" />
+
+            <LinearLayout
                 android:id="@+id/catRemote"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
+                android:background="?android:attr/selectableItemBackground"
+                android:clickable="true"
+                android:focusable="true"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
                 android:paddingStart="@dimen/space_16"
                 android:paddingEnd="@dimen/space_16"
                 android:paddingTop="@dimen/space_12"
-                android:paddingBottom="@dimen/space_12"
-                android:text="@string/ui_main_cat_remote"
-                android:textColor="@color/md_on_surface"
-                android:textSize="15sp" />
+                android:paddingBottom="@dimen/space_12">
 
-            <TextView
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:ellipsize="end"
+                        android:singleLine="true"
+                        android:text="@string/ui_main_cat_remote"
+                        android:textColor="@color/md_on_surface"
+                        android:textSize="15sp" />
+
+                    <TextView
+                        style="@style/APRowHint"
+                        android:text="@string/ui_main_cat_remote_hint" />
+                </LinearLayout>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="@dimen/space_8"
+                    android:text="@string/ui_common_chevron"
+                    android:textColor="@color/md_on_surface_variant"
+                    android:textSize="15sp" />
+            </LinearLayout>
+
+            <View style="@style/APListDivider" />
+
+            <LinearLayout
                 android:id="@+id/catAbout"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
+                android:background="?android:attr/selectableItemBackground"
+                android:clickable="true"
+                android:focusable="true"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
                 android:paddingStart="@dimen/space_16"
                 android:paddingEnd="@dimen/space_16"
                 android:paddingTop="@dimen/space_12"
-                android:paddingBottom="@dimen/space_12"
-                android:text="@string/ui_main_cat_about"
-                android:textColor="@color/md_on_surface"
-                android:textSize="15sp" />
+                android:paddingBottom="@dimen/space_12">
 
-            <TextView
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:ellipsize="end"
+                        android:singleLine="true"
+                        android:text="@string/ui_main_cat_about"
+                        android:textColor="@color/md_on_surface"
+                        android:textSize="15sp" />
+
+                    <TextView
+                        style="@style/APRowHint"
+                        android:text="@string/ui_main_cat_about_hint" />
+                </LinearLayout>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="@dimen/space_8"
+                    android:text="@string/ui_common_chevron"
+                    android:textColor="@color/md_on_surface_variant"
+                    android:textSize="15sp" />
+            </LinearLayout>
+
+            <View style="@style/APListDivider" />
+
+            <LinearLayout
                 android:id="@+id/catHelp"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
+                android:background="?android:attr/selectableItemBackground"
+                android:clickable="true"
+                android:focusable="true"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
                 android:paddingStart="@dimen/space_16"
                 android:paddingEnd="@dimen/space_16"
                 android:paddingTop="@dimen/space_12"
-                android:paddingBottom="@dimen/space_12"
-                android:text="@string/ui_main_cat_help"
-                android:textColor="@color/md_on_surface"
-                android:textSize="15sp" />
-        </LinearLayout>
+                android:paddingBottom="@dimen/space_12">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:ellipsize="end"
+                        android:singleLine="true"
+                        android:text="@string/ui_main_cat_help"
+                        android:textColor="@color/md_on_surface"
+                        android:textSize="15sp" />
+
+                    <TextView
+                        style="@style/APRowHint"
+                        android:text="@string/ui_main_cat_help_hint" />
+                </LinearLayout>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="@dimen/space_8"
+                    android:text="@string/ui_common_chevron"
+                    android:textColor="@color/md_on_surface_variant"
+                    android:textSize="15sp" />
+            </LinearLayout>
+
+</LinearLayout>
 
         <!-- 二级页返回行（默认隐藏，进分类后显示，点击回首屏） -->
         <LinearLayout
