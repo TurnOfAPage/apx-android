@@ -40,8 +40,11 @@ mac 的 `.app` 此前**没有任何退出入口** —— 只能 `pkill -x apxdes
 新增 `src/discovery/usb_enum_iokit.cpp`：`IOServiceMatching("IOUSBHostDevice")` +
 IORegistry 属性（`idVendor`/`idProduct`/`USB Product Name`/`USB Vendor Name`/
 `USB Serial Number`/`bcdUSB`/`Device Speed`）+ 子 `IOUSBHostInterface` 节点的
-`bInterface*` 拼出与其它三端同构的 `usb::Device`。`Device Speed` 用
-`tIOUSBHostConnectionSpeed` 的**符号名**映射（不写魔法数字，免得记错值）。
+`bInterface*` 拼出与其它三端同构的 `usb::Device`。**速度（`Device Speed`）故意留 Unknown**：这个属性的
+值域有两套互不兼容的说法，能定音的 `tIOUSBHostConnectionSpeed` 不在公开 SDK 里
+（CI 实测头文件不存在）。猜错会把 480Mbps 的线标成 super-speed，而本工程的
+super-speed 门禁恰好靠这个字段 —— 标错比标 unknown 更坏。原始值写 debug 日志，
+有真机后 `ioreg -p IOUSB -l` 一眼就能补上映射。
 
 **诚实说明（三点没做，不假装做了）**：① 端点（Endpoint）恒为空 —— 要逐接口走
 `IOUSBHostPipe`，属性名随 SDK 漂移，没真机无法验证；② HID 集合（usagePage）恒为空 ——

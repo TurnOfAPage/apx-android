@@ -296,7 +296,7 @@ MSVC 回归），**真机实测尚未执行**（用户声明跳过）—— 下�
 | 副屏 | ❌ | 虚拟显示器仅 Windows；`screenPush=nullptr`，面板显示未初始化形态 + `screen.toggle` 明确拒绝 |
 | 音箱设备下拉 | ❌（无此概念） | Process Tap 采全局进程组混音，不挂具体端点（`listRenderDevices` 返回空、面板下拉为空，自洽） |
 | 全局热键 | ❌ | 热键 Win-only（mac 侧 `HotkeyManager` 是空实现，面板如实显示不可用） |
-| USB 有线（枚举） | ◑ | v223.7 起 mac 走 **IOKit**（`usb_enum_iokit.cpp`）：VID/PID/名称/序列号/bcdUSB/速度/接口类码齐，面板 USB 状态不再恒 false；**端点/HID 集合/CDC 串口名未做**（见文件头注释），且只有编译级验证 |
+| USB 有线（枚举） | ◑ | v223.7 起 mac 走 **IOKit**（`usb_enum_iokit.cpp`）：VID/PID/名称/序列号/bcdUSB/接口类码齐（速度留 unknown，理由见文件头），面板 USB 状态不再恒 false；**端点/HID 集合/CDC 串口名未做**（见文件头注释），且只有编译级验证 |
 | 开机自启 | ✅ | `~/Library/LaunchAgents/` plist（`autostart.cpp` 非 Win 分支） |
 | 检查更新 | ✅ | `update_check_mac.mm`（NSURLSession + gh-proxy 镜像兑底，与 Windows 同比对算法） |
 | 发版产物 | ✅ | macos.yml `tags: ['v*']` → `AllPeriph-<tag>-macos-arm64.zip` 上传 Release（与 build.yml release job 双向幂等） |

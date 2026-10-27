@@ -29,7 +29,8 @@
 //   全部按 SDK 头文件写（符号名而非魔法数字，避免记错值），但真实取值仍需用户回验。
 #include <CoreFoundation/CoreFoundation.h>
 #include <IOKit/IOKitLib.h>
-#include <IOKit/usb/IOUSBHostFamily.h>
+// 刻意**不** include <IOKit/usb/IOUSBHostFamily.h>：它不是公开 SDK 头（CI 实测
+// "file not found"），tIOUSBHostConnectionSpeed 那套枚举用户态拿不到。见下方速度说明。
 
 #include <algorithm>
 #include <string>
@@ -94,18 +95,17 @@ private:
     io_registry_entry_t entry_;
 };
 
-// "Device Speed" → Speed。值域来自 tIOUSBHostConnectionSpeed：用**符号名**而不是数字，
-// 这样即使我对数值的记忆有偏差，编译器也会取头文件里的真值。
+// "Device Speed"（IORegistry 属性）→ Speed：**故意不映射**。
+//
+// 这个属性的值域有两套互不兼容的约定在流传（老 kUSBDeviceSpeed*：Low=0/Full=1/High=2/
+// Super=3；新 tIOUSBHostConnectionSpeed：None=0/Full=1/Low=2/High=3/Super=4），
+// 而唯一能定音的 tIOUSBHostConnectionSpeed **不在公开 SDK 里**（CI 实测头文件找不到）。
+// 猜错的后果是「480Mbps 的线被面板标成 super-speed」——本工程的 super-speed 门禁恰恰
+// 靠这个字段，标错比标 unknown 更坏。所以：留 Unknown，把原始值写进 debug 日志，
+// 谁有真机（`ioreg -p IOUSB -l` 一眼就能对出来）再把映射补上。
 Speed speedFromIOKit(uint32_t raw, bool have) {
     if (!have) return Speed::Unknown;
-    if (raw == static_cast<uint32_t>(kIOUSBHostConnectionSpeedLow)) return Speed::Low;
-    if (raw == static_cast<uint32_t>(kIOUSBHostConnectionSpeedFull)) return Speed::Full;
-    if (raw == static_cast<uint32_t>(kIOUSBHostConnectionSpeedHigh)) return Speed::High;
-    if (raw == static_cast<uint32_t>(kIOUSBHostConnectionSpeedSuper)) return Speed::Super;
-    if (raw == static_cast<uint32_t>(kIOUSBHostConnectionSpeedSuperPlus)) return Speed::SuperPlus;
-    // SuperPlusBy2（USB 3.2 20Gbps）没有单独的 Speed 枚举值，归到 SuperPlus：本工程的
-    // 速度门禁只关心「是否 ≥ super」，多一档不需要新常量。
-    if (raw == static_cast<uint32_t>(kIOUSBHostConnectionSpeedSuperPlusBy2)) return Speed::SuperPlus;
+    APX_LOGD("IOKit 枚举：Device Speed 原始值 = {}（mac 侧未映射，见源码说明）", raw);
     return Speed::Unknown;
 }
 
