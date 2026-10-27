@@ -47,6 +47,12 @@ export interface HostState {
       running: boolean; fps: number; deviceName: string;
       width: number; height: number; framesSent: number;
       encodeMs: number; dropped: number; error: string;
+      /** mac/Linux：Sunshine 检测（ROADMAP §2.5：mac 副屏出路 = 用户自装 Sunshine+Moonlight） */
+      sunshineInstalled?: boolean;
+      sunshineRunning?: boolean;
+      sunshineHttpsPort?: number;
+      /** 设置页地址；没在跑时为空串 */
+      sunshineUrl?: string;
     };
     audio?: {
       running: boolean; peak: number; device: string;

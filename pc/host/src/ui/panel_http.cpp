@@ -43,6 +43,7 @@
 #include "apxpc/localsend/local_send_sender.hpp"
 #include "apxpc/net/json.hpp"
 #include "apxpc/net/tcp_probe.hpp"
+#include "apxpc/screen/sunshine_detect.hpp"
 #include "apxpc/tray/tray_win32.hpp"
 #include "apxpc/wireless/ctrl9511.hpp"
 // 手机上报的三种接入模式状态（0x31）：位布局与解码抽在头文件里，和 Android 侧对拍。
@@ -265,6 +266,13 @@ void buildState(const HostBundle& b, Json& out, HttpPanel* p) {
         v["encodeMs"] = 0;
         v["dropped"] = 0;
         v["error"] = std::string("此平台不支持副屏（虚拟显示器仅 Windows）");
+        // mac 的副屏出路 = 用户自装 Sunshine + Moonlight（ROADMAP §2.5）。
+        // 检测是只读的：装没装、跑没跑、https 端口；面板据此给指引，不假装能开。
+        const auto sun = apxpc::screen::sunshineStatus();
+        v["sunshineInstalled"] = sun.installed;
+        v["sunshineRunning"]   = sun.running;
+        v["sunshineHttpsPort"] = static_cast<double>(sun.httpsPort);
+        v["sunshineUrl"] = apxpc::screen::sunshineUrl(sun);
         media["screen"] = v;
     }
 
@@ -516,6 +524,17 @@ void handleAct(HttpPanel* p, const std::string& id, const std::string& name, con
     //     刻意不访问 ScreenPush 成员 —— apxhost 未链接 apxpc_screen，成员访问会缺符号）——
     if (name == "screen.toggle") {
         return postResponse(p, id, failResp("此平台不支持副屏（虚拟显示器仅 Windows）"));
+    }
+    // —— 副屏：mac 的出路是用户自装 Sunshine + Moonlight（结论见 ROADMAP §2.5）——
+    //    我们不内嵌（Moonlight 客户端 GPLv3 与 MIT 冲突），只在面板做**检测 + 指引**。
+    if (name == "screen.sunshine") {
+        auto d = apxpc::screen::sunshineStatus();
+        Json v = Json::makeObject();
+        v["installed"] = d.installed;
+        v["running"]   = d.running;
+        v["httpsPort"] = static_cast<double>(d.httpsPort);
+        v["url"] = apxpc::screen::sunshineUrl(d);
+        return postResponse(p, id, okResp(v));
     }
 
     // —— 音箱 ——

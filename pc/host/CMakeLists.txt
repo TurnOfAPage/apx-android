@@ -132,6 +132,10 @@ set(APXPC_COMMON_SRC
   # 本机端口占用探测：面板用它区分「9511 已由另一个实例提供」与「真的起不来」。
   # 放 core 而不是面板 TU 里 —— 它要能被真起 socket 的用例覆盖（tests/tcp_probe_test.cpp）。
   "${APXPC_ROOT}/src/net/tcp_probe.cpp"
+  # Sunshine 只读检测（装没装/在跑没跑）：mac/Linux 副屏出路 = 用户自装 Sunshine
+  # + Moonlight（ROADMAP §2.5，不内嵌 —— Moonlight 客户端 GPLv3 与 MIT 冲突）。
+  # panel_http（两端 exe 的源列表）无条件 include 它，所以进 core 而非按平台分支。
+  "${APXPC_ROOT}/src/screen/sunshine_detect.cpp"
 )
 set(APXPC_DISCOVERY_SRC
   "${APXPC_ROOT}/src/discovery/descriptor_parse.cpp"
