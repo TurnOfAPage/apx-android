@@ -24,6 +24,65 @@
 #include <future>
 #include <thread>
 
+#if defined(_WIN32)
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
+#endif
+
+// ============================================================================
+// 端口占位器：让被测对象的 bind 必然失败
+// ============================================================================
+// 为什么不用「先起一个 Ctrl9511Server、再起第二个撞端口」来制造失败：
+// Windows 下双方都设了 SO_REUSEADDR 时，同一 addr:port 可以被重复 bind（不报错），
+// 「第二个必须启动失败」这条断言在 Windows 上根本不成立 —— 2026-10-27 首版用例就是这么
+// 在 CI 上红掉的（crash 修复本身没问题，是用例的跨平台前提写错了）。自己开一个监听 socket
+// 占住端口、Windows 侧再补 SO_EXCLUSIVEADDRUSE（对应 POSIX「端口已被占」的语义），
+// 三端才收敛到同一个结论。
+class PortBlocker {
+public:
+    explicit PortBlocker(uint16_t port) {
+#if defined(_WIN32)
+        WSADATA wsa{};
+        ::WSAStartup(MAKEWORD(2, 2), &wsa);
+#endif
+        fd_ = static_cast<int>(::socket(AF_INET, SOCK_STREAM, 0));
+        if (fd_ < 0) return;
+#if defined(_WIN32)
+        const BOOL exclusive = TRUE;
+        ::setsockopt(fd_, SOL_SOCKET, SO_EXCLUSIVEADDRUSE,
+                     reinterpret_cast<const char*>(&exclusive), sizeof(exclusive));
+#endif
+        sockaddr_in addr{};
+        addr.sin_family = AF_INET;
+        addr.sin_addr.s_addr = htonl(INADDR_ANY);
+        addr.sin_port = htons(port);
+        if (::bind(fd_, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) { closeFd(); return; }
+        if (::listen(fd_, 1) != 0) { closeFd(); return; }
+        ok_ = true;
+    }
+    ~PortBlocker() { closeFd(); }
+    bool ok() const { return ok_; }
+
+private:
+    void closeFd() {
+        if (fd_ < 0) return;
+#if defined(_WIN32)
+        ::closesocket(static_cast<SOCKET>(fd_));
+#else
+        ::close(fd_);
+#endif
+        fd_ = -1;
+        ok_ = false;
+    }
+    int fd_ = -1;
+    bool ok_ = false;
+};
+
 using namespace apxpc::wireless;
 using namespace std::chrono_literals;
 
@@ -107,23 +166,23 @@ static void testImmediateStop() {
 ///
 /// 因此本用例的判据很朴素：**进程能走到最后一行**。回归时整个测试进程会被直接 abort，
 /// ctest 报的就是失败 —— 不需要额外的断言来「抓住」它。
+///
+/// 注：「端口被占」这个前提由 PortBlocker 自己制造，而不是「两个 server 互相撞」
+/// （后者在 Windows 上不成立，见 PortBlocker 注释）。
 static void testCtrl9511StartFailIsSafe() {
     // 固定高位端口，避开 CI 上可能已在跑的 9511（apxhost serve / 上一轮测试实例）。
     constexpr uint16_t kPort = 19511;
 
-    // ① 第二个实例起同一端口：必须「启动失败」，而不是「进程崩掉」。
+    // ① 「端口被占」时 start() 必须如实返回 false，绝不能让进程跟着走掉。
+    //    b 保持**默认开启**反向剪贴板监视 —— 那正是 v223 崩溃路径里被析构的那个监视线程。
     {
-        Ctrl9511Server a;
-        // 第一个实例不碰系统剪贴板：CI runner 没有桌面会话，别把无关依赖引进来。
-        // 第二个实例保持**默认开启** —— 那正是 v223 崩溃路径里被析构的那个监视线程。
-        a.setReverseClipboardEnabled(false);
-        const bool okA = a.start(kPort, "", "regress-a");
-        CHECK(okA);
-        if (okA) {
+        PortBlocker blocker(kPort);
+        CHECK(blocker.ok());
+        if (blocker.ok()) {
             Ctrl9511Server b;
             CHECK(!b.start(kPort, "", "regress-b"));   // 端口被占住 → 必须 false
             b.stop();                                  // 没启动起来的实例，stop() 必须幂等
-            a.stop();
+            b.stop();
         }
     }
 
