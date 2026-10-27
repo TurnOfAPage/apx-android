@@ -77,3 +77,6 @@ scripts/selfhosted/linux/runner-token.env
 scripts/selfhosted/linux/Dockerfile.cache
 *.pat
 .github-token
+
+# 本机/CI 用过的测试构建目录
+pc/host/build_test/

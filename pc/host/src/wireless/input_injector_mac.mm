@@ -4,6 +4,8 @@
 // 编译为 Objective-C++（.mm）。多媒体键在 macOS 需 NXSystemDefined 事件，本实现暂忽略。
 // ============================================================================
 #include "apxpc/wireless/ctrl9511.hpp"
+// 相对位移 → 目标坐标 / 拖动类型：纯算术抽出来给用例盯着（issue #47 第 6 条）。
+#include "apxpc/wireless/relative_move.hpp"
 
 #if defined(__APPLE__)
 
@@ -15,6 +17,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdio>
+#include <vector>
 
 namespace apxpc::wireless {
 namespace {
@@ -58,14 +61,77 @@ long long steadyMsNow() {
 }
 std::atomic<long long> g_clipSuppressMs{0};
 
+// ---------- 光标定位 / 显示器并集 / 拖动事件类型（issue #47 第 6 条）----------
+// 这里三个都是 injectMouse 的支撑：读当前光标、算出夹取范围、决定投递哪种事件。
+
+/// 读当前光标位置。`CGEventCreate(nullptr)` 造的是「无源事件」，只用来取坐标，
+/// 读完必须 CFRelease —— 旧实现写成 `CGEventGetLocation(CGEventCreate(nullptr))`，
+/// 每帧漏一个事件对象（连续滑动时是无上限的泄漏）。
+CGPoint currentCursorPos() {
+    CGEventRef e = CGEventCreate(nullptr);
+    const CGPoint p = e ? CGEventGetLocation(e) : CGPointMake(0, 0);
+    if (e) CFRelease(e);
+    return p;
+}
+
+/// 全部活动显示器的并集（副屏在主屏左侧时 origin 为负，所以要并集而不是主屏 bounds）。
+/// 取不到时返回**无效框**：clampToBox 对无效框不夹，宁可交给系统，也不要把光标吸到 (0, 0)。
+BoxD activeDisplayBox() {
+    uint32_t n = 0;
+    if (CGGetActiveDisplayList(0, nullptr, &n) != kCGErrorSuccess || n == 0) return BoxD{};
+    std::vector<CGDirectDisplayID> ids(n);
+    uint32_t got = 0;
+    if (CGGetActiveDisplayList(n, ids.data(), &got) != kCGErrorSuccess || got == 0) return BoxD{};
+    CGRect u = CGRectNull;
+    for (uint32_t i = 0; i < got; ++i) u = CGRectUnion(u, CGDisplayBounds(ids[i]));
+    if (CGRectIsNull(u)) return BoxD{};
+    return BoxD{u.origin.x, u.origin.y,
+                u.origin.x + u.size.width - 1.0, u.origin.y + u.size.height - 1.0};
+}
+
+/// 按住键时的移动必须换成「拖动」事件，否则部分应用收不到拖拽（选区、拖文件、拖窗口）。
+CGEventType moveEventType(MoveKind k) {
+    switch (k) {
+        case MoveKind::LeftDrag:  return kCGEventLeftMouseDragged;
+        case MoveKind::RightDrag: return kCGEventRightMouseDragged;
+        case MoveKind::OtherDrag: return kCGEventOtherMouseDragged;
+        case MoveKind::Move:
+        default:                  return kCGEventMouseMoved;
+    }
+}
+
+/// 移动事件的按键参数要与拖动类型配套，不能一律 kCGMouseButtonLeft。
+CGMouseButton moveButton(MoveKind k) {
+    switch (k) {
+        case MoveKind::RightDrag: return kCGMouseButtonRight;
+        case MoveKind::OtherDrag: return kCGMouseButtonCenter;
+        default:                  return kCGMouseButtonLeft;
+    }
+}
+
 }  // namespace（匿名）
 
 class MacInjector : public InputInjector {
 public:
     void injectMouse(uint8_t buttons, int8_t dx, int8_t dy, int8_t wheel, int8_t pan = 0) override {
+        // 顺序：先在**当前位置**结算按键状态变化（按下 / 抬起），再移动，最后滚轮。
+        // 反过来的话「按下 + 同帧位移」会在键还没按下时先发拖动事件（部分应用直接丢），
+        // 「抬起 + 同帧位移」则会先移动再抬手，拖拽尾巴被判成一次普通移动。
+        const CGPoint cur = currentCursorPos();
+        applyButtonTransitions(buttons, cur);
         if (dx || dy) {
-            CGEventRef e = CGEventCreateMouseEvent(nullptr, kCGEventMouseMoved,
-                                                    CGEventGetLocation(CGEventCreate(nullptr)), kCGMouseButtonLeft);
+            // ★ 落点必须是**算出来的目标坐标**（当前坐标 + 增量）。
+            //   旧实现把增量塞进 kCGMouseEventDeltaX/Y、落点却仍用当前坐标 ——
+            //   投递事件的落点由 location 决定，增量字段不驱动光标，于是每帧都等价于
+            //   「把光标移到它现在所在的位置」：光标纹丝不动，用户看到的就是
+            //   「触控板划了没反应」。键盘走 CGEventCreateKeyboardEvent，不经过这条路，
+            //   所以现象正好是「键盘能用、触控板不能用」（issue #47 第 6 条）。
+            const PointD target = clampToBox(
+                relativeMoveTarget(PointD{cur.x, cur.y}, dx, dy), activeDisplayBox());
+            const MoveKind kind = moveKindForButtons(mouseButtons_);
+            CGEventRef e = CGEventCreateMouseEvent(nullptr, moveEventType(kind),
+                                                   CGPointMake(target.x, target.y),
+                                                   moveButton(kind));
             CGEventSetIntegerValueField(e, kCGMouseEventDeltaX, dx);
             CGEventSetIntegerValueField(e, kCGMouseEventDeltaY, dy);
             CGEventPost(kCGHIDEventTap, e); CFRelease(e);
@@ -77,16 +143,20 @@ public:
                                                          2, wheel, pan);
             CGEventPost(kCGHIDEventTap, e); CFRelease(e);
         }
-        const struct { uint8_t bit; CGEventType down; CGEventType up; } table[] = {
-            {0x01, kCGEventLeftMouseDown, kCGEventLeftMouseUp},
-            {0x02, kCGEventRightMouseDown, kCGEventRightMouseUp},
-            {0x04, kCGEventOtherMouseDown, kCGEventOtherMouseUp},
+    }
+
+    /// 结算按键状态变化。每个键位用**对应**的 CGMouseButton：旧实现一律传
+    /// kCGMouseButtonLeft，右键 / 中键在部分应用里会被认成左键事件。
+    void applyButtonTransitions(uint8_t buttons, CGPoint at) {
+        const struct { uint8_t bit; CGEventType down; CGEventType up; CGMouseButton btn; } table[] = {
+            {0x01, kCGEventLeftMouseDown, kCGEventLeftMouseUp, kCGMouseButtonLeft},
+            {0x02, kCGEventRightMouseDown, kCGEventRightMouseUp, kCGMouseButtonRight},
+            {0x04, kCGEventOtherMouseDown, kCGEventOtherMouseUp, kCGMouseButtonCenter},
         };
         for (const auto& t : table) {
             const bool was = (mouseButtons_ & t.bit) != 0, now = (buttons & t.bit) != 0;
             if (was == now) continue;
-            CGEventRef e = CGEventCreateMouseEvent(nullptr, now ? t.down : t.up,
-                                                    CGEventGetLocation(CGEventCreate(nullptr)), kCGMouseButtonLeft);
+            CGEventRef e = CGEventCreateMouseEvent(nullptr, now ? t.down : t.up, at, t.btn);
             CGEventPost(kCGHIDEventTap, e); CFRelease(e);
         }
         mouseButtons_ = buttons;

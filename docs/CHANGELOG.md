@@ -6,6 +6,34 @@
 
 ---
 
+## v223.3（2026-10-27）
+
+### 修复（macOS 触控板完全没反应）
+- **相对位移在 macOS 上是空操作，光标纹丝不动**。#47 第 6 条反馈
+  「无线模式下实体键盘触摸板、app 内虚拟触控板都不可用，但键盘输入可用」——
+  键盘走 `CGEventCreateKeyboardEvent`，触控板走 `injectMouse`，差别就在后者：
+  旧实现把增量写进 `kCGMouseEventDeltaX/Y`，**落点却仍传当前坐标**
+  （`CGEventGetLocation(CGEventCreate(nullptr))`）。投递事件的落点由 location 决定，
+  增量字段只是事件自带的信息、不驱动光标 —— 于是每一帧都等价于「把光标移到它现在
+  所在的位置」，看起来就是触控板完全没反应。
+  现在先读当前坐标、加上增量算出目标坐标，再按目标坐标投递。
+- 同一处顺带修掉四件事：
+  - 每次移动都漏一个 `CGEventCreate(nullptr)` 造出的事件对象（连续滑动时是无上限泄漏）；
+  - 按住键时的移动原来投递 `kCGEventMouseMoved`，改为 `kCGEvent(Left|Right|Other)MouseDragged`
+    —— 否则部分应用收不到拖拽（选区、拖文件、拖窗口）；
+  - 右键 / 中键一律传 `kCGMouseButtonLeft`，改为各自的 `CGMouseButton`；
+  - 顺序改为「先结算按键状态、再移动、最后滚轮」：反过来的话「按下 + 同帧位移」
+    会在键还没按下时先发拖动，「抬起 + 同帧位移」会把拖拽尾巴判成普通移动。
+- 落点夹取到**全部活动显示器的并集**（副屏在主屏左侧时 origin 为负，不能只夹主屏）；
+  取不到显示器列表时不夹，避免把光标吸到 (0, 0)。
+
+### 测试
+- 新增 `relative_move_test`（第 8 条用例）：相对位移换算、显示区域夹取、
+  按住键时的拖动类型判定。换算与判定抽到
+  `pc/host/include/apxpc/wireless/relative_move.hpp`，纯头文件算术，三平台都能跑。
+
+---
+
 ## v223.2（2026-10-27）
 
 ### 新增

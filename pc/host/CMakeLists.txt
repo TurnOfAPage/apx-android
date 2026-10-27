@@ -544,6 +544,12 @@ if(APXPC_BUILD_TESTS)
   endif()
   add_test(NAME ctrl_frame_test COMMAND ctrl_frame_test)
 
+  # 相对位移换算 / 拖动类型判定：纯头文件算术，不链任何库。
+  # 盯的是 issue #47 第 6 条那个 macOS 注入缺陷（增量写了、落点没动）。
+  add_executable(relative_move_test "${APXPC_ROOT}/tests/relative_move_test.cpp")
+  target_include_directories(relative_move_test PRIVATE "${APXPC_ROOT}/include")
+  add_test(NAME relative_move_test COMMAND relative_move_test)
+
   # v198 无线会话生命周期压测：worker 在 stop() 之后不得重建 beacon 线程，
   # 否则 stop() 末尾 join 收不回，进程无法退出（必须 kill）。
   add_executable(wireless_session_lifecycle_test
