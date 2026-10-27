@@ -5,6 +5,7 @@
 // 仅网络与帧解析是平台无关部分；系统注入见 input_injector_*，剪贴板监听见同文件。
 // ============================================================================
 #include "apxpc/wireless/ctrl9511.hpp"
+#include "apxpc/log.hpp"   // 启动失败/异常要留痕（mac 端此前在这里 terminate，日志是唯一现场）
 // v184：断链/退出时抬起残留按键（副屏触摸可能停在"按下"帧上）
 #include "apxpc/media/touch_inject.hpp"
 
@@ -28,6 +29,13 @@
 using Sock = SOCKET;
 const Sock kBadSock = INVALID_SOCKET;
 static void closeSock(Sock s) { if (s != INVALID_SOCKET) closesocket(s); }
+/// 关**监听**套接字：先 shutdown 再 close，这是「唤醒另一个线程里阻塞的 accept()」的
+/// 唯一可靠办法（只 close 不行，见非 Win 分支的同名注释）。
+static void closeListenSock(Sock s) {
+    if (s == INVALID_SOCKET) return;
+    shutdown(s, SD_BOTH);
+    closesocket(s);
+}
 static void ensureWsa() {
     static bool once = [] { WSADATA d{}; WSAStartup(MAKEWORD(2, 2), &d); return true; }();
     (void)once;
@@ -43,6 +51,18 @@ static void ensureWsa() {
 using Sock = int;
 const Sock kBadSock = -1;
 static void closeSock(Sock s) { if (s >= 0) close(s); }
+/// 关**监听**套接字：必须先 `shutdown(SHUT_RDWR)` 再 `close`。
+/// 只 close 唤不醒另一个线程里阻塞的 accept()：那边持着该 socket 的引用，
+/// close 之后它继续睡，于是 `join(acceptThread)` 永久卡住 —— 实测（Linux/BSD 同）：
+///   只 close     → accept 线程仍在阻塞，join 卡死
+///   shutdown 在先 → accept 立即返回 EINVAL，线程退出
+/// 这是 issue#47 顺带查出来的**既有**缺陷：mac 上「apxdesktop 退出要 pkill」就是它。
+/// 返回值忽略：监听套接字上 shutdown 本就可能报 EINVAL（已关机/未连接），无妨。
+static void closeListenSock(Sock s) {
+    if (s < 0) return;
+    shutdown(s, SHUT_RDWR);
+    close(s);
+}
 static void ensureWsa() {
     // 非 Windows：忽略 SIGPIPE，避免对端断开时 send 直接杀进程
     static bool once = [] { signal(SIGPIPE, SIG_IGN); return true; }();
@@ -354,8 +374,12 @@ struct Ctrl9511Server::Impl {
             const uint8_t buttons = p[1];
             const int8_t dx = static_cast<int8_t>(p[2]);
             const int8_t dy = static_cast<int8_t>(p[3]);
-            const int8_t wheel = (bodyLen >= 5) ? static_cast<int8_t>(p[4]) : 0;
-            if (injector) injector->injectMouse(buttons, dx, dy, wheel);
+            const int8_t wheel = static_cast<int8_t>(p[4]);
+            // 横向滚动 = 0x01 帧第 6 字节（可选）。老控制端只发 5 字节 → pan=0，
+            // 行为与本字段加入前完全一致；新控制端发 6 字节时老 PC 端读前 5 字节、
+            // 忽略多出来的字节（接收侧一律按 bodyLen>= 判，不做等长断言）。
+            const int8_t pan = (bodyLen >= 6) ? static_cast<int8_t>(p[5]) : 0;
+            if (injector) injector->injectMouse(buttons, dx, dy, wheel, pan);
             aMouse_.fetch_add(1);
         } else if (cmd == 0x02 && bodyLen >= 3) {
             const uint16_t bm = static_cast<uint16_t>(p[1]) |
@@ -514,46 +538,90 @@ bool Ctrl9511Server::start(uint16_t port, const std::string& token, const std::s
     ensureWsa();
     auto* im = new Impl();
     im->port = port; im->token = token; im->name = name;
-    im->injector = createPlatformInjector();
-    if (!im->injector) {
-        im->st.error = "平台输入注入器创建失败";
-        delete im; return false;
-    }
-    if (reverseClipboard_) {
-        im->clip = createPlatformClipboardWatcher(
-            [im](const std::string& t) { im->onClipboardChanged(t); });
-        if (im->clip) im->clip->start();
-    }
-    im->onRequestInput_ = std::move(onRequestInput_);
-    im->onRemoteInputText_ = std::move(onRemoteInputText_);
-    im->onRemoteInputDone_ = std::move(onRemoteInputDone_);
 
-    im->listenFd = ::socket(AF_INET, SOCK_STREAM, 0);
-    if (im->listenFd == kBadSock) { delete im; return false; }
-#if defined(_WIN32)
-    int yes = 1;
-#else
-    int yes = 1;
-#endif
-    setsockopt(im->listenFd, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&yes), sizeof(yes));
-    sockaddr_in addr{}; addr.sin_family = AF_INET; addr.sin_addr.s_addr = INADDR_ANY; addr.sin_port = htons(port);
-    if (::bind(im->listenFd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
-        im->st.error = "bind 失败（端口被占？）"; closeSock(im->listenFd); delete im; return false;
-    }
-    if (::listen(im->listenFd, 1) != 0) { closeSock(im->listenFd); delete im; return false; }
+    /* 失败即整体回收（issue#47 硬修）：三种失败路径原先各自 delete/hand-rolled，
+       漏掉谁就是一次「未 join 的 std::thread 析构 → std::terminate」。
+       这里一个出口统一收口，且跨过「线程起了一半」的情形。 */
+    auto cleanup = [&]() {
+        im->running.store(false);
+        closeListenSock(im->listenFd);
+        im->listenFd = kBadSock;
+        if (im->clip) im->clip->stop();
+        if (im->acceptThread.joinable()) im->acceptThread.join();
+        if (im->hsThread.joinable()) im->hsThread.join();      // accept 退出后再收握手线程（它由 accept 线程创建）
+        if (im->readerThread.joinable()) im->readerThread.join();
+        if (im->writerThread.joinable()) im->writerThread.join();
+        if (im->beaconThread.joinable()) im->beaconThread.join();
+        delete im;
+    };
 
-    im->running.store(true);
-    impl_.reset(im);
-    im->acceptThread = std::thread([im] { im->acceptLoop(); });
-    im->beaconThread = std::thread([im] { im->beaconLoop(); });
-    im->st.listening = true;
-    return true;
+    /* 整函数兜底：mac 上没有 set_terminate（v223 崩溃即 terminate → abort）。
+       任何 std::thread 构造失败、分配失败都在这里转成「启动失败」而不是进程死亡。 */
+    try {
+        im->injector = createPlatformInjector();
+        if (!im->injector) {
+            im->st.error = "平台输入注入器创建失败";
+            cleanup(); return false;
+        }
+
+        /* 顺序很关键（issue#47 根因）：先把监听端口占上，成功之后再起剪贴板监视线程。
+           历史顺序是「先起剪贴板线程 → 再 bind」，于是 bind 失败时清理要负责停线程；
+           而 deepseek 之外还有一处对照：apxdesktop 的 main 先起 9511、runWebPanelHttp
+           又起一次 → 第二次必然 bind 失败 → 走到这条清理路径 → 线程未 join 而 terminate。 */
+        im->onRequestInput_ = std::move(onRequestInput_);
+        im->onRemoteInputText_ = std::move(onRemoteInputText_);
+        im->onRemoteInputDone_ = std::move(onRemoteInputDone_);
+
+        im->listenFd = ::socket(AF_INET, SOCK_STREAM, 0);
+        if (im->listenFd == kBadSock) { im->st.error = "socket 创建失败"; cleanup(); return false; }
+        int yes = 1;
+        setsockopt(im->listenFd, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&yes), sizeof(yes));
+        sockaddr_in addr{}; addr.sin_family = AF_INET; addr.sin_addr.s_addr = INADDR_ANY; addr.sin_port = htons(port);
+        if (::bind(im->listenFd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
+            im->st.error = "bind 失败（端口被占？）"; cleanup(); return false;
+        }
+        if (::listen(im->listenFd, 1) != 0) { im->st.error = "listen 失败"; cleanup(); return false; }
+
+        /* 监听已就绪：此后任何一步失败都不再影响端口归属判断，可以安全起后台线程。 */
+        im->running.store(true);
+        impl_.reset(im);                                  // 所有权移交后，析构保证调用 stop()
+
+        im->acceptThread = std::thread([im] { im->acceptLoop(); });
+        im->beaconThread = std::thread([im] { im->beaconLoop(); });
+
+        if (reverseClipboard_) {
+            im->clip = createPlatformClipboardWatcher(
+                [im](const std::string& t) { im->onClipboardChanged(t); });
+            if (im->clip && !im->clip->start()) {
+                APX_LOGW("剪贴板反向监听启动失败（不影响受控）");
+                im->clip.reset();
+            }
+        }
+
+        im->st.listening = true;
+        return true;
+    } catch (const std::exception& e) {
+        APX_LOGE("9511 受控端启动异常：{}", e.what());
+        const bool owned = (impl_.get() == im);
+        if (owned) {
+            stop();                                        // 走正常停机路径（含 join 全部线程）
+        } else {
+            cleanup();
+        }
+        return false;
+    } catch (...) {
+        APX_LOGE("9511 受控端启动异常（非 std 异常）");
+        if (impl_.get() == im) stop(); else cleanup();
+        return false;
+    }
 }
 
 void Ctrl9511Server::stop() {
     if (!impl_) return;
     impl_->running.store(false);
-    closeSock(impl_->listenFd);
+    // 先 shutdown 再 close：唤醒阻塞中的 accept（只 close 会 join 卡死，见 closeListenSock）
+    closeListenSock(impl_->listenFd);
+    impl_->listenFd = kBadSock;
     { std::lock_guard<std::mutex> lk(impl_->clientMu);
       if (impl_->clientFd != kBadSock) { shutdown(impl_->clientFd, 0); closeSock(impl_->clientFd); } }
     if (impl_->clip) impl_->clip->stop();
@@ -731,11 +799,13 @@ bool Ctrl9511Client::connect(const std::string& host, uint16_t port, const std::
                 } else if (h.streamId == apx::kStreamControl && bodyLen >= 5 && payload[0] == 0x01) {
                     // v184：鼠标相对移动/按键 —— 手机输入面板内嵌触控板走这条。
                     // 旧 reader 只认 0x21/0x25/0x26/0x27/0x28，0x01/02/03/04 全部落空被丢。
+                    // 第 6 字节 pan（横向滚动）可选：老对端不发 → 0，行为不变。
                     if (im->injector)
                         im->injector->injectMouse(payload[1],
                                                   static_cast<int8_t>(payload[2]),
                                                   static_cast<int8_t>(payload[3]),
-                                                  static_cast<int8_t>(payload[4]));
+                                                  static_cast<int8_t>(payload[4]),
+                                                  bodyLen >= 6 ? static_cast<int8_t>(payload[5]) : 0);
                 } else if (h.streamId == apx::kStreamControl && bodyLen >= 3 && payload[0] == 0x02) {
                     if (im->injector)
                         im->injector->injectConsumer(

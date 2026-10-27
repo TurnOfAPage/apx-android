@@ -346,7 +346,9 @@ class TouchpadModule : Module {
                 Uplink.set(path, com.allperiph.wireless.ControlTarget.label)
                 if (c != null) {
                     if (f.consumer != 0) c.consumer(f.consumer)
-                    else c.mouse(f.buttons, f.dx, f.dy, f.wheel)
+                    // pan 一并下发（v223.1）：此前无线出口把横向滚动整个丢掉，
+                    // 只有 USB / 蓝牙出口带 pan —— 物理触摸板双指横滑「只在插线时能用」。
+                    else c.mouse(f.buttons, f.dx, f.dy, f.wheel, f.pan)
                 }
             }
             Uplink.USB -> {

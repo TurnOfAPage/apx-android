@@ -14,9 +14,10 @@
 // 回退：APXPC_BUILD_UI_WEBVIEW2=OFF 时编译旧 Win32 GDI+ 面板（panel_win32.cpp），
 // 入口仍是 runPanel()。旧面板自身在 Panel 构造函数里创建/持有完整宿主栈生命周期。
 //
-// macOS 分支（mac-desktop）：GUI 三件事（崩溃取证/防火墙/DPI）为 Win 专属；
-// 桌面壳走与 apxhost panel 相同的 runWebPanelHttp（HTTP 面板，内部自含 9512 收文件 /
-// startAuto / 媒体泵 / 托盘接线；9511 受控端在本文件上方创建，单一创建点）；
+// macOS 分支（mac-desktop）：GUI 三件事里只有防火墙/DPI 是 Win 专属，崩溃取证与日志
+// 落盘在 POSIX 侧同样必须做（双击启动没有终端，见下方 POSIX 取证块）；
+// 桌面壳走与 apxhost panel 相同的 runWebPanelHttp（HTTP 面板，内部自含 9511 受控端 /
+// 9512 收文件 / startAuto / 媒体泵 / 托盘接线 —— 9511 的唯一创建点）；
 // ScreenPush 在 mac **完全不声明**（见下方链接说明）；Linux 报错退出。
 
 #include "apxpc/log.hpp"
@@ -34,6 +35,7 @@
 #include "apxpc/hotkey/hotkey.hpp"
 #include "apxpc/config/app_config.hpp"
 #include "apxpc/api/action_router.hpp"
+#include "apxpc/version.hpp"   // APXPC_VERSION_STRING：崩溃报告里要带版本号
 
 #if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
@@ -53,6 +55,16 @@
 #pragma comment(lib, "shell32")
 #else
 #include <unistd.h>
+#include <exception>
+#include <csignal>
+#include <cstdlib>
+#include <execinfo.h>   // backtrace / backtrace_symbols_fd（macOS 与 Linux 都有）
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <string>
+#if defined(__APPLE__)
+#include <mach-o/dyld.h>   // _dyld_get_image_header：崩溃报告的 imageOffset 基准
+#endif
 #endif
 
 #include <atomic>
@@ -153,6 +165,15 @@ void writeCrashText(const char* what) {
     const int n = std::snprintf(buf, sizeof(buf), "terminate: %s\r\n", what ? what : "(no message)");
     if (n > 0) { DWORD written = 0; ::WriteFile(f, buf, static_cast<DWORD>(n), &written, nullptr); }
     ::CloseHandle(f);
+}
+
+// 与 POSIX 侧 writeCrashReport 同名同签名：让 main 的兜底 catch 两个平台一份代码。
+// Win 已有的取证比 POSIX 版本更全（VEH + minidump），这里只补「kind + 原因」这条缝。
+void writeCrashReport(const char* kind, const char* why, int sig) {
+    (void)sig;
+    char buf[1024];
+    std::snprintf(buf, sizeof(buf), "%s: %s", kind ? kind : "crash", why ? why : "(unknown)");
+    writeCrashText(buf);
 }
 
 LONG WINAPI apxCrashFilter(EXCEPTION_POINTERS* ep) {
@@ -283,11 +304,211 @@ void startFileLogging() {
         }
     });
 }
-#endif  // _WIN32（GUI 基础设施：防火墙/崩溃取证/日志 —— 均为 Win 专属，mac 不需要）
+#else  // —————— POSIX（macOS / Linux）：崩溃取证 + 日志落盘 ——————
+//
+// mac 桌面壳是**双击启动的 GUI 程序**：没有终端，stderr 看不见。v223 的 mac 崩溃
+// （issue#47）正好踩在这个盲区上 —— 用户拿到的问题报告里只有地址、没有原因，只能
+// 事后反汇编。这里把 Win 侧那套取证补齐：
+//   · set_terminate：C++ 未捕获异常 → 把 what() + 回溯落盘（std::terminate 前最后机会）；
+//   · 致命信号：同样落盘，然后恢复默认处理并重发 —— 系统自己的崩溃报告（mac 的 .ips）
+//     照旧生成，我们只做补充，不替代系统取证。
+// 报告与日志同目录：mac = ~/Library/Logs/AllPeriph，Linux = $XDG_STATE_HOME|~/.local/state。
+
+std::string logDir() {
+    const char* home = std::getenv("HOME");
+    const std::string h = (home && *home) ? home : ".";
+#if defined(__APPLE__)
+    return h + "/Library/Logs/AllPeriph";
+#else
+    const char* state = std::getenv("XDG_STATE_HOME");
+    if (state && *state) return std::string(state) + "/AllPeriph";
+    return h + "/.local/state/AllPeriph";
+#endif
+}
+
+// 崩溃处理器跑在**信号上下文**里：不能 malloc、不能 stdio（会死锁在崩溃点上）。
+// 所以整张报告在栈上的固定数组里拼，写盘只用 open/write。
+size_t hexStr(char* out, uintptr_t v) {           // "0x…"，最长 18 字节 + NUL
+    char tmp[16];
+    size_t n = 0;
+    if (v == 0) tmp[n++] = '0';
+    while (v) {
+        const unsigned nib = static_cast<unsigned>(v & 0xF);
+        tmp[n++] = static_cast<char>(nib < 10 ? '0' + nib : 'a' + (nib - 10));
+        v >>= 4;
+    }
+    size_t k = 0;
+    out[k++] = '0'; out[k++] = 'x';
+    while (n) out[k++] = tmp[--n];
+    out[k] = '\0';
+    return k;
+}
+
+size_t decStr(char* out, long long v) {           // 十进制，最长 20 字节 + NUL
+    char tmp[24];
+    size_t n = 0;
+    unsigned long long u = (v < 0) ? static_cast<unsigned long long>(-v)
+                                   : static_cast<unsigned long long>(v);
+    if (u == 0) tmp[n++] = '0';
+    while (u) { tmp[n++] = static_cast<char>('0' + (u % 10)); u /= 10; }
+    if (v < 0) tmp[n++] = '-';
+    size_t k = 0;
+    while (n) out[k++] = tmp[--n];
+    out[k] = '\0';
+    return k;
+}
+
+void bufAppend(char* dst, size_t cap, size_t& off, const char* s) {
+    if (!s) return;
+    for (size_t i = 0; s[i] != '\0' && off + 1 < cap; ++i) dst[off++] = s[i];
+    dst[off] = '\0';
+}
+
+void bufAppendHex(char* dst, size_t cap, size_t& off, uintptr_t v) {
+    char tmp[20];
+    hexStr(tmp, v);
+    bufAppend(dst, cap, off, tmp);
+}
+
+void bufAppendDec(char* dst, size_t cap, size_t& off, long long v) {
+    char tmp[24];
+    decStr(tmp, v);
+    bufAppend(dst, cap, off, tmp);
+}
+
+// 一张报告覆盖「terminate」与「致命信号」两种入口（kind 区分）。内容刻意对齐苹果
+// 崩溃报告的读法：先给帧地址，再给 imageOffset（= 帧地址 − 主可执行文件加载地址）。
+// 后者是跨机器可比的 PIE 偏移，配未 strip 二进制跑 `nm -n` 就能直接对到函数名 ——
+// 不用再像 v223 那样手工反汇编。
+void writeCrashReport(const char* kind, const char* why, int sig) {
+    char report[8192];
+    size_t off = 0;
+    report[0] = '\0';
+
+    bufAppend(report, sizeof(report), off, "apxdesktop 崩溃报告\n版本: ");
+    bufAppend(report, sizeof(report), off, APXPC_VERSION_STRING);
+    bufAppend(report, sizeof(report), off, "\n类型: ");
+    bufAppend(report, sizeof(report), off, kind);
+    if (sig != 0) {
+        bufAppend(report, sizeof(report), off, "（信号 ");
+        bufAppendDec(report, sizeof(report), off, sig);
+        bufAppend(report, sizeof(report), off, "）");
+    }
+    bufAppend(report, sizeof(report), off, "\n原因: ");
+    bufAppend(report, sizeof(report), off, (why && *why) ? why : "(没有可用的原因文本)");
+    bufAppend(report, sizeof(report), off, "\n");
+
+#if defined(__APPLE__)
+    const uintptr_t imgBase = reinterpret_cast<uintptr_t>(_dyld_get_image_header(0));
+    bufAppend(report, sizeof(report), off, "主可执行文件加载地址: ");
+    bufAppendHex(report, sizeof(report), off, imgBase);
+    bufAppend(report, sizeof(report), off, "\n");
+#endif
+
+    bufAppend(report, sizeof(report), off,
+              "调用栈（#0 是最内层；mac 上 imageOffset 与苹果崩溃报告同口径）:\n");
+    void* frames[40];
+    const int n = ::backtrace(frames, 40);   // 信号上下文里是尽力而为，可能不满
+    for (int i = 0; i < n; ++i) {
+        const uintptr_t a = reinterpret_cast<uintptr_t>(frames[i]);
+        bufAppend(report, sizeof(report), off, "  #");
+        bufAppendDec(report, sizeof(report), off, i);
+        bufAppend(report, sizeof(report), off, " ");
+        bufAppendHex(report, sizeof(report), off, a);
+#if defined(__APPLE__)
+        bufAppend(report, sizeof(report), off, "  imageOffset ");
+        bufAppendHex(report, sizeof(report), off, a - imgBase);
+#endif
+        bufAppend(report, sizeof(report), off, "\n");
+    }
+    bufAppend(report, sizeof(report), off, "\n");
+
+    const std::string dir = logDir();
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    const std::string path = dir + "/crash.txt";
+    const int fd = ::open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd >= 0) {
+        const char* p = report;
+        size_t left = off;
+        while (left > 0) {
+            const ssize_t w = ::write(fd, p, left);
+            if (w <= 0) break;
+            p += w;
+            left -= static_cast<size_t>(w);
+        }
+        ::close(fd);
+    }
+    // 终端里启动时（./apxdesktop）stderr 仍是最快的现场，直接给一份
+    if (off > 0) { const ssize_t r = ::write(STDERR_FILENO, report, off); (void)r; }
+}
+
+void apxTerminateHandler() {
+    const char* why = "(unknown exception)";
+    std::string msg;
+    if (std::exception_ptr cur = std::current_exception()) {
+        try { std::rethrow_exception(cur); }
+        catch (const std::exception& e) { msg = e.what(); }
+        catch (...) { msg = "(non-std exception)"; }
+    }
+    if (!msg.empty()) why = msg.c_str();
+    writeCrashReport("terminate（C++ 未捕获异常）", why, 0);
+}
+
+void apxSignalHandler(int sig) {
+    writeCrashReport("fatal signal", "进程收到致命信号", sig);
+    // 恢复默认处理并重发：既让系统生成自己的崩溃报告，也让退出码/信号语义不被我们改写
+    ::signal(sig, SIG_DFL);
+    ::raise(sig);
+}
+
+void installCrashForensics() {
+    std::set_terminate(apxTerminateHandler);
+    {   // 预热：首次 backtrace 可能内部加载符号表/分配内存，放在正常上下文里做
+        void* warm[4];
+        (void)::backtrace(warm, 4);
+    }
+    const int sigs[] = {SIGSEGV, SIGBUS, SIGABRT, SIGFPE, SIGILL, SIGTRAP};
+    for (const int s : sigs) {
+        struct sigaction sa{};
+        sa.sa_handler = apxSignalHandler;
+        sa.sa_flags = SA_NODEFER;   // 处理器内要重发同一信号，不能被自身屏蔽
+        sigemptyset(&sa.sa_mask);
+        ::sigaction(s, &sa, nullptr);
+    }
+    APX_LOGI("崩溃取证就绪：报告目录 {}", logDir().c_str());
+}
+
+// —————— 日志落盘 ——————
+// 双击 .app 启动时没有终端，`APX_LOG*` 不落盘就等于没有。约定与 Win 侧一致：
+// 超过 2MB 先清空（诊断只看最近一次运行），每行 flush（崩溃时最后几行必须已在盘上）。
+void startFileLogging() {
+    const std::string dir = logDir();
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    const std::string path = dir + "/apxdesktop.log";
+    {
+        std::error_code e2;
+        const auto sz = std::filesystem::file_size(path, e2);
+        if (!e2 && sz > 2u * 1024u * 1024u) std::filesystem::remove(path, e2);
+    }
+    static std::mutex mu;
+    static std::FILE* f = std::fopen(path.c_str(), "a");
+    if (f == nullptr) { std::fprintf(stderr, "[AllPeriph] 日志落盘不可用: %s\n", path.c_str()); return; }
+    apxpc::Logger::instance().setSink([](apxpc::LogLevel, const std::string& line) {
+        std::lock_guard<std::mutex> g(mu);   // 回调在锁外被调用；这里只保护文件句柄
+        if (f == nullptr) return;
+        std::fwrite(line.data(), 1, line.size(), f);
+        std::fputc('\n', f);
+        std::fflush(f);
+    });
+    APX_LOGI("日志落盘：{}", path.c_str());
+}
+#endif  // GUI 基础设施（Win：防火墙/VEH/文件日志；POSIX：terminate+信号取证/文件日志）
 
 }  // namespace
 
-int main(int /*argc*/, char** /*argv*/) {
+int runDesktopMain() {
 #if defined(_WIN32)
     // DPI 感知必须在任何 GDI/User32 调用之前设置
     // Win10 1703+ 用 SetProcessDpiAwarenessContext；老系统动态加载失败即跳过（manifest 兑底）
@@ -337,11 +558,22 @@ int main(int /*argc*/, char** /*argv*/) {
         if (hostUtf8.empty()) hostUtf8 = "Mac";   // gethostname 失败时的诚实兑底名
     }
 #endif
+#if defined(_WIN32)
+    // Win：面板入口（web_panel/runWebPanel）**不**创建 9511，所以由本文件创建。
     apxpc::wireless::Ctrl9511Server ctrlSrv;
     if (!ctrlSrv.start(9511, "", hostUtf8))
         APX_LOGW("9511 受控端启动失败（端口可能已被 apxhost 占用）");
     else
         APX_LOGI("9511 受控端已启动（桌面端自带）");
+#else
+    // mac/Linux：9511 受控端**不在本文件创建** —— 面板入口（runWebPanelHttp 内的
+    // HttpPanel::ctrlSrv）已经是唯一创建点。v223「mac 打开即崩溃」（issue#47）的根因
+    // 正是两处都起：本文件先占住 9511 → 面板里再起必然 bind 失败 → 旧失败路径
+    // `delete Impl` 时析构了「已经在跑」的剪贴板监视线程（未 join 的 std::thread）
+    // → std::terminate → abort。消除重复创建 + ctrl9511.cpp 的失败路径加固，两条都必要。
+    apxpc::wireless::Ctrl9511Server ctrlSrv;   // 空对象：下方 stop() 幂等，无需特判
+    APX_LOGI("9511 受控端由面板入口创建（本进程不重复创建，主机名 {}）", hostUtf8.c_str());
+#endif
 
     // 配置
     std::string cfgPath = apxpc::config::defaultConfigPath();
@@ -422,9 +654,8 @@ int main(int /*argc*/, char** /*argv*/) {
     const int rc = apxpc::ui::runWebPanel(bundle);
 #elif defined(__APPLE__)
     // mac 桌面壳 = 与 apxhost panel 同一 HTTP 面板入口（webDir 空 = exe 旁 web/）。
-    // 9511 受控端在上方本文件已起（单一创建点）—— runWebPanelHttp 内部也会尝试起一次，
-    // 端口冲突时它只打警告并继续（面板侧实例失败、desktop 侧实例在跑，信标不断），
-    // 与 Win desktop_main 对 apxhost 占用 9511 的容错一致。
+    // 9511 受控端由 runWebPanelHttp 内部的 HttpPanel::ctrlSrv **唯一**创建
+    // （本文件上方对 mac 已不再创建 —— 重复创建就是 v223 打开即崩的根因，见上方注释）。
     // 其余（startAuto / 9512 收文件事件 / 媒体泵 / 麦克风接线）由 runWebPanelHttp 统一负责。
     const int rc = apxpc::ui::runWebPanelHttp(bundle, {});
 #else
@@ -449,4 +680,27 @@ int main(int /*argc*/, char** /*argv*/) {
     tray->quit();
     apxpc::config::saveConfig(cfgPath, cfg);
     return rc;
+}
+
+// 入口。两类崩溃兜底：
+//   ① 未捕获异常 → 这里 catch（写报告 + 落一行 stderr）；
+//   ② 致命信号 / 漏出到 terminate 的异常 → 由 installCrashForensics 装的处理函数落盘。
+// POSIX 侧此前完全没有这两层：apxdesktop 一旦抛异常就直接 abort，用户只看到窗口一闪、
+// 报告里只有地址没有原因（issue#47 的 mac 崩溃就是这么发生的）。
+int main(int /*argc*/, char** /*argv*/) {
+#if !defined(_WIN32)
+    installCrashForensics();   // 必须在任何业务代码之前：后面每一步挂了都要留下现场
+    startFileLogging();        // 双击启动没有终端，日志不落盘等于没有
+#endif
+    try {
+        return runDesktopMain();
+    } catch (const std::exception& e) {
+        writeCrashReport("exception（main 兜底）", e.what(), 0);
+        std::fprintf(stderr, "[AllPeriph] 桌面壳异常退出：%s\n", e.what());
+        return 2;
+    } catch (...) {
+        writeCrashReport("exception（main 兜底）", "(非 std 异常)", 0);
+        std::fprintf(stderr, "[AllPeriph] 桌面壳异常退出（非 std 异常）\n");
+        return 2;
+    }
 }

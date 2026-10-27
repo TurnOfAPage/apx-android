@@ -234,8 +234,10 @@ class TvControllerClient(
         return txQueue.offer(frame)
     }
 
-    /** P0-1：dx/dy/wheel 各占一个有符号字节，超出 [-127,127] 会回绕成反向 —— 这里钳位兜底；被钳掉的余数由发送源端（GestureEngine 的 fracX/fracY 亚像素累加器）带入下一帧，不丢位移 */
-    fun mouse(buttons: Int, dx: Int, dy: Int, wheel: Int = 0) = sendControl(byteArrayOf(0x01.toByte(), buttons.toByte(), dx.coerceIn(-127, 127).toByte(), dy.coerceIn(-127, 127).toByte(), wheel.coerceIn(-127, 127).toByte()))
+    /** P0-1：dx/dy/wheel 各占一个有符号字节，超出 [-127,127] 会回绕成反向 —— 这里钳位兜底；被钳掉的余数由发送源端（GestureEngine 的 fracX/fracY 亚像素累加器）带入下一帧，不丢位移
+     *  第 6 字节 pan（横向滚动，右为正）：v223.1 起无线出口也带上，此前只有 USB/蓝牙出口带。
+     *  老 PC 端按 bodyLen>=5 读前 5 字节、忽略多出来的字节；老手机端同理 —— 双向兼容。 */
+    fun mouse(buttons: Int, dx: Int, dy: Int, wheel: Int = 0, pan: Int = 0) = sendControl(byteArrayOf(0x01.toByte(), buttons.toByte(), dx.coerceIn(-127, 127).toByte(), dy.coerceIn(-127, 127).toByte(), wheel.coerceIn(-127, 127).toByte(), pan.coerceIn(-127, 127).toByte()))
     fun touch(action: Int, buttons: Int, x: Int, y: Int) = sendControl(byteArrayOf(0x04.toByte(), action.toByte(), buttons.toByte(), (x and 0xFF).toByte(), ((x shr 8) and 0xFF).toByte(), (y and 0xFF).toByte(), ((y shr 8) and 0xFF).toByte(), 0, 0))
     /** v184：特殊键/组合键（0x28）：mod 位图 1=Ctrl 2=Shift 4=Alt，vk 用 Windows VK 码 */
     fun sendSpecialKey(mod: Int, vk: Int) = sendControl(byteArrayOf(0x28.toByte(), mod.toByte(), vk.toByte()))

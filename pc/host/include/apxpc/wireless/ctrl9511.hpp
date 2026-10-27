@@ -62,7 +62,10 @@ public:
     virtual ~InputInjector() = default;
 
     /// 鼠标相对位移（i8 范围）。wheel 上滚为正；buttons bit0=左 bit1=右 bit2=中。
-    virtual void injectMouse(uint8_t buttons, int8_t dx, int8_t dy, int8_t wheel) = 0;
+    /// pan 右滚为正（9511 的 0x01 帧第 6 字节）—— 旧控制端只发 5 字节，此时调用方
+    /// 传 0，进行为与老版本完全一致（协议向后兼容，见 docs/PROTOCOL.md §3.3）。
+    virtual void injectMouse(uint8_t buttons, int8_t dx, int8_t dy, int8_t wheel,
+                             int8_t pan = 0) = 0;
 
     /// 绝对坐标触摸（归一化 0..65535）。action: 0=down 1=up 2=move；buttons 决定双指=右键。
     virtual void injectTouch(uint8_t action, uint8_t buttons, uint16_t x, uint16_t y) = 0;

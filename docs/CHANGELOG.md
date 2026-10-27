@@ -6,6 +6,58 @@
 
 ---
 
+## v223.1（2026-10-27）
+
+macOS 桌面壳（`apxdesktop`）**启动即崩 + 退出不干净**的热修，外加触控板横向滚动与崩溃取证。
+Tag `v223.1`，只含 `pc/host` 与 Android 客户端改动，设置页 UI 未动。
+
+### 修复
+- **macOS `apxdesktop` 启动即崩（`EXC_CRASH` / SIGABRT / `std::terminate` 无活跃异常）** —— #47 的主因。
+  逐帧反解栈（`+378972` / `0x5c838` … `+27144` / `0x6550` `runWebPanelHttp` …）确认调用链：
+  `main` → `runWebPanelHttp` → `Ctrl9511Server::start` 里 bind 失败分支 `delete im` →
+  `Impl` 析构 → `MacClipboardWatcher` 析构 → **joinable `std::thread` 析构 → `std::terminate` → `abort()`**。
+  而 bind 之所以必失败，是 mac 上 9511 受控端被创建了两次（`desktop_main` 的 `main` 先起一个，
+  `runWebPanelHttp`（panel_http.cpp）里 `HttpPanel::ctrlSrv` 又起一个）；Windows 的 `runWebPanel`
+  不创建 9511，所以只有 mac 崩。三层一起修：
+  - `input_injector_mac.mm`：`MacClipboardWatcher` 补析构 `~MacClipboardWatcher() { stop(); }`；
+    `start()` 若已有 joinable 线程直接返回 false（幂等）；采集线程改捕获 `shared_ptr<atomic<bool>>` +
+    回调副本，不再裸用 `this`（对象先死、线程后醒也不会 UAF）；`stop()` 先置位再 join。
+  - `ctrl9511.cpp`：`start()` 重写为「**先** socket/bind/listen 占端口，**再**起线程」—— 端口占用时
+    直接如实返回 false，不再先建线程再去删对象；统一 `cleanup` lambda（停剪贴板、join accept/握手/
+    收发/信标线程、删注入器），整函数 try/catch 兜底（对象已自助登记时走 `stop()`，否则 `cleanup`）。
+  - `desktop_main.cpp`：**mac 不再创建 9511**，受控端只由面板入口创建（`#if _WIN32` 分支保留原行为）。
+  - 回归用例 `testCtrl9511StartFailIsSafe()`（`pc/host/tests/wireless_session_lifecycle_test.cpp`）：
+    同端口双实例第二个必须返回 false 且进程不 abort、未启动实例 `stop()` 幂等、同对象重复 `start()`
+    必须 false、`stop()` 两次后还能重启。修前用真实 `ctrl9511.cpp` + v223 语义平台层存根做的复现
+    harness 稳定 `exit 134`，修后连续 5 次 `ALL PASS`。
+- **macOS 退出后进程不消失（只能 `pkill -9`）**：`Ctrl9511Server` 停服时只用 `close(listenFd)` 去唤醒
+  阻塞在 `accept()` 的接收线程，而 POSIX 下 `close()` **不会**让正阻塞的 `accept()` 返回 —— 最小 C 复现
+  验证：只 `close` 时 accept 线程继续睡，`shutdown(SHUT_RDWR)`+`close` 后 accept 立刻返回 `EINVAL` 退出。
+  于是 `join(acceptThread)` 永久等不到，`stop()` 卡死、进程走到退出流程前就挂住。新增 `closeListenSock()`
+  （POSIX：`shutdown`+`close`；Windows：`shutdown(SD_BOTH)`+`closesocket`），`cleanup` 与 `stop()`
+  两条路径统一改用它，并置 `listenFd = kBadSock` 防重入。
+- **macOS 配置路径错落**：`defaultConfigPath()` 在 `__APPLE__` 下改为
+  `~/Library/Application Support/AllPeriph/config.json`（原先落在 `LOCALAPPDATA` 这种不成规矩的路径上）。
+  Linux/Windows 路径**刻意不动**，避免老用户配置看起来「消失」。
+
+### 新增
+- **触控板横向滚动（四端打通）**：0x01 控制载荷补第 6 字节 `pan`（i8，可选）。
+  `ctrl9511` 注入接口 `injectMouse(..., int8_t pan = 0)`；macOS 用
+  `CGEventCreateScrollWheelEvent(..., 2, wheel, pan)`；Windows 补 `MOUSEEVENTF_HWHEEL` INPUT；
+  Linux 补 `EV_REL`/`REL_HWHEEL`；Android 侧 `TvControllerClient.mouse()` 发 6 字节、
+  `TouchpadModule` 无线出口不再丢 `pan`。旧客户端少发该字节仍照常收（`bodyLen >= 6` 才读），双向兼容。
+  契约同步进 `docs/PROTOCOL.md`。
+- **macOS 崩溃取证与符号表**：`apxdesktop` 现在把现场落盘 —— `crash.txt`（信号、原因、
+  `_dyld_get_image_header(0)` 基准下的逐帧 imageOffset、`backtrace()`）与滚动日志 `apxdesktop.log`
+  （>2MB 自动清空，逐行 flush）；信号处理器只走 `open`/`write`（不用 stdio/malloc），记录后恢复
+  `SIG_DFL` 并重发，`std::terminate` 也挂了处理器，未捕获异常另有 stderr + 退出码 2 兜底。
+  同时 mac CI 新增 `Save symbols (for crash-offset lookup)` 步（**在 strip 之前** `cp` 未 strip 二进制 +
+  `nm -n` + `c++filt`，并断言符号行数 >100 防上游去符号），产物附 `apxdesktop.symbols`/
+  `apxdesktop.symbols.demangled`/`apxhost.symbols`/`apxhost.unstripped` —— 以后崩溃日志里的偏移
+  可直接对到函数名，不必再手工反汇编。
+
+---
+
 ## v223（2026-10-27）
 
 ### 优化

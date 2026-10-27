@@ -127,10 +127,11 @@ public:
     }
     void syn() { emit(EV_SYN, SYN_REPORT, 0); }
 
-    void injectMouse(uint8_t buttons, int8_t dx, int8_t dy, int8_t wheel) override {
+    void injectMouse(uint8_t buttons, int8_t dx, int8_t dy, int8_t wheel, int8_t pan = 0) override {
         if (fd_ < 0) return;
         if (dx || dy) { emit(EV_REL, REL_X, dx); emit(EV_REL, REL_Y, dy); }
         if (wheel) emit(EV_REL, REL_WHEEL, wheel);
+        if (pan) emit(EV_REL, REL_HWHEEL, pan);   // 横向滚动（右为正，与 0x01 帧第 6 字节同号）
         const struct { uint8_t bit; int code; } table[] = {
             {0x01, BTN_LEFT}, {0x02, BTN_RIGHT}, {0x04, BTN_MIDDLE}};
         for (const auto& t : table) {

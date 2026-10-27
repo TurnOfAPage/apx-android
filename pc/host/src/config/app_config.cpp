@@ -30,9 +30,21 @@ std::string expandPath(const std::string& p) {
 std::map<std::string, HotkeyBinding> defaultHotkeys() { return makeDefaults(); }
 
 std::string defaultConfigPath() {
+#if defined(__APPLE__)
+    // mac：~/Library/Application Support/AllPeriph/config.json（Apple 对应用配置的约定位置）。
+    // 旧实现读 LOCALAPPDATA（Windows 专有环境变量）→ mac 上必然取不到 → 退化成相对路径
+    // "./AllPeriph/config.json"；双击 .app 启动时工作目录是 "/"，等于配置读写不到预期位置
+    // （issue#47 顺带查出的问题）。Linux 侧保持不变：那里 LOCALAPPDATA 同样不存在，但把
+    // 配置从「当前目录」搬到 XDG 目录属于静默搬家，老用户的设置会\"消失\"，不在热修范围。
+    const char* home = std::getenv("HOME");
+    const std::string base = (home && *home) ? home : ".";
+    return (std::filesystem::path(base) / "Library" / "Application Support" /
+            "AllPeriph" / "config.json").string();
+#else
     const char* local = std::getenv("LOCALAPPDATA");
     std::string base = local ? local : ".";
     return (std::filesystem::path(base) / "AllPeriph" / "config.json").string();
+#endif
 }
 
 AppConfig loadConfig(const std::string& path) {

@@ -17,6 +17,7 @@
 // 即判定死锁回归。整个测试在受控环境下跑（无外部信标、端口 9501 收不到东西），
 // worker 仍会按 Auto 分支持续起 beacon 线程 —— 正好是 v198 那条路径。
 #include "apxpc/wireless/wireless_session.hpp"
+#include "apxpc/wireless/ctrl9511.hpp"
 
 #include <chrono>
 #include <cstdio>
@@ -96,10 +97,58 @@ static void testImmediateStop() {
     }
 }
 
+/// issue#47 回归：**同一端口起两次 9511 受控端**。
+///
+/// v223 的 mac「双击打开即崩溃」根因就在这条路径上（崩溃栈已逐帧还原到指令级）：
+///   ① `start()` 先把剪贴板监视线程起起来，再去 `bind`；
+///   ② 第二次 `bind` 必然失败（端口已被自己占住）→ 老代码的失败分支是 `delete Impl`；
+///   ③ Impl 持有的剪贴板监视线程还在跑 → 析构 joinable 的 `std::thread` → `std::terminate`
+///      → `abort()`（用户侧看到的就是「意外退出」）。
+///
+/// 因此本用例的判据很朴素：**进程能走到最后一行**。回归时整个测试进程会被直接 abort，
+/// ctest 报的就是失败 —— 不需要额外的断言来「抓住」它。
+static void testCtrl9511StartFailIsSafe() {
+    // 固定高位端口，避开 CI 上可能已在跑的 9511（apxhost serve / 上一轮测试实例）。
+    constexpr uint16_t kPort = 19511;
+
+    // ① 第二个实例起同一端口：必须「启动失败」，而不是「进程崩掉」。
+    {
+        Ctrl9511Server a;
+        // 第一个实例不碰系统剪贴板：CI runner 没有桌面会话，别把无关依赖引进来。
+        // 第二个实例保持**默认开启** —— 那正是 v223 崩溃路径里被析构的那个监视线程。
+        a.setReverseClipboardEnabled(false);
+        const bool okA = a.start(kPort, "", "regress-a");
+        CHECK(okA);
+        if (okA) {
+            Ctrl9511Server b;
+            CHECK(!b.start(kPort, "", "regress-b"));   // 端口被占住 → 必须 false
+            b.stop();                                  // 没启动起来的实例，stop() 必须幂等
+            a.stop();
+        }
+    }
+
+    // ② 同一个对象重复 start：第二次必须失败，且不能把已经在跑的实例换掉；stop 幂等。
+    {
+        Ctrl9511Server c;
+        c.setReverseClipboardEnabled(false);
+        const uint16_t port = static_cast<uint16_t>(kPort + 1);
+        const bool ok = c.start(port, "", "regress-c");
+        CHECK(ok);
+        if (ok) {
+            CHECK(!c.start(port, "", "regress-c"));    // 自己占着自己：再 start 必须失败
+            c.stop();
+            c.stop();                                  // 幂等
+            CHECK(c.start(port, "", "regress-c"));     // 停完端口已释放：能再起来
+            c.stop();
+        }
+    }
+}
+
 int main() {
     testStartStopNoDeadlock();
     testDestructorNoDeadlock();
     testImmediateStop();
+    testCtrl9511StartFailIsSafe();
     if (g_fail == 0) {
         std::printf("wireless_session_lifecycle_test: ALL PASS\n");
         return 0;

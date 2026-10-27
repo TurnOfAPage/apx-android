@@ -311,7 +311,7 @@ bool vigemSend(uint16_t buttons, int8_t x, int8_t y, int8_t rx, int8_t ry) {
 
 class WinInjector : public InputInjector {
 public:
-    void injectMouse(uint8_t buttons, int8_t dx, int8_t dy, int8_t wheel) override {
+    void injectMouse(uint8_t buttons, int8_t dx, int8_t dy, int8_t wheel, int8_t pan = 0) override {
         std::vector<INPUT> in;
         if (dx != 0 || dy != 0) {
             INPUT m{}; m.type = INPUT_MOUSE; m.mi.dwFlags = MOUSEEVENTF_MOVE;
@@ -320,6 +320,11 @@ public:
         if (wheel != 0) {
             INPUT w{}; w.type = INPUT_MOUSE; w.mi.dwFlags = MOUSEEVENTF_WHEEL;
             w.mi.mouseData = static_cast<DWORD>(static_cast<int>(wheel) * WHEEL_DELTA); in.push_back(w);
+        }
+        if (pan != 0) {
+            // 横向滚动：MOUSEEVENTF_HWHEEL（Vista 起）。右滚为正，与 0x01 帧第 6 字节同号。
+            INPUT h{}; h.type = INPUT_MOUSE; h.mi.dwFlags = MOUSEEVENTF_HWHEEL;
+            h.mi.mouseData = static_cast<DWORD>(static_cast<int>(pan) * WHEEL_DELTA); in.push_back(h);
         }
         const struct { uint8_t bit; DWORD down; DWORD up; } table[] = {
             {0x01, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP},

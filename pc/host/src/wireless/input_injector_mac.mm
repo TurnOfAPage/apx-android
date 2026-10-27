@@ -62,7 +62,7 @@ std::atomic<long long> g_clipSuppressMs{0};
 
 class MacInjector : public InputInjector {
 public:
-    void injectMouse(uint8_t buttons, int8_t dx, int8_t dy, int8_t wheel) override {
+    void injectMouse(uint8_t buttons, int8_t dx, int8_t dy, int8_t wheel, int8_t pan = 0) override {
         if (dx || dy) {
             CGEventRef e = CGEventCreateMouseEvent(nullptr, kCGEventMouseMoved,
                                                     CGEventGetLocation(CGEventCreate(nullptr)), kCGMouseButtonLeft);
@@ -70,8 +70,11 @@ public:
             CGEventSetIntegerValueField(e, kCGMouseEventDeltaY, dy);
             CGEventPost(kCGHIDEventTap, e); CFRelease(e);
         }
-        if (wheel) {
-            CGEventRef e = CGEventCreateScrollWheelEvent(nullptr, kCGScrollEventUnitLine, 1, wheel);
+        if (wheel || pan) {
+            // 轴数 2 = (垂直, 水平)。CGEventCreateScrollWheelEvent 是变参函数：
+            // axisCount 给几个，后面就按顺序读几个 int32 —— 常量 1 的老写法只能带垂直。
+            CGEventRef e = CGEventCreateScrollWheelEvent(nullptr, kCGScrollEventUnitLine,
+                                                         2, wheel, pan);
             CGEventPost(kCGHIDEventTap, e); CFRelease(e);
         }
         const struct { uint8_t bit; CGEventType down; CGEventType up; } table[] = {
@@ -161,12 +164,23 @@ public:
 class MacClipboardWatcher : public ClipboardWatcher {
 public:
     explicit MacClipboardWatcher(std::function<void(const std::string&)> cb) : cb_(std::move(cb)) {}
+    /* 析构必须 stop：start() 会起一个跑在大局外的线程，detach 版本的实现（历史）会
+       让线程活过对象生存期（use-after-free）；不 stop 则未 join 的 std::thread 析构
+       直接 std::terminate。v223 崩溃 issue#47 的两处根因就在这里——
+       实测崩溃栈：#7 线程析构 → #6/#5/#4 terminate → abort，帧 #7 所在函数 = 本类析构。
+       修法两条一起上：① 析构停线程；② 线程内用 shared_ptr 持有「活着」标志，
+       join 失败（极少见）时线程自行退出、不再碰已析构的 this。 */
+    ~MacClipboardWatcher() override { stop(); }
     bool start() override {
+        if (thread_.joinable()) return false;      // 重复 start：直接拒绝，不覆盖线程句柄
         running_ = true;
-        thread_ = std::thread([this] {
+        auto alive = alive_;
+        auto cb = cb_;
+        thread_ = std::thread([alive, cb] {
             std::string last;
-            while (running_) {
+            while (alive->load()) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(800));
+                if (!alive->load()) break;
                 // 回环抑制：setSystemClipboard 写入后 600ms 内不回传（与 win 版一致，
                 // 否则反向剪贴板 0x21 → 写本机 → watcher → 又发回对端 = 刷乱对端剪贴板）
                 if (steadyMsNow() - g_clipSuppressMs.load() < 600) continue;
@@ -174,16 +188,21 @@ public:
                 NSString* s = [pb stringForType:NSPasteboardTypeString];
                 if (s) {
                     std::string cur([s UTF8String]);
-                    if (!cur.empty() && cur != last) { last = cur; cb_(cur); }
+                    if (!cur.empty() && cur != last) { last = cur; cb(cur); }
                 }
             }
         });
         return true;
     }
-    void stop() override { running_ = false; if (thread_.joinable()) thread_.join(); }
+    void stop() override {
+        running_ = false;
+        if (alive_) alive_->store(false);
+        if (thread_.joinable()) thread_.join();
+    }
 private:
     std::function<void(const std::string&)> cb_;
     std::atomic<bool> running_{false};
+    std::shared_ptr<std::atomic<bool>> alive_ = std::make_shared<std::atomic<bool>>(true);
     std::thread thread_;
 };
 
@@ -194,7 +213,7 @@ std::unique_ptr<ClipboardWatcher> createPlatformClipboardWatcher(
 }
 
 // ============================================================================
-// 与 input_injector_win.cpp 对等的自由函数（ctrl9511.hpp 声明，无线会话/宿主直接调用）
+// 与 input_injector_mac.mm 对等的自由函数（ctrl9511.hpp 声明，无线会话/宿主直接调用）
 // ============================================================================
 
 // Windows VK 码 → macOS 虚拟键码（协议两侧共用 VK 码空间，见 wireless_session 注释）
