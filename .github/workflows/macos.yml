@@ -1,33 +1,15 @@
 name: macOS Build
 
-# macOS 端（mac-port 分支）编译验证：
-#   push mac-port / master —— 构建 apxhost（CLI 宿主 + 浏览器面板 panel_http）
-#                              + apxdesktop（桌面壳，mac=HTTP 面板宿主，mac-desktop 起纳入 CI）
-#   push tag v*           —— 同上构建，并把 zip 重命名为 AllPeriph-<tag>-macos-arm64.zip
-#                            上传到对应 GitHub Release（与 build.yml release job 双向幂等：
-#                            谁先跑完谁建 Release，后到者 --clobber 追加/覆盖）
-#   pull_request→master   —— 合入前拦下编译错误
-#   workflow_dispatch      —— 手动触发
-# 失败时：
-#   1) make -k 全量报错
-#   2) 完整日志尾部推到 ci-logs 分支（contents API 免鉴权可读，拿全现场）——先做，最可靠
-#   3) ::error:: 注解（必须显式 :: 分隔符：消息里若含 std::nullptr_t 这类双冒号，
-#      GitHub 会拿第一个 :: 当分隔符把消息截断；前缀写成 ::error:: 后第一个 :: 就是自己的）
-# 成功时：
-#   strip 后打包 apxhost/apxdesktop + web/ 前端 dist + AllPeriph.app（双击壳：ad-hoc 签名、
-#   Info.plist 挂麦克风/系统音频用途说明 —— TCC 授权宿主）为 zip 上传 artifact，
-#   解压即用（双击 AllPeriph.app，或 ./apxdesktop / ./apxhost panel 自动打开浏览器面板）
-
 on:
   push:
-    branches: [master, mac-port]
+    branches: [master, mac-port, feat/1.0_test]
     tags: ['v*']
   pull_request:
     branches: [master]
   workflow_dispatch:
 
 permissions:
-  contents: write   # 失败时推 ci-logs 分支；tag 构建时上传 Release 资产
+  contents: write
 
 jobs:
   mac:
@@ -39,8 +21,6 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Build web frontend (Vite + React)
-        # 浏览器面板的前端 dist：`apxhost panel` / `apxdesktop` 从 exe 旁 web/ 读取。
-        # 用 npm install 而非 npm ci（不强依赖 package-lock.json，与 Windows 侧构建口径一致）
         run: |
           cd pc/web
           npm install
@@ -54,19 +34,9 @@ jobs:
             -DAPXPC_BUILD_TESTS=ON
 
       - name: Build (apxhost + apxdesktop)
-        # apxdesktop：mac 桌面壳（desktop_main → runWebPanelHttp）。历史上 mac CI **只 build
-        # apxhost**，desktop_main 的 mac 兼容性（share.h / 宿主栈符号面）从未过堂 —— 本步把它
-        # 纳入编译，mac-desktop 起第一次真刀验证。
-        # 注：tag 构建时 CMake 的发版段会从 GITHUB_REF_NAME 注入 APXPC_VERSION_STRING，
-        # `apxhost --version` 即为 tag 号（与 build.yml 三端同源逻辑一致）。
         run: cmake --build build_host -j4 --target apxhost apxdesktop
 
       - name: Build + run unit tests (ctest)
-        # 八个用例都在 pc/host 工程里；tcp_transport_test 属于 pc/display 那个独立工程，
-        # 不在 build_host 的 target 列表里。
-        # macOS 此前 -DAPXPC_BUILD_TESTS=OFF，测试连编译都没过堂；打开后 mac 侧回归也有了门禁。
-        # 新增用例记得同步这里与 build.yml —— 只加 CMake target 不加这里，
-        # ctest 会以「Not Run（找不到可执行文件）」红，v223.3 就是这么红的。
         run: |
           cmake --build build_host -j4 --target \
             arbiter_test utf16_convert_test ctrl_frame_test relative_move_test \
@@ -75,9 +45,6 @@ jobs:
           ctest --test-dir build_host --output-on-failure
 
       - name: Save symbols (for crash-offset lookup)
-        # 崩溃报告里只有 imageOffset，必须配「同一构建的未 strip 二进制 + nm 符号表」才能
-        # 对到函数名。v223 的 mac 崩溃（issue#47）就是只能手工反汇编定位的 —— 这步把现场
-        # 留成 artifact。**必须在 Package（会 strip）之前跑**，否则拿到的也是空壳。
         if: success()
         run: |
           cd build_host
@@ -86,8 +53,6 @@ jobs:
           nm -n apxdesktop.unstripped > apxdesktop.symbols
           nm -n apxhost.unstripped > apxhost.symbols
           c++filt < apxdesktop.symbols > apxdesktop.symbols.demangled
-          # 兜底断言：符号表为空 = 上游构建把符号也去掉了，此时「偏移→函数名」整条链断掉，
-          # 与其发一个查不了崩溃的包，不如在这里就红。
           test "$(wc -l < apxdesktop.symbols)" -gt 100
           head -5 apxdesktop.symbols.demangled
 
@@ -102,15 +67,6 @@ jobs:
           cp apxhost "$STAGE/"
           cp apxdesktop "$STAGE/"
           cp -r ../pc/web/dist/. "$STAGE/web/"
-
-          # —— AllPeriph.app（双击入口 + TCC 授权宿主）——
-          # ⚠️ 签名阶段 Contents/MacOS/web 必须不存在：codesign --deep 会把 Contents/MacOS/
-          # 下的 web/ 当嵌套代码树要求签名，.js 不可签 → "code object is not signed at all
-          # In subcomponent: web/assets/..." exit 1（#47/#48/#50/#52 四轮 CI 实锤，
-          # 每次都是 Package 毫秒级秒挂）。所以先签干净 bundle，签完再放回 web 打包 ——
-          # ad-hoc 未公证，Gatekeeper/TCC 只认签名存在与 bundle id，不校验 web 的 seal。
-          # strip 会破坏链接期 ad-hoc 签名，这里统一补签：arm64 的 Mach-O 执行与 TCC 按
-          # bundle 归属记录都依赖签名。ad-hoc（无公证）→ 下载后仍走「仍要打开」放行流程。
           APP="$STAGE/AllPeriph.app"
           mkdir -p "$APP/Contents/MacOS"
           cp apxdesktop "$APP/Contents/MacOS/apxdesktop"
@@ -156,30 +112,18 @@ jobs:
           codesign --force -s - "$STAGE/apxdesktop"
           codesign --force -s - "$APP/Contents/MacOS/apxdesktop"
           codesign --force --deep -s - "$APP"
-          echo "ad-hoc 签名完成（web 暂时在场外，接下来放回）"
-          # 签名完成后放回 web/ —— 功能约定「exe 旁 web/」，runWebPanelHttp 从 exe 同级读取。
+          echo "ad-hoc 签名完成"
           mkdir -p "$APP/Contents/MacOS/web"
           cp -r ../pc/web/dist/. "$APP/Contents/MacOS/web/"
-
           printf '%s\n' \
             "全能外设 macOS（arm64，ad-hoc 签名 · 未公证）" \
             "" \
             "快速上手：" \
             "  双击 AllPeriph.app      桌面壳（自动打开浏览器面板，自带 9511 受控端）" \
             "  ./apxdesktop            同上（终端方式，Ctrl+C 退出）" \
-            "  ./apxhost panel         浏览器控制面板（自动打开 http://127.0.0.1:…/?host=1）" \
-            "  ./apxhost serve         无界面常驻服务（9511 受控 + 热键）" \
-            "  ./apxhost list          枚举设备与传感器" \
-            "  ./apxhost --help        全部命令" \
+            "  ./apxhost panel         浏览器控制面板" \
             "" \
-            "退出：终端方式直接 Ctrl+C；.app 壳 v1 无托盘菜单，用 pkill -x apxdesktop 或活动监视器结束" \
-            "" \
-            "首次打开（未公证应用）：" \
-            "  系统设置 → 隐私与安全性 → 底部「仍要打开」" \
-            "  或执行：xattr -dr com.apple.quarantine AllPeriph.app ./apxhost ./apxdesktop" \
-            "" \
-            "浏览器面板要求 web/ 目录与可执行文件同级（本包已附带）。" \
-            "麦克风/音箱首次使用按系统弹窗授权（麦克风 / 系统音频录制，macOS 14.2+）。" \
+            "首次打开（未公证应用）：系统设置 → 隐私与安全性 → 仍要打开" \
             > "$STAGE/README.txt"
           zip -9 -r apxhost-macos-arm64.zip "$STAGE"
           shasum -a 256 apxhost-macos-arm64.zip | tee apxhost-macos-arm64.zip.sha256
@@ -198,17 +142,12 @@ jobs:
             build_host/apxhost.unstripped
           retention-days: 30
 
-      - name: Upload to GitHub Release (tag builds only)
-        # tag 构建时把 zip 重命名为与 Windows/Android 资产同风格的
-        # AllPeriph-<tag>-macos-arm64.zip 并上传：
-        #   · build.yml 的 release job（needs pc+android，通常更慢）可能还没建 Release ——
-        #     不存在则本步先建（标题占位，随后 build.yml 的 softprops 会同 tag 合并更新正文）；
-        #     已存在则直接 --clobber 追加 —— 两条路径都幂等，先跑谁都不冲突。
-        if: success() && startsWith(github.ref, 'refs/tags/v')
+      - name: Upload to GitHub Release
+        if: success() && (startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/feat/1.0_test')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG="${GITHUB_REF_NAME}"
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then TAG="${GITHUB_REF_NAME}"; else TAG="1.0.1"; fi
           cd build_host
           cp apxhost-macos-arm64.zip "AllPeriph-${TAG}-macos-arm64.zip"
           shasum -a 256 "AllPeriph-${TAG}-macos-arm64.zip" > "AllPeriph-${TAG}-macos-arm64.zip.sha256"
@@ -220,7 +159,6 @@ jobs:
               --title "全能外设 ${TAG}" \
               --notes "macOS 测试版资产已上传；Windows/Android 资产由 build.yml 随后补充。" \
               || true
-            # 竞态兕底：若上面因 Release 已被 build.yml 抢建而失败，再试一次 upload
             gh release upload "$TAG" $ASSETS --clobber
           fi
           echo "mac 资产已进入 Release ${TAG}"
@@ -232,8 +170,6 @@ jobs:
         run: |
           set +e
           cmake --build build_host -j1 --target apxhost apxdesktop -- -k > /tmp/full.log 2>&1
-
-          # ---- 1) 全量日志尾部推到 ci-logs 分支（先做，不依赖后面的行） ----
           WORK=$(mktemp -d)
           cd "$WORK" || exit 1
           git init -q
@@ -249,7 +185,5 @@ jobs:
           git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
             commit -q -m "ci errors: run ${GITHUB_RUN_ID}" || exit 0
           git push -q origin HEAD:ci-logs && echo "errors -> ci-logs branch"
-
-          # ---- 2) ::error:: 注解（净化 CR、截 400 字符；::error:: 显式分隔防消息被吞） ----
           grep -E "(error:|Undefined symbols|symbol not found|fatal error|no rule to make target)" /tmp/full.log \
             | tr -d '\r' | cut -c1-400 | sed 's/^/::error::/' | head -50
