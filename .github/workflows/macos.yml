@@ -1,5 +1,23 @@
 name: macOS Build
 
+# macOS 端（mac-port 分支）编译验证：
+#   push mac-port / master —— 构建 apxhost（CLI 宿主 + 浏览器面板 panel_http）
+#                              + apxdesktop（桌面壳，mac=HTTP 面板宿主，mac-desktop 起纳入 CI）
+#   push tag v*           —— 同上构建，并把 zip 重命名为 AllPeriph-<tag>-macos-arm64.zip
+#                            上传到对应 GitHub Release（与 build.yml release job 双向幂等：
+#                            谁先跑完谁建 Release，后到者 --clobber 追加/覆盖）
+#   pull_request→master   —— 合入前拦下编译错误
+#   workflow_dispatch      —— 手动触发
+# 失败时：
+#   1) make -k 全量报错
+#   2) 完整日志尾部推到 ci-logs 分支（contents API 免鉴权可读，拿全现场）——先做，最可靠
+#   3) ::error:: 注解（必须显式 :: 分隔符：消息里若含 std::nullptr_t 这类双冒号，
+#      GitHub 会拿第一个 :: 当分隔符把消息截断；前缀写成 ::error:: 后第一个 :: 就是自己的）
+# 成功时：
+#   strip 后打包 apxhost/apxdesktop + web/ 前端 dist + AllPeriph.app（双击壳：ad-hoc 签名、
+#   Info.plist 挂麦克风/系统音频用途说明 —— TCC 授权宿主）为 zip 上传 artifact，
+#   解压即用（双击 AllPeriph.app，或 ./apxdesktop / ./apxhost panel 自动打开浏览器面板）
+
 on:
   push:
     branches: [master, mac-port, feat/1.0_test]
@@ -9,13 +27,13 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: write   # 失败时推 ci-logs 分支；tag 构建时上传 Release 资产
 
 jobs:
   mac:
     name: build (macOS)
     runs-on: macos-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - name: Checkout
         uses: actions/checkout@v4
