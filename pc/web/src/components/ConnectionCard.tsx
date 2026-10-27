@@ -31,7 +31,7 @@ interface UsbTransports {
  * 为什么值得单独显示：面板与 `apxhost serve` / `apxdesktop` 都会起 9511，而端口独占 ——
  * 第二个起来的实例 bind 必然失败。以前这种情况只在日志里留一句告警，用户看面板只会觉得
  * 「手机发现不了本机」，而真实原因是**另一个实例已经提供了受控端**（功能其实是好的）。
- * 见 ROADMAP §2.4 待办 ④。
+ * 见 ROADMAP §2.4（v223.7 已交付：apxpc::net::tcp_probe）。
  */
 interface CtrlServerOwner {
   listening?: boolean;

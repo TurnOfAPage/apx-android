@@ -1,19 +1,23 @@
 import React, { useState } from 'react';
 import { bridge, HostState } from '../api/bridge';
 import { Switch } from './Switch';
+import { useAudioDevices } from './useAudioDevices';
 
 interface Props { state: HostState }
 
 /** 麦克风卡 —— 双栏左下。动作：转发开关 + 渲染设备下拉。 */
 export const MicCard: React.FC<Props> = ({ state }) => {
   const [on, setOn] = useState(false);
+  const [devId, setDevId] = useState('');
+  const { devices, defaultName } = useAudioDevices();
   const mic = state.media.mic;
   const running = mic?.running ?? false;
 
   React.useEffect(() => { setOn(running); }, [running]);
 
   const toggle = async () => {
-    await bridge.act('mic.toggle');
+    // 选了具体设备就把 deviceId 带上；留空 = 跟随系统默认（后端两种都支持）
+    await bridge.act('mic.toggle', devId ? { deviceId: devId } : {});
     setTimeout(() => setOn(!on), 400);
   };
 
@@ -27,9 +31,14 @@ export const MicCard: React.FC<Props> = ({ state }) => {
         <Switch on={on} onChange={toggle} />
       </div>
 
-      <select className="input-field h-[36px] text-[13px]">
-        <option>跟随系统默认</option>
-        <option disabled>（暂未枚举播放设备）</option>
+      <select className="input-field h-[36px] text-[13px]"
+              value={devId}
+              onChange={(e) => setDevId(e.target.value)}>
+        <option value="">跟随系统默认{defaultName ? `（${defaultName}）` : ''}</option>
+        {devices.map((d) => (
+          <option key={d.id} value={d.id}>{d.name}{d.isDefault ? '（默认）' : ''}</option>
+        ))}
+        {devices.length === 0 && <option disabled>（本机不支持枚举播放设备）</option>}
       </select>
 
       <div className="mt-1 flex flex-col gap-0.5">

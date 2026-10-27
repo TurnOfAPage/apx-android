@@ -58,4 +58,12 @@
     <color name="ball_bg">#F21C1C1E</color>
     <color name="ball_text">#FFEDEDED</color>
     <color name="ball_stroke">#33FFFFFF</color>
+
+    <!--
+      快捷键模板色板（vXXX）深色覆盖：终端石墨 #5B6470 与表格墨绿 #1E9E5A
+      在深色底上偏暗（做标题与芯片文字会糊进背景），这里换成同色系的可读值。
+    -->
+    <color name="hotkey_tpl_term">#FFAEB6C2</color>
+    <color name="hotkey_tpl_sheet">#FF35C98A</color>
+
 </resources>

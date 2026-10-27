@@ -1226,7 +1226,8 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
 
     /** 当前生效模板的主题色；逐条改过（自定义）时回落到主色 */
     override fun templateColor(): Int =
-        HotkeyTemplates.byKey(HotkeyStore.loadTemplate(this))?.color
+        HotkeyTemplates.byKey(HotkeyStore.loadTemplate(this))
+            ?.let { HotkeyTemplates.resolveColor(this, it) }
             ?: resources.getColor(R.color.md_primary)
 
     /** 同色调的浅底（12% 不透明度），给 chip / 模板行做底 */
@@ -1542,10 +1543,16 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
     private val customPrefix = "custom:"
 
     /** 自建模板可选主题色（与预置模板同一套色系） */
-    private val templatePalette = intArrayOf(
-        0xFF3482FF.toInt(), 0xFF7C5CFF.toInt(), 0xFF00A870.toInt(), 0xFFFF7A00.toInt(),
-        0xFFE0457B.toInt(), 0xFF12B0C8.toInt(), 0xFF5B6470.toInt(), 0xFF1E9E5A.toInt(),
+    /** 自建模板色板：与内置模板同一套颜色令牌（`R.color.hotkey_tpl_*`），深浅色自动跟随 */
+    private val templatePaletteRes = intArrayOf(
+        R.color.hotkey_tpl_office, R.color.hotkey_tpl_ai, R.color.hotkey_tpl_code,
+        R.color.hotkey_tpl_video, R.color.hotkey_tpl_slide, R.color.hotkey_tpl_design,
+        R.color.hotkey_tpl_term, R.color.hotkey_tpl_sheet,
     )
+
+    /** 色板取当前主题下的实际色值（自定义模板存的是色值，不是资源 id） */
+    private fun templatePalette(): IntArray =
+        templatePaletteRes.map { resources.getColor(it) }.toIntArray()
 
     /** 用户自建模板（每次渲染重新读盘，避免与其它入口状态不一致） */
     private var customTemplates: MutableList<HotkeyTemplates.Template> = mutableListOf()
@@ -1583,13 +1590,14 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
         var pickedIndex = 0
         val dots = mutableListOf<TextView>()
         val colorRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        templatePalette.forEachIndexed { idx, color ->
+        val palette = templatePalette()
+        palette.forEachIndexed { idx, color ->
             val dot = TextView(this).apply {
                 background = dotBg(color, idx == 0)
                 isClickable = true
                 setOnClickListener {
                     pickedIndex = idx
-                    dots.forEachIndexed { k, d -> d.background = dotBg(templatePalette[k], k == idx) }
+                    dots.forEachIndexed { k, d -> d.background = dotBg(palette[k], k == idx) }
                 }
             }
             dots += dot
@@ -1615,7 +1623,7 @@ class MainActivity : Activity(), TouchpadFragment.Host, SettingsFragment.Host, S
                             key = customPrefix + System.currentTimeMillis(),
                             name = nameEt.text.toString().trim().ifEmpty { getString(R.string.ui_main_text_template) },
                             desc = "${hotkeyBoard.shortcuts.size} 项 · 自建",
-                            color = templatePalette[pickedIndex],
+                            color = palette[pickedIndex],
                             combos = hotkeyBoard.shortcuts.toList(),
                         )
                         customTemplates.add(t)

@@ -6,6 +6,55 @@
 
 ---
 
+## v223.9（2026-10-27）
+
+本版是**外部 patch 的落地与复核**（用户提供 `eb652332….patch`，要求「看看有能修的不」）。
+逐块核对事实后全量应用，其中两处按仓库现状修正；修出的结论如下。
+
+### 音频（Android）：UAC2 gadget 的 PCM **设备号**也改为运行时解析
+`AudioModule` 此前只解析卡号（`locateCard`），设备号写死 `D0`。`/proc/asound/pcm` 每行
+`卡号-设备号: 名称 : … : playback N : capture M`，两个号都随内核枚举顺序变化 —— 换机型
+写死 0 会打到别的设备上。新增 `locateDevice(card, playback)`：按卡号 + 方向关键字解析，
+解析不到**如实降级 0 并记日志**（UAC2 gadget 通常只暴露一个 PCM 设备，不会静默假装成功）。
+路径拼装收敛到 `AudioConst.pcmNode()`，`/proc/asound/{cards,pcm}` 两个路径进常量。
+
+### 面板（web）：「音箱 / 麦克风」设备下拉接上**真枚举**
+后端早就支持选设备（`speaker.toggle`/`mic.toggle` 都吃 `deviceId`，`AudioCapture` 的
+`opt.deviceId` 留空跟随系统默认、失效明确报错），但 web 面板的下拉是写死的
+「（暂未枚举播放设备）」—— 能力在，入口没接。本版补齐：
+
+- 两个面板入口（`web_panel.cpp` / `panel_http.cpp`）新增 query `audioDevices`，
+  返回 `{ devices: [{id,name,isDefault}], defaultName }`，与 Win32 原生面板
+  （`refreshSpeakerCombo`）同源：Windows 走 IMMDeviceEnumerator 有真实列表；
+  **macOS 的 Process Tap 采全局混音、不挂具体端点，Linux 未实现 —— 都返回空表**，
+  前端据此如实显示「本机不支持枚举播放设备」，不编造条目。
+- `bridge.audioDevices()` + `useAudioDevices()`（查询失败按「枚举不到」处理）；
+  Speaker/Mic 两卡的下拉改真实数据，选中后 `toggle` 带 `deviceId`（留空 = 跟随默认）。
+
+### 快捷键模板色（Android）：内联 ARGB → 颜色令牌
+模板色此前内联在 `HotkeyTemplates.kt`（`0xFF3482FF…`），深色下偏暗的两档
+（终端石墨 / 表格墨绿）靠 `tint()` 无差别向白提亮 45% —— 鲜艳色也被漂白。
+改为 `R.color.hotkey_tpl_*` 颜色资源（values-night 覆盖同组暗色档），
+取色统一走 `resolveColor()`；`tint()` 只提亮「最亮通道 < 170」的暗色，
+鲜艳色保持原样。设置页与自建模板色板同步换令牌。
+
+### 文档纠错（ROADMAP / 注释）：三条「待办」实际早已交付
+- 「桌面壳 apxdesktop：**托盘仍无**」→ v223.7 已交付 `tray_mac.mm`（本版核对时发现
+  v223.7 只改了待办段、漏改了表行）。
+- 「接入键盘出口 = 本 PR」→ 键盘出口已接入（`HidKeys.send` → `Uplink.BLUETOOTH`，
+  已对源码核实：`BtHidDevice.reportKeyboard` 在，`Uplink.BLUETOOTH` 分支在）。
+- 「蓝牙键盘/手柄仍缺失（`BtHidDevice` 无 reportKeyboard/reportGamepad）」→ 两者
+  自 v184 起都有，缺的是**真机配对与实测**。`pipeline.hpp`/`CMakeLists` 里的同类
+  过时注释一并更正。
+
+### 诚实说明
+- Android 侧改动（PCM 设备号解析、模板色令牌）**只有 CI 编译级验证**——本机无法
+  构建安卓，PCM 行为要真机（插 USB 后看 `AudioModule` 日志是否出现「按 0 降级」）。
+- 设备下拉在 mac/Linux 上依然是空表（平台能力边界，不是回归）；Windows 上选设备
+  的路径此前已有后端与原生面板验证，本次只是把 web 入口接上。
+
+---
+
 ## v223.8（2026-10-27）
 
 ### 新增（mac 副屏出路：面板里做 Sunshine 检测 + 指引）#47 建议落点

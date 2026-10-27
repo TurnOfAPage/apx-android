@@ -789,11 +789,35 @@ void handleAct(Panel* p, const std::string& id, const std::string& name, const J
     return postResponse(p, id, failResp("未知动作: " + name));
 }
 
+/// 播放（渲染）设备列表 —— 前端「音箱 / 麦克风」设备下拉的数据源。
+/// 与 Win32 原生面板（panel_win32.cpp 的 refreshSpeakerCombo）同源：
+///   Windows 用 IMMDeviceEnumerator 枚举（AudioCapture::listRenderDevices）；
+///   macOS 的 Process Tap 采的是全局进程组混音、不挂具体端点，Linux 未实现 —— 两者都返回空表，
+///   前端据此如实显示「本机不支持枚举播放设备」，不编造列表。
+Json audioDevicesJson() {
+    Json arr = Json::makeArray();
+    for (const auto& d : apxpc::media::AudioCapture::listRenderDevices()) {
+        Json o = Json::makeObject();
+        o["id"] = d.id;
+        o["name"] = d.name;
+        o["isDefault"] = d.isDefault;
+        arr.push(std::move(o));
+    }
+    Json data = Json::makeObject();
+    data["devices"] = std::move(arr);
+    data["defaultName"] = apxpc::media::AudioCapture::defaultRenderDeviceName();
+    return data;
+}
+
 void handleQuery(Panel* p, const std::string& id, const std::string& name) {
     if (name == "state") {
         Json s; buildState(p->bundle, s);
         Json r; r["kind"] = std::string("query-response");
         return postResponse(p, id, okResp(s), "query-response");
+    }
+    // 播放设备列表（前端设备下拉）：与 Win32 原生面板同源（IMMDeviceEnumerator）
+    if (name == "audioDevices") {
+        return postResponse(p, id, okResp(audioDevicesJson()), "query-response");
     }
     postResponse(p, id, failResp("未知查询: " + name), "query-response");
 }

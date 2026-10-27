@@ -109,9 +109,27 @@ object AudioConst {
     /**
      * ALSA 声卡名关键字。Android 侧据此在 /proc/asound/cards 中定位 UAC2 gadget，
      * 再解析 /proc/asound/pcm 得到 pcmC*D* 设备号 —— **不要硬编码 hw:0,0**，
-     * 设备号随内核枚举顺序变化。
+     * 卡号与设备号都随内核枚举顺序变化。
      */
     const val ALSA_CARD_KEYWORD = "UAC2Gadget"
+
+    /** 声卡列表：每行 `卡号 [声卡名]`（定位 UAC2 gadget 声卡号用） */
+    const val ALSA_CARDS_PATH = "/proc/asound/cards"
+
+    /** PCM 列表：每行 `卡号-设备号: 名称 : 长名 : playback N : capture M`（解析 PCM 设备号用） */
+    const val ALSA_PCM_PATH = "/proc/asound/pcm"
+
+    /**
+     * UAC2 gadget 的 PCM 节点路径。**卡号与设备号都必须运行时解析**
+     * （见 `AudioModule.locateCard` / `AudioModule.locateDevice`），
+     * 写死 `hw:0,0` 会在换机型 / 换枚举顺序时取到别的设备。
+     *
+     * @param card    声卡号（`/proc/asound/cards` 的序号）
+     * @param device  PCM 设备号（`/proc/asound/pcm` 的 `卡号-设备号` 后半段）
+     * @param playback true = playback 流（`p`，手机麦克风 → PC）；false = capture 流（`c`，PC → 手机扬声器）
+     */
+    fun pcmNode(card: Int, device: Int, playback: Boolean): String =
+        "/dev/snd/pcmC${card}D${device}${if (playback) "p" else "c"}"
 }
 
 /** 系统属性：UDC 抢占相关（架构 §6.2） */

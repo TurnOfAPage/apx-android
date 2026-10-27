@@ -720,11 +720,35 @@ void handleAct(HttpPanel* p, const std::string& id, const std::string& name, con
     return postResponse(p, id, failResp("未知动作: " + name));
 }
 
+/// 播放（渲染）设备列表 —— 前端「音箱 / 麦克风」设备下拉的数据源。
+/// 与 Win32 原生面板（panel_win32.cpp 的 refreshSpeakerCombo）同源：
+///   Windows 用 IMMDeviceEnumerator 枚举（AudioCapture::listRenderDevices）；
+///   macOS 的 Process Tap 采的是全局进程组混音、不挂具体端点，Linux 未实现 —— 两者都返回空表，
+///   前端据此如实显示「本机不支持枚举播放设备」，不编造列表。
+Json audioDevicesJson() {
+    Json arr = Json::makeArray();
+    for (const auto& d : apxpc::media::AudioCapture::listRenderDevices()) {
+        Json o = Json::makeObject();
+        o["id"] = d.id;
+        o["name"] = d.name;
+        o["isDefault"] = d.isDefault;
+        arr.push(std::move(o));
+    }
+    Json data = Json::makeObject();
+    data["devices"] = std::move(arr);
+    data["defaultName"] = apxpc::media::AudioCapture::defaultRenderDeviceName();
+    return data;
+}
+
 void handleQuery(HttpPanel* p, const std::string& id, const std::string& name) {
     if (name == "state") {
         Json s;
         buildState(p->bundle, s, p);
         return postResponse(p, id, okResp(s), "query-response");
+    }
+    // 播放设备列表（前端设备下拉）：Windows 有实体列表，macOS/Linux 返回空表
+    if (name == "audioDevices") {
+        return postResponse(p, id, okResp(audioDevicesJson()), "query-response");
     }
     postResponse(p, id, failResp("未知查询: " + name), "query-response");
 }
@@ -1207,8 +1231,9 @@ int runWebPanelHttp(const HostBundle& bundle, const std::string& webDir) {
     // 主机名：POSIX gethostname（Win 版 desktop_main 用 GetComputerNameW 同义）。
     {
         /* 先探测：本机 9511 已经有人监听时，**不重复起**、也不打告警 ——
-           那是「另一个 AllPeriph 实例正在提供受控端」，不是故障（ROADMAP §2.4 待办 ④：
-           消除双起警告日志）。仍然如实告诉用户受控端由谁提供，免得他以为是这个面板起的。 */
+           那是「另一个 AllPeriph 实例正在提供受控端」，不是故障（v223.7 已交付：
+           apxpc::net::tcp_probe 消除了双起告警）。仍然如实告诉用户受控端由谁提供，
+           免得他以为是这个面板起的。 */
         if (apxpc::net::tcpPortRespondsLocal(9511, 200)) {
             panel.ctrlShared = true;
             APX_LOGI("9511 已有实例在跑（127.0.0.1:9511 可连）：本面板不再重复启动受控端，"

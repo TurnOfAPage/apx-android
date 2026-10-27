@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { bridge, HostState } from '../api/bridge';
 import { Switch } from './Switch';
+import { useAudioDevices } from './useAudioDevices';
 
 interface Props { state: HostState }
 
@@ -10,13 +11,16 @@ interface Props { state: HostState }
  */
 export const SpeakerCard: React.FC<Props> = ({ state }) => {
   const [on, setOn] = useState(false);
+  const [devId, setDevId] = useState('');
+  const { devices, defaultName } = useAudioDevices();
   const audio = state.media.audio;
   const running = audio?.running ?? false;
 
   React.useEffect(() => { setOn(running); }, [running]);
 
   const toggle = async () => {
-    await bridge.act('speaker.toggle');
+    // 选了具体设备就把 deviceId 带上；留空 = 跟随系统默认（后端两种都支持）
+    await bridge.act('speaker.toggle', devId ? { deviceId: devId } : {});
     setTimeout(() => setOn(!on), 400);
   };
 
@@ -36,10 +40,15 @@ export const SpeakerCard: React.FC<Props> = ({ state }) => {
         <Switch on={on} onChange={toggle} />
       </div>
 
-      {/* 设备下拉 —— 跟随系统默认 / 实体播放设备 */}
-      <select className="input-field h-[36px] text-[13px]">
-        <option>跟随系统默认</option>
-        <option disabled>（暂未枚举播放设备）</option>
+      {/* 设备下拉 —— 跟随系统默认 / 实体播放设备（列表来自宿主枚举，枚举不到就不编条目） */}
+      <select className="input-field h-[36px] text-[13px]"
+              value={devId}
+              onChange={(e) => setDevId(e.target.value)}>
+        <option value="">跟随系统默认{defaultName ? `（${defaultName}）` : ''}</option>
+        {devices.map((d) => (
+          <option key={d.id} value={d.id}>{d.name}{d.isDefault ? '（默认）' : ''}</option>
+        ))}
+        {devices.length === 0 && <option disabled>（本机不支持枚举播放设备）</option>}
       </select>
 
       {/* 试听按钮 */}

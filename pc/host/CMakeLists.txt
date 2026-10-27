@@ -270,7 +270,9 @@ if(APPLE)
   # enable OBJCXX，否则 .mm 无法识别语言。
   enable_language(OBJCXX)
   list(APPEND APXPC_SERVICE_SRC "${APXPC_ROOT}/src/app/update_check_mac.mm")
-  # mac 托盘（NSStatusItem + NSMenu）：ROADMAP §2.4 待办 ②。
+  # mac 托盘（NSStatusItem + NSMenu）：**v223.7 已交付**（src/tray/tray_mac.mm）。
+  # 此前这里写的是「ROADMAP §2.4 待办 ②」，那条待办已过时（ROADMAP §2.4 桌面壳
+  # 一行的「托盘仍无」同期已更正）。
   # 托盘主机进 service 静态库 —— apxhost 与 apxdesktop 都链它，一处实现两处可用；
   # 同时 tray_win32.cpp 的「非 Windows 空桩」已按 __APPLE__ 排除，不会重复定义。
   list(APPEND APXPC_SERVICE_SRC "${APXPC_ROOT}/src/tray/tray_mac.mm")
@@ -584,7 +586,7 @@ if(APXPC_BUILD_TESTS)
   add_test(NAME gamepad_fallback_test COMMAND gamepad_fallback_test)
 
   # 本机端口占用探测：真起监听 → 探到 → 关掉 → 探不到。
-  # 盯的是 ROADMAP §2.4 待办 ④「9511 已在运行检测」——这条判错的后果是面板不再起受控端，
+  # 盯的是 v223.7 已交付的「9511 已在运行检测」（apxpc::net::tcp_probe）——这条判错的后果是面板不再起受控端，
   # 却又没人提供，手机就永远发现不了本机（静默失效），所以必须有用例钉住。
   add_executable(tcp_probe_test "${APXPC_ROOT}/tests/tcp_probe_test.cpp")
   target_link_libraries(tcp_probe_test PRIVATE apxpc_core)

@@ -50,7 +50,7 @@ App「状态」页打开总开关后，手机作为 USB 复合设备被 Windows 
 
 | 能力 | 报告 | 状态（2026-10-23 源码核对） |
 |---|---|---|
-| `reportKeyboard(mod, keys)` | rid 2 | ✅ 已实现（v184）：8B `[mod, reserved, k1..k6]`，`sendReport(0x02, …)`（Report ID 不进 data，v186 修复）；**接入键盘出口 = 本 PR** |
+| `reportKeyboard(mod, keys)` | rid 2 | ✅ 已实现（v184）：8B `[mod, reserved, k1..k6]`，`sendReport(0x02, …)`（Report ID 不进 data，v186 修复）；**键盘出口已接入**（`HidKeys.send` → `Uplink.BLUETOOTH` 分支，2026-10-23 起，见 §4 第 2 条） |
 | `reportGamepad(btn, x,y,rx,ry)` | rid 4 | ✅ 已实现（v184）：6B `[btn_lo, btn_hi, x, y, rx, ry]`，`GamepadController` 已走蓝牙优先 |
 
 > ✅ 已完成（2026-10-23 核对）：`registerApp` 优先取 `ApxNative.btReportDescriptor()`（native，与 `shared` 同源），
@@ -286,7 +286,7 @@ MSVC 回归），**真机实测尚未执行**（用户声明跳过）—— 下�
 | 能力 | 状态 | 落点 / 说明 |
 |---|---|---|
 | 浏览器控制面板 | ✅ | `apxhost panel` / `./apxdesktop` → `src/ui/panel_http.cpp`（方案 B：仅 127.0.0.1，`?host=1`），协议与 Windows WebView2 面板同构；前端 `bridge.ts` 第三态 `http`（400ms 轮询 state/events，POST act/query） |
-| 桌面壳 apxdesktop | ✅ | `desktop_main.cpp` mac 分支（GUI 基础设施 Win 条件化；`share.h` 归位），CI 已纳入编译（macos.yml `--target apxhost apxdesktop`）；zip 内含 **`AllPeriph.app`**（ad-hoc 签名 + Info.plist 授权宿主，双击起壳自动开面板），终端 `./apxdesktop` 等价；**托盘仍无**（退出 `pkill -x apxdesktop`） |
+| 桌面壳 apxdesktop | ✅ | `desktop_main.cpp` mac 分支（GUI 基础设施 Win 条件化；`share.h` 归位），CI 已纳入编译（macos.yml `--target apxhost apxdesktop`）；zip 内含 **`AllPeriph.app`**（ad-hoc 签名 + Info.plist 授权宿主，双击起壳自动开面板），终端 `./apxdesktop` 等价；**托盘 v223.7 起已交付**（`src/tray/tray_mac.mm`：菜单栏图标 + 「打开面板」「退出全能外设」，事件循环语义仍需实机确认） |
 | 9511 受控端 + 信标 | ✅ | `Ctrl9511Server` + `gethostname`（双入口自带），手机「TV 控制」列表可发现（标 `(PC)`）；与 `apxhost serve` 并存时端口冲突会警告降级 |
 | 控制面客户端（连手机） | ✅ | `wireless_session` 跨平台（此前已可编），`startAuto` 自动发现 |
 | 文件接收 9512 | ✅ | `file.list`/`file.delete` 可用（浏览器文件卡）；**发送本机文件 ❌**（浏览器无系统文件对话框，明确报错） |
@@ -305,8 +305,8 @@ MSVC 回归），**真机实测尚未执行**（用户声明跳过）—— 下�
 （部署目标自动压 12.0）；前端 `pc/web` npm build 后 dist 拷到 exe 旁 `web/`；日常直接用
 CI artifact 或 Release 资产。详见 [`使用说明.md`](./使用说明.md) 二/七/九章与 README。
 
-**待办（按价值排序）**：① 真机实测（面板/连接/媒体/系统授权弹窗）② USB/IOKit 枚举的真机校验
-（v223.7 已交付后端，端点/HID 集合/串口名仍缺）。
+**待办（按价值排序）**：① 真机实测（面板/连接/媒体/系统授权弹窗）② USB/IOKit 枚举的**真机核对**
+（枚举后端 v223.7 已交付，当前只有编译级验证；端点/HID 集合/CDC 串口名待真机比对）。
 
 **v223.7 已清掉的三条**：NSStatusItem 托盘 + `.app` 内退出入口（`src/tray/tray_mac.mm`，
 菜单栏图标 + 「打开面板」「退出全能外设」；托盘跑在独立 NSThread 上跑 `[NSApp run]`，
@@ -402,8 +402,8 @@ runtime.attachSerial(tcpChan) // Wi‑Fi 挂载后
 > 现在蓝牙优先（`BtHidDevice.reportGamepad`）→ 再走 `Uplink.resolve`（无线 9511 → USB），
 > 三条出口都在。以 `ui/GamepadController.kt` 的 `send()` 为准。
 
-两者都有代价：① 三份重复的判据容易改漏一处；② 蓝牙键盘/手柄仍缺失
-（`BtHidDevice` 无 `reportKeyboard` / `reportGamepad`）。
+两者都有代价：① 三份重复的判据容易改漏一处；② 蓝牙键盘/手柄缺的是**真机配对与实测**
+（`BtHidDevice` 自 v184 起已有 `reportKeyboard` / `reportGamepad`，出口也已接入）。
 
 建议新增 `core/InputHub.kt`（或 `ui` 层），把四类输入统一：
 
