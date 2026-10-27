@@ -579,7 +579,10 @@ class GadgetManager(
 
     override fun sendInputReport(report: ByteArray): Boolean = hidDev?.sendInputReport(report) ?: false
 
-    override fun isReady(): Boolean = state.isActive && hidDev?.isReady() == true
+    // UDC=not attached / addressed 时 hidg0 的 fd 仍可能开着，但主机根本没取报告，
+    // 此时 isReady() 返回 true 会让 Uplink 误回落到 USB、写入被拒（日志里的「USB HID 写入被拒」）。
+    // 必须同时满足「主机真正完成配置（configured）」才算 USB HID 可用。
+    override fun isReady(): Boolean = state.isActive && hostConfigured && hidDev?.isReady() == true
 
     override fun statusText(): String = when (state) {
         ModuleState.RUNNING -> {

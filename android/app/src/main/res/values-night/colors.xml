@@ -55,7 +55,7 @@
     <color name="dot_stroke_normal">#33FFFFFF</color>
 
     <!-- 悬浮球：深色下换成深底白点，跟其余页面同一套令牌 -->
-    <color name="ball_bg">#F21C1C1E</color>
+    <color name="ball_bg">#B31C1C1E</color>
     <color name="ball_text">#FFEDEDED</color>
     <color name="ball_stroke">#33FFFFFF</color>
 </resources>

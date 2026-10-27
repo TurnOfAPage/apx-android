@@ -101,7 +101,7 @@
     <color name="widget_ok">#FF34D399</color>
 
     <!-- 悬浮球（issue#44）：此前是写死的亮色白球，深色下不跟随主题 -->
-    <color name="ball_bg">#F2FFFFFF</color>
+    <color name="ball_bg">#B3FFFFFF</color>
     <color name="ball_text">#CC000000</color>
     <color name="ball_stroke">#33000000</color>
 </resources>
