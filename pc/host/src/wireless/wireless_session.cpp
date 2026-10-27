@@ -143,7 +143,9 @@ static bool portOpen(const std::string& ip, uint16_t port, int timeoutMs) {
 std::vector<std::string> scanLan9511(int timeoutMs) {
     std::vector<std::string> result;
     std::mutex mu;
+#if defined(_WIN32)
     ensureWsa();
+#endif
 
     std::string prefix;
     {
