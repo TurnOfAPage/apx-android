@@ -78,8 +78,12 @@ App「状态」页打开总开关后，手机作为 USB 复合设备被 Windows 
 
 **控制面子命令**（streamId=3，改一边必须改另一边：
 
+> `0x01` 第 6 字节 `pan` 是 v223.1 加的**横向滚动**（右滚为正，四端都已接：macOS
+> `CGEventCreateScrollWheelEvent` 双轴 / Windows `MOUSEEVENTF_HWHEEL` / Linux `REL_HWHEEL`）。
+> 老控制端只发 5 字节时按 0 处理 —— 接收侧判 `bodyLen >= 6` 才读第 6 字节，双向兼容。
+
 ```
-0x01 鼠标   [1]=buttons [2]=dx(i8) [3]=dy(i8) [4]=wheel(i8)
+0x01 鼠标   [1]=buttons [2]=dx(i8) [3]=dy(i8) [4]=wheel(i8) [5]=pan(i8，可选)
 0x02 多媒体 [1..2]=u16 位图（LE）
 0x03 键盘   [1]=mod [2]=0 [3..8]=k1..k6（HID usage 页 0x07，PC 侧 usage→VK）
 ```
@@ -356,6 +360,10 @@ runtime.attachSerial(tcpChan) // Wi‑Fi 挂载后
 ```
 
 只有**手柄**没有 Wi‑Fi 出口（`ui/GamepadController` → `rt.hid`，仅 USB）。
+
+> ⚠️ 上面这句「仅 USB」是当时的快照，已被后续实现推翻：`GamepadController.send()`
+> 现在蓝牙优先（`BtHidDevice.reportGamepad`）→ 再走 `Uplink.resolve`（无线 9511 → USB），
+> 三条出口都在。以 `ui/GamepadController.kt` 的 `send()` 为准。
 
 两者都有代价：① 三份重复的判据容易改漏一处；② 蓝牙键盘/手柄仍缺失
 （`BtHidDevice` 无 `reportKeyboard` / `reportGamepad`）。

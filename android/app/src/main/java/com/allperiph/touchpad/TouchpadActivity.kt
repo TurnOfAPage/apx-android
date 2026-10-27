@@ -152,6 +152,28 @@ class TouchpadActivity : Activity() {
     private var edgeStartX = -1f
     private var edgeSwiped = false
 
+    // ——— v223.2：全屏触控板（issue#47 第 1 条） ———
+    // 起因是「光标锁定」在 Android 上做不到（应用层没有限制光标区域的 API，只能把本窗口
+    // 光标图标设成 TYPE_NULL），所以唯一能消掉误触的路径就是界面：全屏后页面上只剩手势面，
+    // 标题头、页签栏、快捷键网格、方向键叠层、提示行一起收起，系统导航栏也收掉。
+    private var headerView: View? = null
+    private var tabBarView: View? = null
+    private var tpPageCol: LinearLayout? = null
+    private var tpArea: FrameLayout? = null
+    private var tpHint: TextView? = null
+    private var tpHotkeySection: View? = null
+    private var tpDpad: View? = null
+    private var fullscreenChip: TextView? = null
+    private var fullscreenExitPill: TextView? = null
+    @Volatile private var fullscreen = false
+    /** 全屏上沿下滑退出：这一整段手势都吞掉，不喂手势引擎（否则退出动作会顺手甩光标） */
+    private var fsSwallow = false
+    /** 已经因这条手势退出全屏了（但手势还没抬，仍要继续吞到 UP —— 不能半路开始喂引擎） */
+    private var fsExiting = false
+    private var fsStartY = 0f
+    /** 退出小胶囊的淡出任务（进入 3s 后降到 25% 不透明度，别在视野里抢注意力） */
+    private var fsPillFade: Runnable? = null
+
     // —————————————————————————— 装配 ——————————————————————————
 
     /** 主题方案：把用户在设置页选的主题注入资源配置（深色取值在 values-night） */
@@ -193,8 +215,29 @@ class TouchpadActivity : Activity() {
         }
         root.addView(flipper, LinearLayout.LayoutParams(-1, 0, 1f))
         root.addView(buildTabBar())
+        // v223.2：外层再套一层 FrameLayout，只为了把「退出全屏」小胶囊浮在手势面之上。
+        // 它非全屏时 GONE —— 不在布局里，也不吃触摸；全屏时是页面上**唯一**可点控件，
+        // 且压在右下角 10dp 处，两指划动手势基本不会落在那里。
+        val shell = FrameLayout(this)
+        shell.addView(root, ViewGroup.LayoutParams(-1, -1))
+        fullscreenExitPill = TextView(this).apply {
+            text = getString(R.string.ui_touchpad_fullscreen_exit)
+            setTextColor(cText2)
+            textSize = 11f
+            gravity = Gravity.CENTER
+            background = pill(cCard)
+            setPadding(dp(14), dp(7), dp(14), dp(7))
+            alpha = 0.6f
+            visibility = View.GONE
+            isClickable = true
+            isFocusable = false
+            setOnClickListener { setFullscreen(false) }
+        }
+        shell.addView(fullscreenExitPill, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.END).apply {
+            rightMargin = dp(10); bottomMargin = dp(10)
+        })
         // v1.7 修复：显式 MATCH_PARENT（root 高度塌缩曾致触摸区只剩一小条）
-        setContentView(root, ViewGroup.LayoutParams(-1, -1))
+        setContentView(shell, ViewGroup.LayoutParams(-1, -1))
         // Android 15+（targetSdk 35）强制 edge-to-edge，主题里的 windowFullscreen 不再保证内容避开系统栏 ——
         // R+ 显式接管：关掉 decor 贴合、隐藏状态栏、按实际 insets（状态栏/挖孔/导航栏/输入法）给内容垫边：
         // 系统认为栏还在（insets>0）就垫开，已隐藏/已贴合时 inset=0 不垫，任何一态都不遮住标题头。
@@ -378,6 +421,21 @@ class TouchpadActivity : Activity() {
         chipsRow.addView(remote, LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(8) })
         chipsRow.addView(file, LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(8) })
         chipsRow.addView(clip, LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(8) })
+
+        // 全屏入口：按用户原话「虚拟触控板的页能不能加个全屏模式，把页内其它控件都隐藏」
+        val fs = TextView(this).apply {
+            text = getString(R.string.ui_touchpad_fullscreen_enter)
+            setTextColor(cAccent)
+            textSize = 12f
+            gravity = Gravity.CENTER
+            background = pill(cCard)
+            setPadding(dp(12), dp(6), dp(12), dp(6))
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { setFullscreen(true) }
+        }
+        fullscreenChip = fs
+        chipsRow.addView(fs, LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(8) })
         chipsRow.addView(exit, LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(8) })
 
         wrap.addView(row)
@@ -392,6 +450,7 @@ class TouchpadActivity : Activity() {
         titleView = tv
         statusView = st
         subView = sub
+        headerView = wrap
         return wrap
     }
 
@@ -441,19 +500,23 @@ class TouchpadActivity : Activity() {
             isClickable = false
             isFocusable = false
         }
-        area.addView(TextView(this).apply {
+        val hint = TextView(this).apply {
             text = getString(R.string.ui_touchpad_text_cursor_swipe)
             setTextColor(cText3)
             textSize = 13f
             gravity = Gravity.CENTER
             isClickable = false
-        }, FrameLayout.LayoutParams(-1, -2, Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply {
+        }
+        area.addView(hint, FrameLayout.LayoutParams(-1, -2, Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply {
             topMargin = dp(14)
         })
         col.addView(area, LinearLayout.LayoutParams(-1, 0, 1f))
+        tpPageCol = col
+        tpArea = area
+        tpHint = hint
         // v208：方向键居中覆盖手势面（带中心 OK），四周与键间空隙仍可滑动 ——
         // 键帽只消费自身区域，键外照常走触控引擎，滑动与方向同屏。
-        area.addView(dpadOverlay(), FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
+        tpDpad = dpadOverlay().also { area.addView(it, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER)) }
 
         // 常用快捷键：网格 + 拖拽排序（与主页同一套手势），抬手即用，不占整页
         val head = LinearLayout(this).apply {
@@ -472,12 +535,15 @@ class TouchpadActivity : Activity() {
             setPadding(dp(10), dp(4), dp(4), dp(4))
             setOnClickListener { hotkeyBoard.managerDialog() }
         })
-        col.addView(head)
-
         // 网格容器：每行 4 个（8 个正好两行），块比原来的横滚小胶囊更大
         val chips = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         chipRow = chips
-        col.addView(chips, LinearLayout.LayoutParams(-1, -2))
+        // 全屏时「常用快捷键」整块收起（标题行 + 网格一起），所以给它们一个共同容器
+        val hotkeySection = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        hotkeySection.addView(head)
+        hotkeySection.addView(chips, LinearLayout.LayoutParams(-1, -2))
+        col.addView(hotkeySection, LinearLayout.LayoutParams(-1, -2))
+        tpHotkeySection = hotkeySection
         // 快捷键网格：行为与主页完全同一份实现（ui/HotkeyBoard），这里只给中性色皮肤
         hotkeyBoard = com.allperiph.ui.HotkeyBoard(this, chips, { boardStyle() })
         hotkeyBoard.render()
@@ -935,11 +1001,15 @@ class TouchpadActivity : Activity() {
             Tab(icon, labelView)
         }
         wrap.addView(row, LinearLayout.LayoutParams(-1, -2))
+        tabBarView = wrap
         return wrap
     }
 
     private fun showPage(i: Int) {
         if (i !in pages.indices) return
+        // 全屏只服务于触控板页：切页前先退出全屏（页签栏在全屏里是隐藏的，
+        // 只有「从别处回本页」这类路径会撞上，兜一手免得停在半截状态）
+        if (fullscreen && i != PAGE_TOUCHPAD) setFullscreen(false)
         handler.removeCallbacks(dragTask)
         handler.removeCallbacks(rightDragTask)
         flipper.displayedChild = i
@@ -1032,11 +1102,37 @@ class TouchpadActivity : Activity() {
     // —————————————————————————— 触摸兜底（v1.7b 架构保留） ——————————————————————————
 
     override fun onTouchEvent(ev: MotionEvent): Boolean {
+        // 全屏下「从屏幕最上沿往下拉」= 退出全屏（附加路径，系统手势导航可能先吃掉这一步）。
+        // 这段手势整段吞掉、绝不喂手势引擎，否则退出动作会顺手把光标也甩走一段；
+        // 注意要吞到 UP 为止 —— 中途开始喂引擎会送出一个没有 DOWN 的 MOVE。
+        if (fullscreen) {
+            when (ev.actionMasked) {
+                MotionEvent.ACTION_DOWN -> if (ev.y < dp(24)) {
+                    fsSwallow = true
+                    fsStartY = ev.y
+                }
+                MotionEvent.ACTION_MOVE -> if (fsSwallow && !fsExiting && ev.y - fsStartY > dp(56)) {
+                    fsExiting = true
+                    setFullscreen(false)
+                }
+            }
+        }
+        if (fsSwallow) {
+            if (ev.actionMasked == MotionEvent.ACTION_UP ||
+                ev.actionMasked == MotionEvent.ACTION_CANCEL
+            ) {
+                fsSwallow = false
+                fsExiting = false
+            }
+            return true
+        }
         when (ev.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 edgeSwiped = false
                 val w = resources.displayMetrics.widthPixels
-                edgeStartX = if (flipper.displayedChild == PAGE_TOUCHPAD &&
+                // 全屏里不做边缘翻页：不动的触控板上，左右边缘跟别处没有区别，
+                // 留着只会变成「滑到边上页面跑了」
+                edgeStartX = if (!fullscreen && flipper.displayedChild == PAGE_TOUCHPAD &&
                     (ev.x < dp(28) || ev.x > w - dp(28))
                 ) ev.x else -1f
                 if (edgeStartX < 0f) handler.postDelayed(dragTask, 550)
@@ -1072,6 +1168,111 @@ class TouchpadActivity : Activity() {
         return true
     }
 
+    // —————————————————————————— 全屏触控板 ——————————————————————————
+
+    /**
+     * 切换全屏触控板（v223.2，#47 第 1 条）。
+     *
+     * 为什么是界面方案而不是真锁光标：Android 没给第三方 App「把系统光标限制在某区域」的
+     * API —— 光标由 InputReader + SurfaceFlinger 管，应用层只能把本窗口光标图标设成
+     * TYPE_NULL（就是用户看到的「只有隐藏光标生效」）。所以让光标即使存在也没有可误触的
+     * 控件，是唯一不依赖 root 的做法。
+     *
+     * 进出都只改可见性与内边距，不动视图树（避免重建后手势引擎与 ViewFlipper 状态错位）。
+     * 退出的**可靠**路径就两条：返回键、右下角小胶囊（3s 后自动降到 25% 不透明度）。
+     * 上沿下滑那条（onTouchEvent 里的 fsSwallow）是顺手留的附加路径 —— 手势导航的设备上
+     * 上沿下滑会被系统拿去拉通知栏，所以它只在部分机型上生效，**不写进提示文案**，
+     * 免得给用户一个按了没反应的操作。
+     */
+    private fun setFullscreen(on: Boolean) {
+        if (fullscreen == on) return
+        fullscreen = on
+        fsPillFade?.let { handler.removeCallbacks(it) }
+        dropFsTip()
+
+        headerView?.visibility = if (on) View.GONE else View.VISIBLE
+        // 全屏只可能停在触控板页（showPage 有守卫），页签栏一律收起
+        tabBarView?.visibility = if (on) View.GONE else View.VISIBLE
+        tpHotkeySection?.visibility = if (on) View.GONE else View.VISIBLE
+        tpDpad?.visibility = if (on) View.GONE else View.VISIBLE
+        tpHint?.visibility = if (on) View.GONE else View.VISIBLE
+        fullscreenChip?.visibility = if (on) View.GONE else View.VISIBLE
+
+        // 手势面撑满：去掉页边距与卡片圆角，整块屏幕就是一整片触控板
+        tpPageCol?.setPadding(
+            if (on) 0 else dp(16), 0,
+            if (on) 0 else dp(16),
+            if (on) 0 else dp(10)
+        )
+        tpArea?.background = if (on) card(cBg, 0) else card(cCard, dp(22))
+
+        val pill = fullscreenExitPill
+        if (pill != null) {
+            pill.visibility = if (on) View.VISIBLE else View.GONE
+            pill.alpha = if (on) 0.6f else 0f
+            if (on) {
+                val fade = Runnable { pill.animate().alpha(0.25f).setDuration(400).start() }
+                fsPillFade = fade
+                handler.postDelayed(fade, 3000)
+            }
+        }
+
+        // 系统栏：全屏连导航栏一起收（否则底部那条常年占着 40dp，还容易被误滑出来）。
+        // BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE 保留「边缘滑动临时唤出」，用户随时能切走。
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val ic = window.insetsController
+            if (ic != null) {
+                if (on) {
+                    ic.systemBarsBehavior =
+                        android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                    ic.hide(
+                        android.view.WindowInsets.Type.statusBars() or
+                            android.view.WindowInsets.Type.navigationBars()
+                    )
+                } else {
+                    ic.systemBarsBehavior = android.view.WindowInsetsController.BEHAVIOR_DEFAULT
+                    ic.show(android.view.WindowInsets.Type.navigationBars())
+                    ic.hide(android.view.WindowInsets.Type.statusBars())
+                }
+            }
+        }
+
+        if (on) {
+            // 一次性说明：第一次进全屏必须让人知道怎么出去，否则就是「进去了出不来」的坑
+            val tip = TextView(this).apply {
+                text = getString(R.string.ui_touchpad_fullscreen_hint)
+                setTextColor(cBg)
+                textSize = 12f
+                gravity = Gravity.CENTER
+                background = pill(cText)
+                setPadding(dp(16), dp(9), dp(16), dp(9))
+                alpha = 0f
+            }
+            (fullscreenExitPill?.parent as? FrameLayout)?.addView(
+                tip, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER).apply { bottomMargin = dp(48) }
+            )
+            fsTip = tip
+            tip.animate().alpha(0.92f).setDuration(180).start()
+            val hide = Runnable { dropFsTip() }
+            fsTipHide = hide
+            handler.postDelayed(hide, 2600)
+        }
+    }
+
+    /** 全屏说明条：进入时弹一次，2.6s 后自己淡出移除（中途退出全屏则立刻收掉） */
+    private var fsTip: TextView? = null
+    private var fsTipHide: Runnable? = null
+
+    private fun dropFsTip() {
+        fsTipHide?.let { handler.removeCallbacks(it) }
+        fsTipHide = null
+        val tip = fsTip ?: return
+        fsTip = null
+        tip.animate().alpha(0f).setDuration(200).withEndAction {
+            (tip.parent as? ViewGroup)?.removeView(tip)
+        }.start()
+    }
+
     // —————————————————————————— 样式与尺寸工具 ——————————————————————————
 
     private fun label(text: String): TextView = TextView(this).apply {
@@ -1100,6 +1301,8 @@ class TouchpadActivity : Activity() {
     @Deprecated("Deprecated in Java")
     @Suppress("DEPRECATION")
     override fun onBackPressed() {
+        // 全屏时返回键先退出全屏（这里连确认框都不该弹：用户只是想回到控制面）
+        if (fullscreen) { setFullscreen(false); return }
         if (backDialog?.isShowing == true) return
         backDialog = AlertDialog.Builder(this, R.style.Theme_AllPeriph_Miuix_Dialog)
             .setTitle(getString(R.string.ui_touchpad_dialog_exit_console))
