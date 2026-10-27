@@ -214,11 +214,9 @@ void deliverNotification(NSString* title, NSString* body) {
 
 namespace apxpc::tray {
 
-// 构造/析构：tray_win32.cpp 里这两个只在 `#if defined(_WIN32)` 内定义（真正的 Win32
-// 版本要碰 HWND/HANDLE），Linux 之所以没暴露是**没人构造 TrayIcon**。mac 的
-// desktop_main 会 make_unique<TrayIcon>()，缺这两个定义就是纯链接错误 —— 必须在此补。
-TrayIcon::TrayIcon() = default;
-TrayIcon::~TrayIcon() { quit(); }   // 与本文件 quit() 的幂等语义配套：析构再调一次无副作用
+// 构造/析构**不在本文件**：tray_win32.cpp 里那两个定义在 `#if defined(_WIN32)` 之外
+// （共用于所有平台），这里再给一份就是 duplicate symbol —— CI 已经踩过一次。
+// 它的 ~TrayIcon() 会调 quit()，正好落到本文件的实现上（幂等，重复调无副作用）。
 
 bool TrayIcon::create(const std::string& tip) {
     // 组装菜单计划：**谁注册了才出谁**。mac 上没有系统文件对话框、也没有 WebView2，
