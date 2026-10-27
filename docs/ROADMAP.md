@@ -308,6 +308,37 @@ CI artifact 或 Release 资产。详见 [`使用说明.md`](./使用说明.md) �
 .app 内退出入口（`.app` 壳已交付：ad-hoc 签名 + Info.plist 授权宿主，壳内无运行时改造，
 事件循环语义待实机） ③ USB/IOKit 枚举 ④ `panel_http` 的 9511 "已在运行"检测（消除双起警告日志）。
 
+### 2.5 副屏与 Sunshine / Moonlight 的关系（结论，2026-10-27）
+
+背景：#47 反馈建议「把私有实现移出，用成熟开源方案 —— Sunshine 对 macOS 有原生支持，
+正好补 Mac 副屏」。核实后给的结论如下（事实已查证，见文末链接）。
+
+**核实到的事实**
+
+| 事实 | 影响 |
+|---|---|
+| Sunshine（LizardByte）是 Moonlight 协议的**宿主端**，有 Windows / Linux / macOS 二进制（macOS 分 arm64 与 x86_64 两个 dmg） | 它能替我们解决「mac 上没有虚拟显示器驱动」这件事 |
+| Sunshine 官方把 **macOS 标为 experimental**，并明确写 **Gamepads do not work**；系统音频在 macOS 14.0+ 才走 Apple Audio Tap，更早要靠 BlackHole / Soundflower | 手柄这条**不能指望它** —— 正好是 #47 里最痛的那条 |
+| 客户端是 Moonlight，**Moonlight 全部客户端（含 `moonlight-android`）是 GPLv3** | 本项目是 MIT，**不能把它的代码嵌进来** |
+| Sunshine 系统要求表写 macOS 14.2+ | 用户的 mac 版本需要先满足 |
+
+**结论**
+
+1. **副屏 Windows 侧维持自研**：私有链路已交付（虚拟显示器 + 硬件编码，真机解码 393 帧），没有替换理由。
+2. **mac / Linux 副屏不再自研**：这两端缺的恰恰是虚拟显示器驱动（Windows 有 IddCx，mac 没有对等物），
+   自研成本高、且与成熟方案重叠 —— 改为**用户在 mac 上自装 Sunshine + Moonlight**，
+   我们只在面板里做**检测 + 指引**（不内嵌客户端）。
+3. **不内嵌 Moonlight 客户端**：GPLv3 与 MIT 不兼容（唯一合规的内置路径是照协议自研
+   「RTSP 握手 + RTP 解密 + 硬件解码 + 输入回传」，工作量按一整个模块算，排在现有待办之后）。
+4. **手柄在 mac 上的正解仍然是蓝牙 / USB HID**（手机自己就是 HID 设备、免驱），
+   不是无线出口、也不是 Sunshine —— Sunshine 在 mac 上同样没有手柄。
+
+**依据**：Sunshine 官方文档（macOS 安装 / 系统要求 / 「Gamepads do not work」）
+<https://docs.lizardbyte.dev/projects/sunshine/latest/md_docs_2getting__started.html>；
+`moonlight-android` 仓库 `LICENSE.txt` = GNU GPL v3
+<https://github.com/moonlight-stream/moonlight-android>。
+
+
 ---
 
 **尚未接入**：手柄（`SendInput` 无法模拟游戏手柄，需 ViGEmBus 等第三方驱动，
