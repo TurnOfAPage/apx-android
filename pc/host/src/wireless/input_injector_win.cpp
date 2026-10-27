@@ -3,6 +3,8 @@
 // 免驱：全部走 SendInput / Win32 剪贴板 API（与 wireless_link.cpp 同源思路）。
 // ============================================================================
 #include "apxpc/wireless/ctrl9511.hpp"
+// 手柄免驱降级的算术：与 macOS 同一份（边沿/死区/缩放/滚轮限速），用例在 host 跑。
+#include "apxpc/wireless/gamepad_fallback.hpp"
 // v184：触摸注入与 9502 媒体会话路径共用同一套「按推流屏映射」实现
 #include "apxpc/media/touch_inject.hpp"
 
@@ -412,9 +414,12 @@ public:
             gpButtons_ = buttons;
             return;
         }
-        const uint16_t pressed = static_cast<uint16_t>(buttons & ~gpButtons_);
-        const uint16_t released = static_cast<uint16_t>(gpButtons_ & ~buttons);
-        for (uint8_t bit = 0; bit < 16; ++bit) {
+        // 边沿 / 死区 / 缩放 / 限速一律取自 gamepad_fallback.hpp（与 macOS 同一份算术，
+        // 由 gamepad_fallback_test 在 CI 里钉住）—— 三端各写一遍是这类降级最容易漂的地方。
+        const GamepadEdges e = gamepadEdges(gpButtons_, buttons);
+        const uint16_t pressed = e.pressed;
+        const uint16_t released = e.released;
+        for (uint8_t bit = 0; bit < static_cast<uint8_t>(kGamepadButtonCount); ++bit) {
             const WORD vk = kGamepadVk[bit];
             if (vk == 0) continue;
             const uint16_t m = static_cast<uint16_t>(1u << bit);
@@ -423,29 +428,29 @@ public:
         }
         gpButtons_ = buttons;
 
-        constexpr int kDead = 12;
         // 左摇杆 → 鼠标相对移动（死区 12，位移按 1/4 缩放）
-        if (x > kDead || x < -kDead || y > kDead || y < -kDead) {
-            injectMouse(mouseButtons_, static_cast<int8_t>(x / 4), static_cast<int8_t>(y / 4), 0);
+        if (gamepadStickActive(x) || gamepadStickActive(y)) {
+            injectMouse(mouseButtons_, gamepadStickToMouse(x), gamepadStickToMouse(y), 0);
         }
         // v184：右摇杆 → 滚轮（垂直）/ 水平滚轮（水平）。免驱架构下 Windows 没有"视角"
         // 通道，滚动是直觉上最贴合的降级（翻页/翻列表）。摇杆帧率可达几十 Hz，
         // 滚轮限速到 20Hz，否则会疯狂滚动。
-        if (rx > kDead || rx < -kDead || ry > kDead || ry < -kDead) {
+        if (gamepadStickActive(rx) || gamepadStickActive(ry)) {
             const DWORD nowMs = ::GetTickCount();
-            if (nowMs - lastWheelMs_ >= 50) {
+            if (gamepadWheelAllowed(static_cast<uint64_t>(lastWheelMs_),
+                                    static_cast<uint64_t>(nowMs))) {
                 lastWheelMs_ = nowMs;
                 std::vector<INPUT> ev;
                 ev.reserve(2);
-                if (ry > kDead || ry < -kDead) {
+                if (gamepadStickActive(ry)) {
                     INPUT w{}; w.type = INPUT_MOUSE; w.mi.dwFlags = MOUSEEVENTF_WHEEL;
                     // 摇杆前推（负 ry）→ 内容上滚（正向滚轮）
-                    w.mi.mouseData = static_cast<DWORD>(-static_cast<int>(ry) / 8 * WHEEL_DELTA);
+                    w.mi.mouseData = static_cast<DWORD>(-gamepadStickStep(ry) * WHEEL_DELTA);
                     ev.push_back(w);
                 }
-                if (rx > kDead || rx < -kDead) {
+                if (gamepadStickActive(rx)) {
                     INPUT h{}; h.type = INPUT_MOUSE; h.mi.dwFlags = MOUSEEVENTF_HWHEEL;
-                    h.mi.mouseData = static_cast<DWORD>(static_cast<int>(rx) / 8 * WHEEL_DELTA);
+                    h.mi.mouseData = static_cast<DWORD>(gamepadStickStep(rx) * WHEEL_DELTA);
                     ev.push_back(h);
                 }
                 if (!ev.empty()) ::SendInput(static_cast<UINT>(ev.size()), ev.data(), sizeof(INPUT));
@@ -507,6 +512,11 @@ private:
 }  // namespace
 
 std::unique_ptr<InputInjector> createPlatformInjector() { return std::make_unique<WinInjector>(); }
+
+/* Windows 的 SendInput 不需要单独的「辅助功能」授权（UIPI 只挡更高完整性级别的窗口，
+   挡不住全局注入），所以恒 true —— 与 macOS 的 TCC 门槛不同，这里不要凭习惯返回 false。 */
+bool platformInputTrusted() { return true; }
+bool requestPlatformInputTrust() { return true; }
 std::unique_ptr<ClipboardWatcher> createPlatformClipboardWatcher(
     std::function<void(const std::string&)> cb) {
     return std::make_unique<WinClipboardWatcher>(std::move(cb));

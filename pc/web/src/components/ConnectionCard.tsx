@@ -17,7 +17,60 @@ interface UsbTransports {
   usbName?: string;
   usbSpeed?: string;
   btSupported?: boolean;
+  /** macOS「辅助功能」授权：false = 手机发来的输入会被系统静默丢弃 */
+  inputTrusted?: boolean;
+  /** 手机上报的三种接入模式状态（9511 帧 0x31） */
+  phone?: PhoneMode;
 }
+
+/**
+ * 手机上报的「无线 / 蓝牙 / USB」三模式状态。
+ * 位布局的唯一真源是 pc/host/include/apxpc/wireless/phone_mode.hpp（用例钉住，与 Android 侧对拍）。
+ * reported=false 表示手机还没连进本机 9511 —— 这时一律显示「未上报」，不猜。
+ */
+interface PhoneMode {
+  reported?: boolean;
+  connected?: boolean;
+  frames?: number;
+  wirelessAvailable?: boolean;
+  bluetoothAvailable?: boolean;
+  usbAvailable?: boolean;
+  /** "wireless" | "bluetooth" | "usb" | "none" */
+  active?: string;
+}
+
+/**
+ * 一行接入方式状态：圆点 + 名称 + 状态词 + 说明。
+ * 灰=不可用/未上报、绿=可用但没在用、蓝=当前在用 —— 与状态徽章同一套色，不再有「拨了没反应」的开关。
+ */
+const ModeRow: React.FC<{
+  name: string;
+  reported: boolean;
+  available?: boolean;
+  active?: boolean;
+  note: string;
+  sub?: string;
+  extra?: React.ReactNode;
+}> = ({ name, reported, available, active, note, sub, extra }) => {
+  const usable = reported && available;
+  const dot = !usable ? 'bg-state-idle' : active ? 'bg-primary' : 'bg-state-ok';
+  const tag = !reported ? '未上报' : !available ? '不可用' : active ? '当前在用' : '可用';
+  const tagColor = !usable ? 'text-on-tertiary' : active ? 'text-primary' : 'text-state-ok';
+  return (
+    <div className="pt-3 border-t border-stroke flex items-start gap-3">
+      <span className={`w-[8px] h-[8px] rounded-full mt-[6px] shrink-0 ${dot}`} />
+      <div className="flex flex-col gap-[2px] min-w-0">
+        <div className="flex items-center gap-2">
+          <span className="body-text text-on-surface">{name}</span>
+          <span className={`data-text ${tagColor}`}>{tag}</span>
+        </div>
+        <div className="data-text text-on-tertiary">{note}</div>
+        {sub && <div className="data-text text-on-tertiary">{sub}</div>}
+      </div>
+      {extra && <div className="ml-auto shrink-0 flex flex-col items-end gap-1">{extra}</div>}
+    </div>
+  );
+};
 
 /**
  * 连接卡 —— 整宽卡，第一屏最重要的信息。
@@ -26,23 +79,21 @@ interface UsbTransports {
  *   ✗ 不要装饰性 sparkline（旧面板上的 RTT 历史图在 Web 版删掉 —— convey nothing meaningful）
  *   ✗ 不要玻璃拟态（backdrop-blur）
  *
- * 蓝牙 / USB 开关：老面板连接卡有三个传输开关（无线/蓝牙/USB），其中无线控制
- * 连接、蓝牙与 USB 只是**本地显示开关** —— 真开关在手机端（蓝牙配对 / root 配
- * gadget），PC 是被动 host，架构上无权启停。WebView2 版曾把这两个开关省掉，
- * 用户找不到入口；现补回：拨开展示说明与真实探测状态（USB 三态来自
- * transports，比老面板的静态文案更进一步）。
+ * 接入方式（issue#47：三个开关改成真实状态）：
+ * 老面板连接卡有「无线 / 蓝牙 / USB」三个开关，但**只有无线是真开关**（启停 9511 会话），
+ * 蓝牙与 USB 的真开关在手机端（配对 / root 配 gadget），PC 只是被动 host —— 摆两个拨了
+ * 没反应的开关，用户只能认定「坏了」。现在改成：手机把三条出口的**可用性 + 当前在用哪条**
+ * 用 0x31 帧报上来（见 utils 上方 PhoneMode 注释），这里照实显示；手机没上报就说没上报。
  *
- * 无线开关（2026-10-17 补齐）：这是**真开关**，直接启停 9511 会话 ——
- * 开 = session.startAuto（自动发现手机），关 = session.disconnect。
- * 状态由 400ms tick 的 link.phase 驱动：未启用(0)/手动失败(4) 视为关。
+ * 无线那一行右侧仍保留「本机发现」开关（真开关）：开 = session.startAuto（自动发现手机），
+ * 关 = session.disconnect。状态由 400ms tick 的 link.phase 驱动：未启用(0)/手动失败(4) 视为关。
  */
 export const ConnectionCard: React.FC<Props> = ({ state, onManualConnect }) => {
   const [host, setHost] = useState('');
   const [port, setPort] = useState('9511');
-  const [btOpen, setBtOpen] = useState(false);
-  const [usbOpen, setUsbOpen] = useState(false);
   const s = state.link;
   const tp = (state.transports ?? {}) as UsbTransports;
+  const phone = tp.phone ?? {};
   const usbSpeedText = tp.usbSpeed && tp.usbSpeed !== 'unknown' ? ` · ${tp.usbSpeed}` : '';
   const usbLine = !tp.usbDevice
     ? '未检测到手机（检查 USB 线 / 手机端 USB 开关）'
@@ -91,55 +142,77 @@ export const ConnectionCard: React.FC<Props> = ({ state, onManualConnect }) => {
         </div>
       </div>
 
-      {/* 传输开关：无线 = 真开关（启停 9511 会话）；蓝牙 / USB = 本地显示开关（真开关在手机端） */}
-      <div className="flex items-center gap-6 px-5 pb-3 -mt-1">
-        <label className="flex items-center gap-2 cursor-pointer select-none">
-          <span className="body-text text-on-surface">无线</span>
-          <Switch
-            on={wifiOn}
-            onChange={on => bridge.act(on ? 'session.startAuto' : 'session.disconnect')}
-          />
-        </label>
-        <label className="flex items-center gap-2 cursor-pointer select-none">
-          <span className="body-text text-on-surface">蓝牙</span>
-          <Switch on={btOpen} onChange={setBtOpen} />
-        </label>
-        <label className="flex items-center gap-2 cursor-pointer select-none">
-          <span className="body-text text-on-surface">USB</span>
-          <Switch on={usbOpen} onChange={setUsbOpen} />
-        </label>
-        {(btOpen || usbOpen) && (
-          <span className="data-text text-on-tertiary ml-auto">由手机端启用，PC 仅展示状态</span>
-        )}
-      </div>
+      {/* macOS 注入权限：没授权时手机发来的键鼠会被系统静默丢弃 ——
+          用户看到的现象就是「连上了、按什么都没反应」，所以这里必须说出来。 */}
+      {tp.inputTrusted === false && (
+        <div className="mx-5 mb-3 px-3 py-2 rounded-chip bg-state-error/10">
+          <div className="body-text text-state-error">
+            本机未授予「辅助功能」权限：手机发来的键鼠会被系统丢弃
+          </div>
+          <div className="data-text text-on-tertiary mt-1">
+            系统设置 → 隐私与安全性 → 辅助功能 → 勾选 AllPeriph（apxdesktop / apxhost），然后重启面板。
+            首次收到手机输入时也会自动弹一次授权引导。
+          </div>
+        </div>
+      )}
 
-      {/* 展开区：拨开哪个显示哪个的状态/说明 */}
-      {btOpen && (
-        <div className="px-5 pb-4">
-          <div className="pt-3 border-t border-stroke">
-            <div className="body-text text-on-surface">蓝牙键鼠（手机当无线鼠标 / 键盘）</div>
-            <div className="data-text text-on-tertiary mt-1">
-              {tp.btSupported
-                ? '本机支持蓝牙 · 手机端蓝牙配对后自动启用，PC 免驱识别为鼠标 / 键盘 / 多媒体键'
-                : '手机端蓝牙配对后自动启用，PC 免驱识别为鼠标 / 键盘 / 多媒体键'}
-            </div>
-          </div>
-        </div>
-      )}
-      {usbOpen && (
-        <div className="px-5 pb-4">
-          <div className="pt-3 border-t border-stroke">
-            <div className="body-text text-on-surface">USB 外设（插线即用）</div>
-            <div className="data-text text-on-tertiary mt-1">{usbLine}</div>
-            {tp.usbDevice && tp.usbName && (
-              <div className="data-text text-on-tertiary">{tp.usbName}</div>
-            )}
-            <div className="data-text text-on-tertiary">
-              UAC2 声卡（音箱）+ HID 键鼠 + NCM 网络，免驱零配置
-            </div>
-          </div>
-        </div>
-      )}
+      {/* 三种接入方式（真实状态，不是开关）：数据来自手机上报的 0x31 帧 */}
+      <div className="flex flex-col px-5 pb-4 -mt-1">
+        <ModeRow
+          name="无线（9511 控制面）"
+          reported={!!phone.reported}
+          available={phone.wirelessAvailable}
+          active={phone.active === 'wireless'}
+          note={
+            phone.reported
+              ? phone.wirelessAvailable
+                ? '手机已选定受控目标：输入经 9511 上行，本机就地注入'
+                : '手机未启用无线出口（未选受控目标，或不在同一局域网）'
+              : '手机未上报（尚未连入本机 9511 控制面）'
+          }
+          extra={
+            <>
+              <span className="data-text text-on-tertiary">本机发现</span>
+              <Switch
+                on={wifiOn}
+                onChange={on => bridge.act(on ? 'session.startAuto' : 'session.disconnect')}
+              />
+            </>
+          }
+        />
+        <ModeRow
+          name="蓝牙 HID"
+          reported={!!phone.reported}
+          available={phone.bluetoothAvailable}
+          active={phone.active === 'bluetooth'}
+          note={
+            phone.reported
+              ? phone.bluetoothAvailable
+                ? '手机蓝牙已开启：配对后本机免驱识别为鼠标 / 键盘 / 多媒体键'
+                : '手机蓝牙出口不可用（未开启，或未配对）'
+              : '手机未上报（未连入本机 9511；蓝牙链路不经过本机面板）'
+          }
+          sub={
+            tp.btSupported
+              ? '本机支持蓝牙 · 真开关在手机端，面板只读'
+              : '真开关在手机端（蓝牙配对），面板只读'
+          }
+        />
+        <ModeRow
+          name="USB 外设"
+          reported={!!phone.reported}
+          available={phone.usbAvailable ?? tp.usbDevice}
+          active={phone.active === 'usb'}
+          note={
+            phone.reported
+              ? phone.usbAvailable
+                ? '手机 USB gadget 已就绪：插线即用（HID 键鼠 + UAC2 声卡 + NCM）'
+                : '手机 USB 出口不可用（未插线，或手机端「有线（USB）」开关未开）'
+              : usbLine
+          }
+          sub={tp.usbDevice && tp.usbName ? `${tp.usbName}${usbSpeedText}` : undefined}
+        />
+      </div>
     </div>
   );
 };

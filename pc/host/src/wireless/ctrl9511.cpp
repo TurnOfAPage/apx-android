@@ -180,6 +180,9 @@ struct Ctrl9511Server::Impl {
     std::atomic<uint64_t> aMouse_{0}, aTouch_{0}, aKeyboard_{0}, aConsumer_{0};
     std::atomic<uint64_t> aClipboard_{0}, aReverse_{0}, aDropped_{0};
     std::atomic<uint64_t> aRequestInput_{0}, aInputText_{0}, aInputDone_{0};
+    /// 手机模式状态（0x31）：计数 + 最近一次位图（位布局见 phone_mode.hpp）
+    std::atomic<uint64_t> aModeStatus_{0};
+    std::atomic<uint8_t> modeFlags_{0};
 
     // 远程输入回调（UI 层注册）
     std::function<void(const std::string&)> onRequestInput_;
@@ -448,6 +451,13 @@ struct Ctrl9511Server::Impl {
             // INPUT_DONE：手机输入完成
             if (onRemoteInputDone_) onRemoteInputDone_();
             aInputDone_.fetch_add(1);
+        } else if (cmd == 0x31 && bodyLen >= 2) {
+            /* MODE_STATUS：手机上报「三种接入模式的可用性 + 当前在用哪个」（issue#47 面板侧诉求）。
+               面板原来那三个开关里只有无线是真的，蓝牙与 USB 的真开关在手机端 ——
+               拨了没反应只能被当成坏了；改成照实显示手机报上来的状态。
+               位布局见 include/apxpc/wireless/phone_mode.hpp（用例钉住，与 Android 侧对拍）。 */
+            modeFlags_.store(p[1]);
+            aModeStatus_.fetch_add(1);
         }
     }
 
@@ -563,6 +573,13 @@ bool Ctrl9511Server::start(uint16_t port, const std::string& token, const std::s
             im->st.error = "平台输入注入器创建失败";
             cleanup(); return false;
         }
+        /* 注入权限（macOS）：只告警不拦截 —— 服务照常起、帧照收，但 CGEventPost 会被
+           系统丢弃。真机报障里「手机按了全无反应」最难查的就是这种「连上了、帧也到了、
+           注入被吞」；面板横幅 + 首次输入时的系统授权引导兜住它。 */
+        if (!platformInputTrusted()) {
+            APX_LOGW("本机未获得输入注入权限（macOS：系统设置 → 隐私与安全性 → 辅助功能 → 勾选 AllPeriph）"
+                     "：手机发来的键鼠此刻不会生效");
+        }
 
         /* 顺序很关键（issue#47 根因）：先把监听端口占上，成功之后再起剪贴板监视线程。
            历史顺序是「先起剪贴板线程 → 再 bind」，于是 bind 失败时清理要负责停线程；
@@ -653,6 +670,12 @@ Ctrl9511ServerStatus Ctrl9511Server::status() const {
     s.requestInput = impl_->aRequestInput_.load();
     s.inputText = impl_->aInputText_.load();
     s.inputDone = impl_->aInputDone_.load();
+    s.modeStatus = impl_->aModeStatus_.load();
+    s.modeFlags = impl_->modeFlags_.load();
+    /* 注入权限：macOS 无「辅助功能」授权时 CGEventPost 会被系统静默丢弃。
+       每次读状态实时问一次（一次 TCC 查询），面板据此打横幅 —— 不让「连上了、
+       帧也到了、注入被吞」这种最难查的组合继续伪装成「没反应」。 */
+    s.inputTrusted = platformInputTrusted();
     return s;
 }
 

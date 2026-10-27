@@ -417,6 +417,11 @@ std::unique_ptr<InputInjector> createPlatformInjector() {
     auto in = std::make_unique<LinInjector>();
     return in->ok() ? std::unique_ptr<InputInjector>(in.release()) : nullptr;
 }
+
+/* Linux 没有「辅助功能授权」这一层：注入走 /dev/uinput（内核级），设备节点可写就能注入，
+   不存在「连上了、帧也到了、注入被系统吞掉」的静默失败模式。所以恒 true。 */
+bool platformInputTrusted() { return true; }
+bool requestPlatformInputTrust() { return true; }
 std::unique_ptr<ClipboardWatcher> createPlatformClipboardWatcher(
     std::function<void(const std::string&)> cb) {
     return std::make_unique<LinClipboardWatcher>(std::move(cb));

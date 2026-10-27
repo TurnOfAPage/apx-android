@@ -550,6 +550,18 @@ if(APXPC_BUILD_TESTS)
   target_include_directories(relative_move_test PRIVATE "${APXPC_ROOT}/include")
   add_test(NAME relative_move_test COMMAND relative_move_test)
 
+  # 手柄免驱降级的算术（边沿/死区/缩放/滚轮限速）：同样是纯头文件算术，不链库。
+  # 盯的是 issue #47 第 5 条 —— macOS/Windows 变不出真手柄，降级路径必须真能出东西。
+  add_executable(gamepad_fallback_test "${APXPC_ROOT}/tests/gamepad_fallback_test.cpp")
+  target_include_directories(gamepad_fallback_test PRIVATE "${APXPC_ROOT}/include")
+  add_test(NAME gamepad_fallback_test COMMAND gamepad_fallback_test)
+
+  # 手机模式状态帧（0x31）位布局：C++ 面板侧与 Android ModeStatus.kt 对拍的那份期望值。
+  # 盯的是 issue #47 的「面板三个开关改成真实状态」——位序漂移不会崩，只会显示错模式。
+  add_executable(phone_mode_test "${APXPC_ROOT}/tests/phone_mode_test.cpp")
+  target_include_directories(phone_mode_test PRIVATE "${APXPC_ROOT}/include")
+  add_test(NAME phone_mode_test COMMAND phone_mode_test)
+
   # v198 无线会话生命周期压测：worker 在 stop() 之后不得重建 beacon 线程，
   # 否则 stop() 末尾 join 收不回，进程无法退出（必须 kill）。
   add_executable(wireless_session_lifecycle_test

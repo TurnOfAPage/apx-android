@@ -6,6 +6,67 @@
 
 ---
 
+## v223.6（2026-10-27）
+
+### 修复（无线模式下 macOS 端**所有输入都失效**）#47 第 6 条后半段
+用户报告：无线模式下 pad 实体键盘、实体触控板、app 内虚拟键盘、虚拟触控板全不能用，
+且「之前实体键盘能用」。查到两件各自独立的事：
+
+- **mac 手柄注入此前是空实现**：`injectGamepad` 只打一行告警就返回 —— 手柄接 mac
+  完全没反应的直接原因之一。现改为**免驱降级**：按钮 → 键盘（A→Return、B→Esc、
+  X→E、Y→Q、L1/R1→1/2、Select→Tab、Start→Space、Mode→Option、双摇杆按下→Shift/Ctrl），
+  左摇杆 → 鼠标位移，右摇杆 → 滚轮（带死区、缩放与限速）。算术抽到
+  `pc/host/include/apxpc/wireless/gamepad_fallback.hpp`，三端共用，Windows 侧同时删掉
+  自己那份硬编码（`kDead` / `x/4` / `/8`）。
+- **mac 上没有任何一口输入能落地时，先看 TCC「辅助功能」授权**：
+  `CGEventPost` 在未授权时被系统**静默丢弃** —— 连得上、帧也到、日志干净、屏幕不动，
+  与用户描述的现象完全一致。现在 `platformInputTrusted()`
+  （`CGPreflightPostEventAccess()`）会经 9511 状态回给面板，未授权时
+  ① 面板顶部显红色横幅（指引 系统设置 → 隐私与安全性 → 辅助功能），
+  ② 首帧输入前弹一次系统授权引导（`CGRequestPostEventAccess()`）。
+  Windows / Linux 无此门槛，恒为已授权。
+
+### 新增（web 面板「无线 / 蓝牙 / USB」三个开关改为**真实状态**）#47 第 6 条
+蓝牙与 USB 的真开关在**手机端**（系统配对 / root 配 gadget），PC 只是被动 host，
+摆一个拨不动的开关只会让人以为坏了（用户原话：面板显示三个模式无效，建议实装可用功能）。
+改为手机上报、面板照实显示「可用 / 当前在用」：
+
+- **新协议命令 `0x31`**（手机 → PC，1 字节 flags）：bit0 无线可用 bit1 蓝牙可用
+  bit2 USB 可用 bit3 无线在用 bit4 蓝牙在用 bit5 USB 在用；**可用 ≠ 在用**。
+  手机连上后立即报一次、之后每 2s 一次（`TvControllerClient.sendModeStatus`）。
+- 面板侧 `ConnectionCard` 三行：灰＝不可用或未上报、绿＝可用未在用、蓝＝当前在用。
+  无线行右侧保留原来的**真开关**（本机发现 / 断开），其余两行只读。
+- 两端各有一份位布局实现（Android `ModeStatus.kt` / PC `phone_mode.hpp`），
+  各有单测用**同一组期望值**钉住（`ModeStatusTest` / `phone_mode_test`）——
+  位序错不会崩，只会「面板说蓝牙在用、实际走的无线」。
+- 「无线可用」按有没有可用局域网判（Wi-Fi / 以太网），不是照抄「开关拨上去了」。
+
+### 修复（Android：`EventBus.onMain` 并不在主线程）
+`onMain` 的 reified 重载转调时把 handler 传成了 `null`，而 `null` 走的是
+「发布者线程直接回调」那条分支 —— 于是名字叫 onMain、实际在任意线程跑。已改为转调
+带 `MAIN_HANDLER` 的那个重载。手柄页的状态行订阅就吃了这一条。
+
+### 新增（手柄页不再只报「没反应」）
+手柄页顶部加出口状态行 + 指引行（`GamepadExit`）：绿＝免驱真手柄（蓝牙 / USB），
+橙＝降级或没有出口；按钮加按下 / 抬起两态反馈。文案按出口给，并如实写明
+mac 端真手柄需要 Apple 受限 entitlement（`com.apple.developer.hid.virtual.device`），
+第三方拿不到 —— 所以免驱真手柄只走蓝牙 / USB。
+
+### 测试
+- 新增 `gamepad_fallback_test`（死区 / 缩放 / 滚轮限速 / 边沿，含 i8 极值与同时按抬）、
+  `phone_mode_test`（位序 / 打包 / 优先级 / 可用 ≠ 在用），已进 `build.yml` 与 `macos.yml`；
+- Android 新增 `ModeStatusTest`、`GamepadExitTest`（纯 JVM，后者含一条防幻觉断言：
+  手柄文案不得出现心率 / 血氧这类与手柄无关的能力）；
+- 本地 Linux 全量构建通过（103 步，含两个新 target），逐二进制跑单测通过；
+  `pc/web` `tsc --noEmit` 通过；`scripts/check_protocol.py` 49 项一致（`0x31` 有发有收）。
+
+### 说明
+- 浏览器面板的文件互传（macOS Edge 拉不起文件选择）**本轮按用户要求不动** —— 用户
+  明确说「先不用修了」；已记下现象与浏览器版本（Edge ARM64 156），等有环境再查。
+- 心率 / 血氧与功能键映射**从排期移除**：用户说明那不是他提的诉求。
+
+---
+
 ## v223.5（2026-10-27）
 
 ### 修复（v223.4 里「发送」在 Safari 上点了没反应）

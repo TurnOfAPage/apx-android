@@ -44,6 +44,8 @@
 #include "apxpc/net/json.hpp"
 #include "apxpc/tray/tray_win32.hpp"
 #include "apxpc/wireless/ctrl9511.hpp"
+// 手机上报的三种接入模式状态（0x31）：位布局与解码抽在头文件里，和 Android 侧对拍。
+#include "apxpc/wireless/phone_mode.hpp"
 #include "apxpc/wireless/file_receiver.hpp"
 #include "apxpc/wireless/wireless_session.hpp"
 #include "apxpc/media/media_session.hpp"
@@ -281,6 +283,26 @@ void buildState(const HostBundle& b, Json& out, HttpPanel* p) {
         cfg["bitrateMbps"] = static_cast<double>(b.cfg->displayBitrateMbps);
         cfg["screenMode"] = static_cast<double>(b.cfg->displayEnabled ? 1 : 0);
         transports["btSupported"] = true;
+    }
+
+    if (p) {
+        /* 手机上报的「无线 / 蓝牙 / USB 三模式可用性 + 当前在用哪条」（0x31，issue#47 面板侧诉求）。
+           面板原来那三个开关里只有无线是真的（蓝牙与 USB 的真开关在手机端），拨了没反应
+           只能被当成坏了 —— 现在照实显示手机报上来的状态；没上报就如实说没上报。 */
+        const auto cs = p->ctrlSrv.status();
+        const auto pm = apxpc::wireless::decodePhoneMode(cs.modeFlags);
+        Json ph = Json::makeObject();
+        ph["reported"] = cs.modeStatus > 0;
+        ph["connected"] = cs.connected;
+        ph["frames"] = static_cast<double>(cs.modeStatus);
+        ph["wirelessAvailable"] = pm.wirelessAvailable;
+        ph["bluetoothAvailable"] = pm.bluetoothAvailable;
+        ph["usbAvailable"] = pm.usbAvailable;
+        ph["active"] = pm.active;
+        transports["phone"] = ph;
+        /* 注入权限（macOS 的「辅助功能」）：false 时手机发来的键鼠会被系统静默丢弃 ——
+           面板必须把这件事说出来，否则用户只会认定「手机连上了但按什么都没反应」。 */
+        transports["inputTrusted"] = cs.inputTrusted;
     }
 
     if (p && p->usbScanned) {

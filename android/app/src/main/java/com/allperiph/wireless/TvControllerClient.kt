@@ -24,6 +24,8 @@ class TvControllerClient(
     private val writeLock = Any()
     private val txQueue = java.util.concurrent.LinkedBlockingQueue<ByteArray>()
     private var txThread: Thread? = null
+    /** 模式状态上报线程（0x31）；见 [startModeStatus] */
+    private var modeThread: Thread? = null
 
     @Volatile var onReverseClipboard: ((String) -> Unit)? = null
     @Volatile var onRemoteInputRequest: ((String, String) -> Unit)? = null
@@ -58,6 +60,7 @@ class TvControllerClient(
         ready = true; synchronized(rxLock) { rxLen = 0 }
         thread(name = "tvctrl-reader") { readerLoop(s) }
         startTx()
+        startModeStatus()
         Log.i("TvCtrl", "已连 TV $host:$port")
         true
     } catch (t: Throwable) { Log.e("TvCtrl", "连 TV 失败：${t.message}"); runCatching { s_close() }; false }
@@ -273,6 +276,35 @@ class TvControllerClient(
     }
 
     fun sendInputDone() { sendControl(byteArrayOf(ApxFrame.INPUT_DONE.toByte())) }
+
+    /**
+     * 模式状态上报（0x31）：[flags] 的位布局见 [ModeStatus] / phone_mode.hpp。
+     *
+     * 面板侧那三个开关原来只有无线是真的，蓝牙与 USB 是 PC 无从判断的假开关 ——
+     * 改成由**知道真相的这一端**（手机）把三条出口的可用性与当前在用哪条报上去。
+     */
+    fun sendModeStatus(flags: Int): Boolean =
+        sendControl(byteArrayOf(0x31.toByte(), (flags and 0xFF).toByte()))
+
+    /**
+     * 连上先报一次，之后每 2s 一次。
+     *
+     * 为什么是轮询而不是「变化时推」：可用性来自三处互相独立的状态（局域网 / 蓝牙开关 /
+     * USB gadget），逐个挂监听既不统一也容易漏；2s 的显示延迟对状态行完全够用，
+     * 而且是**纯上报**、不参与输入时序。链路断了 sendControl 会如实返回 false（有节流日志）。
+     */
+    private fun startModeStatus() {
+        if (modeThread?.isAlive == true) return
+        modeThread = thread(name = "tvctrl-mode") {
+            while (running.get()) {
+                if (ready) {
+                    val flags = runCatching { ModeStatus.currentFlags() }.getOrDefault(0)
+                    sendModeStatus(flags)
+                }
+                try { Thread.sleep(2000) } catch (_: InterruptedException) { break }
+            }
+        }
+    }
 
     companion object { const val PORT = 9511 }
 }

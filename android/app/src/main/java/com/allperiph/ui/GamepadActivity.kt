@@ -4,16 +4,30 @@ import android.app.Activity
 import android.content.Context
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.widget.FrameLayout
+import android.widget.LinearLayout
 import android.widget.TextView
+import com.allperiph.core.Uplink
+import com.allperiph.core.UplinkEvent
+import com.allperiph.shared.event.EventBus
 
 /**
  * 全屏游戏手柄（v1.x）：双虚拟摇杆 + 常用按键，经 [GamepadController]
- * 送上 USB HID（Report ID 22）。横屏沉浸，松手自动回中。
+ * 送上 USB HID（Report ID 22）／ 蓝牙 HID（rid=4）／ 无线 0x07。
+ *
+ * v223.6 起补两件此前缺的东西 —— 用户报「手柄功能实测不可用」，而按下去
+ * 手机端没反馈、PC 端没动静、界面也不解释，只能得出「坏了」：
+ *   1) **出口状态行 + 指引**：实时显示这帧会发去哪（[Uplink] 的唯一判据），
+ *      无出口时直接写清怎么给它一个出口；无线出口额外说明对端平台差异
+ *      （见 [GamepadExit] 的注释：macOS 注入不了真手柄是 Apple 的权限限制）。
+ *   2) **按下反馈**：按钮此前是个没有按下态的 TextView，按下去外观不变。
+ *      现在按下换底色/描边，手指不动也能确认「触摸被识别了」。
  */
 class GamepadActivity : Activity() {
 
@@ -26,18 +40,56 @@ class GamepadActivity : Activity() {
         super.attachBaseContext(com.allperiph.ui.ThemePref.wrap(newBase))
     }
 
+    /** 出口状态行（每 500ms 兜底刷新一次；出口变化不一定会发输入）。 */
+    private val ui = Handler(Looper.getMainLooper())
+    private val refreshTask = object : Runnable {
+        override fun run() {
+            refreshStatus()
+            ui.postDelayed(this, 500L)
+        }
+    }
+
+    private var statusView: TextView? = null
+    private var adviceView: TextView? = null
+    private var uplinkSub: EventBus.Disposable? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         buildUi()
     }
 
+    override fun onResume() {
+        super.onResume()
+        // 出口变化（蓝牙配对成功 / USB 挂上 / 无线目标连上）多数不发输入，
+        // 所以除了事件订阅，再加一个低频轮询兜底。
+        uplinkSub?.dispose()
+        uplinkSub = EventBus.onMain<UplinkEvent> { refreshStatus() }
+        ui.post(refreshTask)
+    }
+
     override fun onPause() {
         super.onPause()
+        ui.removeCallbacks(refreshTask)
+        uplinkSub?.dispose()
+        uplinkSub = null
         GamepadController.releaseAll() // 离开时复位，避免按键卡在按下态
     }
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
+
+    /** 状态行 + 指引行：按当前出口刷新（发过输入看真实出口，否则看预计出口）。 */
+    private fun refreshStatus() {
+        val s = statusView ?: return
+        val a = adviceView ?: return
+        val path = if (Uplink.observed) Uplink.current else GamepadController.predictedPath()
+        val info = GamepadExit.describe(path)
+        s.text = info.headline
+        // 无出口 / 只有降级映射时用告警色，明确「现在按下去没用」或「要看对端」
+        s.setTextColor(if (info.driverlessRealPad) 0xFF8BD450.toInt() else 0xFFFFB44C.toInt())
+        a.text = info.advice
+        a.visibility = if (info.advice.isEmpty()) View.GONE else View.VISIBLE
+    }
 
     private fun buildUi() {
         val root = FrameLayout(this).apply { setBackgroundColor(0xFF14161B.toInt()) }
@@ -52,6 +104,32 @@ class GamepadActivity : Activity() {
             gravity = Gravity.TOP or Gravity.START
             setMargins(dp(16), dp(10), 0, 0)
         }
+
+        // 出口状态 + 指引（顶部居中；左右各让 100dp 避开 L1 / R1，也避开左上角 ✕）
+        val bar = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val status = TextView(this).apply {
+            textSize = 12f
+            gravity = Gravity.CENTER
+            setTextColor(0xFFFFB44C.toInt())
+        }
+        val advice = TextView(this).apply {
+            textSize = 10.5f
+            gravity = Gravity.CENTER
+            setTextColor(0xFFB9BDC7.toInt())
+            setPadding(0, dp(3), 0, 0)
+            visibility = View.GONE
+        }
+        statusView = status
+        adviceView = advice
+        bar.addView(status)
+        bar.addView(advice)
+        root.addView(bar, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.WRAP_CONTENT,
+        ).apply {
+            gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+            setMargins(dp(100), dp(12), dp(100), 0)
+        })
 
         // 左摇杆（左下）
         val left = JoystickView(this)
@@ -109,13 +187,19 @@ class GamepadActivity : Activity() {
         }
     }
 
-    /** 一个圆形按钮，按下 setButton(true)、抬起 setButton(false) */
+    /** 一个圆形按钮，按下 setButton(true)、抬起 setButton(false)；按下时换底色作反馈。 */
     private fun pad(root: FrameLayout, label: String, bit: Int, size: Int = dp(58)): FrameLayout.LayoutParams {
         val tv = addLabel(root, label, size)
-        tv.setOnTouchListener { v, e ->
+        tv.setOnTouchListener { _, e ->
             when (e.actionMasked) {
-                MotionEvent.ACTION_DOWN -> GamepadController.setButton(bit, true)
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> GamepadController.setButton(bit, false)
+                MotionEvent.ACTION_DOWN -> {
+                    applyPadFace(tv, pressed = true)
+                    GamepadController.setButton(bit, true)
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    applyPadFace(tv, pressed = false)
+                    GamepadController.setButton(bit, false)
+                }
             }
             true
         }
@@ -129,14 +213,24 @@ class GamepadActivity : Activity() {
             textSize = if (label.length > 2) 13f else 17f
             gravity = Gravity.CENTER
             setTextColor(0xFFEAEAEA.toInt())
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(0x2EFFFFFF)
-                setStroke(dp(1), 0x66FFFFFF)
-            }
+            applyPadFace(this, pressed = false)
             configure(this)
         }
         root.addView(tv, FrameLayout.LayoutParams(size, size))
         return tv
+    }
+
+    /**
+     * 按钮外观（未按下 / 按下两态）。
+     *
+     * 此前按钮是个**没有按下态**的 TextView —— 按下去外观完全不变，用户无法判断
+     * 到底是「没识别到触摸」还是「识别了但没发出去」，这正是「手柄不可用」体感的来源之一。
+     */
+    private fun applyPadFace(tv: TextView, pressed: Boolean) {
+        tv.background = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(if (pressed) 0x66FFFFFF.toInt() else 0x2EFFFFFF.toInt())
+            setStroke(dp(if (pressed) 2 else 1), if (pressed) 0xDDFFFFFF.toInt() else 0x66FFFFFF.toInt())
+        }
     }
 }
