@@ -12,7 +12,10 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
+#include <sys/select.h>
 #include <sys/time.h>
+#include <fcntl.h>
+#include <cerrno>
 #include <unistd.h>
 #endif
 
@@ -77,6 +80,118 @@ bool parseBeacon(const char* buf, size_t n, std::string& host, uint16_t& port,
 }
 
 }  // namespace
+
+// 非阻塞 connect + select 探测单个 IP:port 是否可达。
+static bool portOpen(const std::string& ip, uint16_t port, int timeoutMs) {
+    Sock s = socket(AF_INET, SOCK_STREAM, 0);
+    if (s == kBadSock) return false;
+    bool ok = false;
+#if defined(_WIN32)
+    u_long nb = 1; ioctlsocket(s, FIONBIO, &nb);
+#else
+    int fl = fcntl(s, F_GETFL, 0); fcntl(s, F_SETFL, fl | O_NONBLOCK);
+#endif
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port);
+#if defined(_WIN32)
+    addr.sin_addr.s_addr = inet_addr(ip.c_str());
+#else
+    inet_pton(AF_INET, ip.c_str(), &addr.sin_addr);
+#endif
+    int rc = connect(s, reinterpret_cast<sockaddr*>(&addr), sizeof(addr));
+    if (rc == 0) {
+        ok = true;
+    } else {
+        bool inProgress = false;
+#if defined(_WIN32)
+        int e = WSAGetLastError();
+        inProgress = (e == WSAEWOULDBLOCK || e == WSAEINPROGRESS || e == WSAEALREADY);
+#else
+        inProgress = (errno == EINPROGRESS);
+#endif
+        if (inProgress) {
+            fd_set wf; FD_ZERO(&wf); FD_SET(s, &wf);
+            struct timeval tv{}; tv.tv_sec = timeoutMs / 1000; tv.tv_usec = (timeoutMs % 1000) * 1000;
+            int sr = select(static_cast<int>(s) + 1, nullptr, &wf, nullptr, &tv);
+            if (sr > 0) {
+                int soerr = 0;
+#if defined(_WIN32)
+                int sl = sizeof(soerr);
+                getsockopt(s, SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&soerr), &sl);
+#else
+                socklen_t sl = sizeof(soerr);
+                getsockopt(s, SOL_SOCKET, SO_ERROR, &soerr, &sl);
+#endif
+                ok = (soerr == 0);
+            }
+        }
+    }
+#if defined(_WIN32)
+    closesocket(s);
+#else
+    close(s);
+#endif
+    return ok;
+}
+
+// 扫描本机所在 /24 网段的 9511 端口。并发 8 线程，总耗时约 (254/8)*timeout。
+std::vector<std::string> scanLan9511(int timeoutMs) {
+    std::vector<std::string> result;
+    std::mutex mu;
+    ensureWsa();
+
+    std::string prefix;
+    {
+        Sock s = socket(AF_INET, SOCK_DGRAM, 0);
+        if (s != kBadSock) {
+            sockaddr_in remote{};
+            remote.sin_family = AF_INET;
+            remote.sin_port = htons(53);
+#if defined(_WIN32)
+            remote.sin_addr.s_addr = inet_addr("8.8.8.8");
+#else
+            inet_pton(AF_INET, "8.8.8.8", &remote.sin_addr);
+#endif
+            if (connect(s, reinterpret_cast<sockaddr*>(&remote), sizeof(remote)) == 0) {
+                sockaddr_in local{};
+                socklen_t l = sizeof(local);
+                if (getsockname(s, reinterpret_cast<sockaddr*>(&local), &l) == 0) {
+                    char buf[32] = {0};
+#if defined(_WIN32)
+                    strncpy_s(buf, sizeof(buf) - 1, inet_ntoa(local.sin_addr), _TRUNCATE);
+#else
+                    inet_ntop(AF_INET, &local.sin_addr, buf, sizeof(buf));
+#endif
+                    std::string ip(buf);
+                    size_t d = ip.rfind('.');
+                    if (d != std::string::npos) prefix = ip.substr(0, d + 1);
+                }
+            }
+#if defined(_WIN32)
+            closesocket(s);
+#else
+            close(s);
+#endif
+        }
+    }
+    if (prefix.empty()) return result;
+
+    std::vector<std::thread> ws;
+    for (int w = 0; w < 8; ++w) {
+        ws.emplace_back([&, w]() {
+            for (int host = w + 1; host <= 254; host += 8) {
+                std::string ip = prefix + std::to_string(host);
+                if (portOpen(ip, 9511, timeoutMs)) {
+                    std::lock_guard<std::mutex> lk(mu);
+                    result.push_back(ip);
+                }
+            }
+        });
+    }
+    for (auto& t : ws) t.join();
+    return result;
+}
 
 const char* linkPhaseName(LinkPhase p) noexcept {
     switch (p) {
@@ -241,13 +356,6 @@ void WirelessSession::worker() {
             } else {
                 if (!beaconRun_.load()) {
                     if (beaconThread_.joinable()) beaconThread_.join();
-                    // ★ shutdown 期间不能再起新 beacon：stop() 把 beaconRun_ 置 false、
-                    //   旧线程退出后再 join 完，理论上本分支应该收摊；但若 worker 此时正
-                    //   在这一步（stop 与 worker 在「beaconRun_ 拉 false → worker 进入
-                    //   内层块」这条临界区交汇），下面 store(true) 会把 beaconRun_ 再拉起、
-                    //   新建出来的 beacon 线程在 recvfrom 上挂着，stop() 末尾的
-                    //   beaconThread_.join() 永远收不回 —— 进程无法正常退出（必须 kill）。
-                    //   收完旧线程后再核一次 running_：已停就不重建，让本次迭代走完即退出。
                     if (!running_.load()) {
                         publish(LinkPhase::Idle, mode);
                     } else {
@@ -415,11 +523,6 @@ void WirelessSession::beaconLoop() {
 #endif
         return;
     }
-    // ★ 接收必须有超时，否则 stop() 收不回 beacon 线程：
-    //   本线程阻塞在 recvfrom 上时，stop() 只能置 beaconRun_ = false，没法打断系统调用；
-    //   没有 SO_RCVTIMEO 时它会一直等到「有信标进来」才醒 —— 局域网里没别人广播就是永远。
-    //   真机表现是退出程序卡死（必须 kill），CI 表现是 ctest 把
-    //   wireless_session_lifecycle_test 判成 300s 超时。200ms 让循环能定期看 beaconRun_。
 #if defined(_WIN32)
     DWORD rcvToMs = 200;
     setsockopt(b, SOL_SOCKET, SO_RCVTIMEO,
@@ -443,20 +546,12 @@ void WirelessSession::beaconLoop() {
         if (n <= 0) { std::this_thread::sleep_for(std::chrono::milliseconds(50)); continue; }
         buf[n] = '\0';
         std::string hostIp;
-#if defined(_WIN32)
         char ipStr[INET_ADDRSTRLEN];
         if (inet_ntop(AF_INET, &from.sin_addr, ipStr, sizeof(ipStr)))
             hostIp = ipStr;
-#else
-        char ipStr[INET_ADDRSTRLEN];
-        if (inet_ntop(AF_INET, &from.sin_addr, ipStr, sizeof(ipStr)))
-            hostIp = ipStr;
-#endif
         uint16_t bport = 0;
         std::string dummy;
         bool phone = false;
-        // 过滤自身信标：本机广播会回环回来，不过滤就会「连自己」（面板假装已连接，
-        // 而手机永远连不上）。见 isSelfAddress 注释。
         if (!hostIp.empty() && parseBeacon(buf, static_cast<size_t>(n), dummy, bport, &phone)
 #if defined(_WIN32)
             && !isSelfAddress(from.sin_addr.s_addr)
