@@ -62,12 +62,14 @@ jobs:
         run: cmake --build build_host -j4 --target apxhost apxdesktop
 
       - name: Build + run unit tests (ctest)
-        # 七个用例都在 pc/host 工程里；tcp_transport_test 属于 pc/display 那个独立工程，
+        # 八个用例都在 pc/host 工程里；tcp_transport_test 属于 pc/display 那个独立工程，
         # 不在 build_host 的 target 列表里。
         # macOS 此前 -DAPXPC_BUILD_TESTS=OFF，测试连编译都没过堂；打开后 mac 侧回归也有了门禁。
+        # 新增用例记得同步这里与 build.yml —— 只加 CMake target 不加这里，
+        # ctest 会以「Not Run（找不到可执行文件）」红，v223.3 就是这么红的。
         run: |
           cmake --build build_host -j4 --target \
-            arbiter_test utf16_convert_test ctrl_frame_test \
+            arbiter_test utf16_convert_test ctrl_frame_test relative_move_test \
             wireless_session_lifecycle_test localsend_protocol_test \
             localsend_upload_test localsend_sender_test
           ctest --test-dir build_host --output-on-failure
