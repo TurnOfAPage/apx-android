@@ -103,9 +103,15 @@
     <string name="ui_main_btn_pick">去选择</string>
     <string name="ui_main_label_connect_disconnect">断开连接</string>
     <string name="ui_main_btn_to_local_local">回本机</string>
-    <string name="ui_main_label_remote_power_volume">遥控器（方向 / OK / 音量 / 电源）</string>
+    <!-- v223 设置页行：标题只留词组，括号里的解释下沉到「行内说明」一行（右栏只有屏幕 2/3，
+         原来是标题带着括号一起折成两三行，窄列里读起来很碎）。 -->
+    <string name="ui_main_label_remote_power_volume">遥控器</string>
+    <string name="ui_main_hint_remote_keys">方向 / OK / 音量 / 电源</string>
     <string name="ui_common_open">打开</string>
-    <string name="ui_main_label_screen_touchpad_keyboard_fullscreen">全屏操控面（触控板 / 键盘 / 副屏）</string>
+    <!-- 行尾「进入下级」箭头：卡片里的设置行用它替代动作胶囊，窄列里省出 40dp 以上给标题 -->
+    <string name="ui_common_chevron">›</string>
+    <string name="ui_main_label_screen_touchpad_keyboard_fullscreen">全屏操控面</string>
+    <string name="ui_main_hint_console">触控板 / 键盘 / 副屏</string>
     <string name="ui_main_label_state_channel_inject">被控状态与权限</string>
     <string name="ui_main_btn_selftest">自检</string>
     <string name="ui_main_label_log_view">查看运行日志</string>
@@ -115,9 +121,10 @@
     <string name="ui_common_close">关闭</string>
     <string name="ui_common_copy">复制</string>
     <string name="ui_common_copied">已复制</string>
-    <string name="ui_main_label_file_send">发送文件到手机</string>
+    <string name="ui_main_label_file_send">发送文件</string>
     <string name="ui_main_btn_file">选文件</string>
-    <string name="ui_main_label_file_panel">收到的文件 / 文件面板</string>
+    <string name="ui_main_label_file_panel">文件面板</string>
+    <string name="ui_main_hint_file_panel">收到的文件都在这里</string>
     <string name="ui_main_btn_forward_view">查看并转发</string>
     <string name="ui_main_text_file_connect_first">发文件前先在「连接」里选好设备；收到的文件都在「收到的文件」里</string>
     <string name="ui_main_toast_device_not">还没选设备</string>
@@ -307,7 +314,8 @@
     <string name="lay_settings_text_hotkey_template_touchpad">按场景一键铺满触控板页的快捷键条；也可以把当前这条存成自己的模板</string>
     <string name="lay_settings_modules">功能开关</string>
     <string name="lay_transport_usb_group">有线（USB）</string>
-    <string name="lay_settings_text_hotkey">快捷键自动排序（最常用排前面；手动拖过自动关掉）</string>
+    <string name="lay_settings_text_hotkey">快捷键排序</string>
+    <string name="lay_settings_hint_hotkey">最常用排前；手动拖过就关</string>
     <string name="lay_settings_text_manual">最常用的自动排到前面；手动拖过就自动关掉</string>
     <string name="lay_settings_cd_hotkey">快捷键自动排序开关</string>
 
@@ -315,7 +323,8 @@
     <string name="ui_main_btn_orient_locked_land">已锁·横屏</string>
     <string name="ui_main_btn_orient_locked_port">已锁·竖屏</string>
     <string name="ui_main_cd_orient_lock">锁定或解锁屏幕方向</string>
-    <string name="lay_settings_text_orient_lock">屏幕方向锁定（关掉横竖自动切换，横持自动弹出键盘也暂停）</string>
+    <string name="lay_settings_text_orient_lock">方向锁定</string>
+    <string name="lay_settings_hint_orient_lock">关掉横竖自动切换，横持不弹键盘</string>
     <string name="lay_settings_cd_orient_lock">屏幕方向锁定开关</string>
     <string name="lay_settings_env">环境摘要</string>
     <string name="lay_settings_text_theme">主题方案</string>
@@ -434,19 +443,22 @@ TV/PC 控制 · 诊断 · 文件 · 自检/日志/悬浮球</string>
     <string name="ui_ime_panel_hint">已启用：物理键盘打字将发送到电脑；切回其他输入法可恢复手机打字</string>
     <string name="ui_touchpad_send_progress">发送 %1$d%%</string>
 
-    <!-- 开关行：分组里只留一行标题，说明文字搬去帮助页（真机反馈「还有很多长文没移到帮助页」） -->
-    <string name="lay_settings_cursor_lock_title">触摸板光标锁定</string>
+    <!-- 开关行：分组里只留一行标题 + 一行短说明（真机反馈「还有很多长文没移到帮助页」） -->
+    <string name="lay_settings_cursor_lock_title">光标锁定</string>
+    <string name="lay_settings_hint_cursor_lock">触摸板点按时不跳光标</string>
     <!-- 三指手势遮蔽（root 动态）：触控板里三指滑动不再触发 MIUI 截屏 -->
-    <string name="lay_settings_gesture_shield_title">三指手势遮蔽</string>
+    <string name="lay_settings_gesture_shield_title">手势遮蔽</string>
+    <string name="lay_settings_hint_gesture_shield">三指手势交还系统</string>
     <string name="ui_gesture_shield_dialog_title">三指手势遮蔽</string>
     <string name="ui_gesture_shield_dialog_msg">触控板里三指滑动会先被系统当成截屏 —— 手指还没抬起，截图就已经存了。\n\n开启后：进入触控板期间用 root 临时把系统的「三指下滑截屏 / 三指长按区域截屏」改成无动作，退出触控板立刻还原（进程被杀也会在下一次启动时自动还原）。\n\n没 root 的兜底：手动关掉系统手势 —— 设置 → 更多设置 → 快捷手势 → 截屏，关掉「三指下拉」，截图改用音量下 + 电源键。</string>
     <string name="ui_gesture_shield_btn_settings">打开系统设置</string>
     <string name="ui_gesture_shield_toast_no_root">没有 root，遮蔽未生效：请手动关掉系统三指手势（设置 → 更多设置 → 快捷手势 → 截屏）</string>
     <string name="ui_help_gesture_shield">三指手势遮蔽：开 = 进触控板期间用 root 临时关掉系统的三指下滑截屏与三指长按区域截屏，退出即还原；无 root 时请手动在系统设置里关闭。</string>
-    <string name="lay_settings_localsend_title">互传（LocalSend）</string>
+    <string name="lay_settings_localsend_title">互传</string>
+    <string name="lay_settings_hint_localsend">LocalSend 局域网互传</string>
     <string name="lay_settings_export_log_title">导出运行日志</string>
     <string name="lay_settings_group_interact">交互开关</string>
-    <string name="lay_settings_keymap_to_help">遥控键映射说明</string>
+    <string name="lay_settings_keymap_to_help">键映射说明</string>
 
     <!-- 传输分类页：左侧三个传输按钮点了进这里，总开关与模块列表同页 -->
     <string name="lay_transport_switch_hint">开启后下方模块才会生效</string>

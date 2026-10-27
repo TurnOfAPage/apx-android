@@ -9,6 +9,7 @@ import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.provider.Settings
+import android.text.TextUtils
 import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
@@ -620,34 +621,77 @@ class SettingsFragment : Fragment() {
         })
     }
 
-    private fun settingRow(title: String, value: String, tint: Int, onClick: () -> Unit): View {
+    /**
+     * 一行设置项（v223 版式）：`标题（单行，超长省略）+ 右侧取值胶囊 / 箭头` +「说明」整行。
+     *
+     * 为什么改：设置页右栏只占屏幕 2/3（竖屏 ≈190dp，去掉卡片内边距只剩 ≈159dp）。
+     * 原先把「遥控器（方向 / OK / 音量 / 电源）」这类带括号的长标题直接当作标题，
+     * 在窄列里折成两三行，还要和右侧胶囊抢宽度 —— 真机反馈「右边的分组文字太长」。
+     * 现在：标题只留词组（单行），解释下沉到 12sp 说明行；说明行独占整行宽，
+     * 「方向 / OK / 音量 / 电源」这种内容才排得开。
+     *
+     * @param value 右侧取值胶囊文案；传 null 表示「进入下级」的行，右侧只画一个箭头
+     * @param hint  标题下的说明行；传 null 表示这一行不需要说明
+     */
+    private fun settingRow(
+        title: String,
+        value: String?,
+        tint: Int,
+        hint: String? = null,
+        onClick: () -> Unit,
+    ): View {
         val h = host ?: return View(activity)
-        val row = LinearLayout(activity).apply {
+        val line = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            isClickable = true
-            isFocusable = true
-            setPadding(h.dp(4), h.dp(9), h.dp(4), h.dp(9))
-            setOnClickListener { onClick() }
         }
-        row.addView(TextView(activity).apply {
+        line.addView(TextView(activity).apply {
             text = title
             textSize = 15f
+            setSingleLine(true)
+            ellipsize = TextUtils.TruncateAt.END
             setTextColor(resources.getColor(R.color.md_on_surface))
         }, LinearLayout.LayoutParams(0, -2, 1f))
-        row.addView(TextView(activity).apply {
-            text = value
-            textSize = 13f
-            setTextColor(tint)
-            background = h.pill(ThemeSkin.softOf(tint))
-            setPadding(h.dp(12), h.dp(5), h.dp(12), h.dp(5))
-        })
+        if (value != null) {
+            line.addView(TextView(activity).apply {
+                text = value
+                textSize = 13f
+                setTextColor(tint)
+                background = h.pill(ThemeSkin.softOf(tint))
+                setPadding(h.dp(12), h.dp(5), h.dp(12), h.dp(5))
+            })
+        } else {
+            line.addView(TextView(activity).apply {
+                text = getString(R.string.ui_common_chevron)
+                textSize = 18f
+                setTextColor(resources.getColor(R.color.md_on_surface_variant))
+            })
+        }
+        val row = LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            isClickable = true
+            isFocusable = true
+            // 左右不留内缩：卡片自身的 16dp 内边距已经是行的边距，
+            // 再缩 4dp 会让标题、说明、分组表头三处竖线各差一截。
+            setPadding(0, h.dp(9), 0, h.dp(9))
+            setOnClickListener { onClick() }
+        }
+        row.addView(line, LinearLayout.LayoutParams(-1, -2))
+        if (hint != null) {
+            row.addView(TextView(activity).apply {
+                text = hint
+                textSize = 12f
+                setTextColor(resources.getColor(R.color.md_on_surface_variant))
+            }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = h.dp(2) })
+        }
         return row
     }
 
+    /** 卡内小节标题（连接 / 工具 / 键盘外观…）：比分组表头低一级，比说明行高一级。 */
     private fun fieldLabel(text: String): TextView = TextView(activity).apply {
         this.text = text
         textSize = 12f
+        typeface = Typeface.DEFAULT_BOLD
         setTextColor(resources.getColor(R.color.md_on_surface_variant))
     }
 
@@ -659,22 +703,30 @@ class SettingsFragment : Fragment() {
         tvBox.removeAllViews()
         val accent = resources.getColor(R.color.md_primary)
         // 分组（v206）：「连接」小节 = 选设备/断开/最近设备/状态；「工具」小节 = 遥控面板/全屏/自检/日志
+        // v223：进入下级（打开弹窗/跳页）的行改用行尾箭头，取值行才用胶囊 ——
+        // 「打开」「自检」这类胶囊在 190dp 的窄列里要吃掉 60dp，标题只能折行。
         tvBox.addView(fieldLabel(getString(R.string.lay_settings_group_connect)))
-        tvBox.addView(settingRow(getString(R.string.ui_main_label_device_connect), getString(R.string.ui_main_btn_pick), accent) { h.showDevicePicker() })
+        tvBox.addView(settingRow(getString(R.string.ui_main_label_device_connect), null, accent) { h.showDevicePicker() })
         if (h.isControlling()) {
             tvBox.addView(settingRow(getString(R.string.ui_main_label_connect_disconnect), getString(R.string.ui_main_btn_to_local_local), accent) { ControlTarget.clear(); h.onTargetChanged() })
         }
         tvBox.addView(fieldLabel(getString(R.string.lay_settings_group_tools)))
-        tvBox.addView(settingRow(getString(R.string.ui_main_label_remote_power_volume), getString(R.string.ui_common_open), accent) {
+        tvBox.addView(settingRow(
+            getString(R.string.ui_main_label_remote_power_volume), null, accent,
+            hint = getString(R.string.ui_main_hint_remote_keys),
+        ) {
             startActivity(Intent(activity, RemoteActivity::class.java))
         })
-        tvBox.addView(settingRow(getString(R.string.ui_main_label_screen_touchpad_keyboard_fullscreen), getString(R.string.ui_common_open), accent) {
+        tvBox.addView(settingRow(
+            getString(R.string.ui_main_label_screen_touchpad_keyboard_fullscreen), null, accent,
+            hint = getString(R.string.ui_main_hint_console),
+        ) {
             startActivity(Intent(activity, com.allperiph.touchpad.TouchpadActivity::class.java))
         })
-        tvBox.addView(settingRow(getString(R.string.ui_main_label_state_channel_inject), getString(R.string.ui_main_btn_selftest), accent) { showControlledCaps() })
-        tvBox.addView(settingRow(getString(R.string.ui_main_label_log_view), getString(R.string.ui_common_open), accent) { showLogs() })
+        tvBox.addView(settingRow(getString(R.string.ui_main_label_state_channel_inject), null, accent) { showControlledCaps() })
+        tvBox.addView(settingRow(getString(R.string.ui_main_label_log_view), null, accent) { showLogs() })
         // 反馈#4：环形缓冲只留「日志级别」，信息量不够 —— 这里给全进程/内核 tag 的真 logcat
-        tvBox.addView(settingRow(getString(R.string.ui_main_label_logcat), getString(R.string.ui_common_open), accent) { showLogcat() })
+        tvBox.addView(settingRow(getString(R.string.ui_main_label_logcat), null, accent) { showLogcat() })
         // 反馈#7：悬浮球 —— 独立 overlay 触控板（绕开 HyperOS 小窗失焦不能输入）；无权限先跳授权
         tvBox.addView(
             settingRow(
@@ -704,7 +756,7 @@ class SettingsFragment : Fragment() {
             })
         } else {
             for (item in recent) {
-                tvBox.addView(settingRow(item.name, "${item.host}:${item.port}", accent) {
+                tvBox.addView(settingRow(item.name, null, accent, hint = "${item.host}:${item.port}") {
                     // 复用宿主的连入逻辑（Activity.connectTarget）：设置器、握手、
                     // 反向剪贴板回调都在那一处，这里不重复实现。
                     host?.connectTarget(item.host, item.port, item.name, "tv")
@@ -917,7 +969,10 @@ class SettingsFragment : Fragment() {
         fileBox.removeAllViews()
         val accent = resources.getColor(R.color.md_primary)
         fileBox.addView(settingRow(getString(R.string.ui_main_label_file_send), getString(R.string.ui_main_btn_file), accent) { pickFileToSend() })
-        fileBox.addView(settingRow(getString(R.string.ui_main_label_file_panel), getString(R.string.ui_main_btn_forward_view), accent) {
+        fileBox.addView(settingRow(
+            getString(R.string.ui_main_label_file_panel), null, accent,
+            hint = getString(R.string.ui_main_hint_file_panel),
+        ) {
             startActivity(Intent(activity, FilePanelActivity::class.java))
         })
         fileBox.addView(TextView(activity).apply {
@@ -950,7 +1005,7 @@ class SettingsFragment : Fragment() {
         // 真机反馈「设置分组里还有很多长文没移到帮助页」，这里只留一行跳转。
         keymapBox.addView(settingRow(
             getString(R.string.lay_settings_keymap_to_help),
-            getString(R.string.ui_main_cat_help),
+            null,
             resources.getColor(R.color.md_primary),
         ) { showCategory("help") })
     }

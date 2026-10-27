@@ -5,6 +5,11 @@
 
   折叠的原因：模板列表有 10 套预置 + 1 行自建入口，展开 ≈ 800dp，正好把一屏占满，
   导致"功能开关 / 主题方案"永远在第二屏。现在默认只留「当前模板 + 更换/展开」一行。
+
+  v223 分组样式（右栏）：一个分组 = 一张卡 —— 分组标题进卡做表头（APGroupTitle + 1dp 发丝线），
+  卡外不再留浮在主色里的小标题；行标题只留词组（单行、超长省略），括号里的解释下沉到
+  「说明行」（APRowHint）整行排开；进下级（弹窗 / 跳页）的行用行尾箭头，取值行才用胶囊。
+  起因是真机反馈「右边的分组文字太长」：右栏只占屏幕 2/3，长标题在窄列里会折成两三行。
 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/pageSettings"
@@ -204,10 +209,12 @@
                 android:orientation="vertical">
 
                 <TextView
+                    style="@style/APGroupTitle"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="@string/card_link"
-                    android:textAppearance="@style/APTextSubtitle" />
+                    android:text="@string/card_link" />
+
+                <View style="@style/APGroupDivider" />
 
                 <LinearLayout
                     android:id="@+id/rowsLinkHost"
@@ -222,25 +229,35 @@
             android:id="@+id/rowCursorLock"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical"
+            android:orientation="vertical"
             android:padding="@dimen/space_12"
             android:background="@drawable/bg_card"
             android:layout_marginBottom="@dimen/space_6">
 
-            <TextView
-                android:layout_width="0dp"
+            <LinearLayout
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="@string/lay_settings_cursor_lock_title"
-                android:textColor="@color/md_on_surface"
-                android:textSize="14sp" />
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
 
-            <Switch
-                android:id="@+id/switchCursorLock"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:checked="true" />
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="@string/lay_settings_cursor_lock_title"
+                    android:textColor="@color/md_on_surface"
+                    android:textSize="15sp" />
+
+                <Switch
+                    android:id="@+id/switchCursorLock"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:checked="true" />
+            </LinearLayout>
+
+            <TextView
+                style="@style/APRowHint"
+                android:text="@string/lay_settings_hint_cursor_lock" />
         </LinearLayout>
 
         <!-- 三指手势遮蔽（root 动态；无 root 时点行看手动兜底路径） -->
@@ -248,38 +265,50 @@
             android:id="@+id/rowGestureShield"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical"
+            android:orientation="vertical"
             android:padding="@dimen/space_12"
             android:background="@drawable/bg_card"
             android:layout_marginBottom="@dimen/space_6">
 
-            <TextView
-                android:layout_width="0dp"
+            <LinearLayout
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="@string/lay_settings_gesture_shield_title"
-                android:textColor="@color/md_on_surface"
-                android:textSize="14sp" />
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
 
-            <Switch
-                android:id="@+id/switchGestureShield"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content" />
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="@string/lay_settings_gesture_shield_title"
+                    android:textColor="@color/md_on_surface"
+                    android:textSize="15sp" />
+
+                <Switch
+                    android:id="@+id/switchGestureShield"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content" />
+            </LinearLayout>
+
+            <TextView
+                style="@style/APRowHint"
+                android:text="@string/lay_settings_hint_gesture_shield" />
         </LinearLayout>
 
         <!-- 快捷键模板：默认折叠，只显示当前这一套 -->
-        <TextView
-            style="@style/APSectionTitle"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/lay_settings_text_hotkey_template" />
-
         <LinearLayout
             style="@style/APCard"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical">
+
+            <TextView
+                style="@style/APGroupTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/lay_settings_text_hotkey_template" />
+
+            <View style="@style/APGroupDivider" />
 
             <LinearLayout
                 android:id="@+id/rowTemplateCurrent"
@@ -323,44 +352,48 @@
              原先这里还嵌着「无线 / 蓝牙 / 有线」三组模块行（按开关状态显隐）——
              真机反馈「左边三个传输按钮点了应弹出对应分类」，三组已各自独立成页，
              见文件末尾的 groupWifi / groupBt / groupUsb。 -->
-        <TextView
-            style="@style/APSectionTitle"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/lay_settings_group_interact" />
-
         <LinearLayout
             style="@style/APCard"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical">
 
+            <TextView
+                style="@style/APGroupTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/lay_settings_group_interact" />
+
+            <View style="@style/APGroupDivider" />
+
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:gravity="center_vertical"
-                android:orientation="horizontal">
+                android:orientation="vertical">
 
                 <LinearLayout
-                    android:layout_width="0dp"
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:orientation="vertical">
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
 
                     <TextView
-                        android:layout_width="wrap_content"
+                        android:layout_width="0dp"
                         android:layout_height="wrap_content"
+                        android:layout_weight="1"
                         android:text="@string/lay_settings_text_hotkey"
                         android:textAppearance="@style/APTextSubtitle" />
 
-
+                    <Switch
+                        android:id="@+id/swHotkeySort"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:contentDescription="@string/lay_settings_cd_hotkey" />
                 </LinearLayout>
 
-                <Switch
-                    android:id="@+id/swHotkeySort"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:contentDescription="@string/lay_settings_cd_hotkey" />
+                <TextView
+                    style="@style/APRowHint"
+                    android:text="@string/lay_settings_hint_hotkey" />
             </LinearLayout>
 
             <View
@@ -372,28 +405,32 @@
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:gravity="center_vertical"
-                android:orientation="horizontal"
+                android:orientation="vertical"
                 android:paddingTop="@dimen/space_12">
 
                 <LinearLayout
-                    android:layout_width="0dp"
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:orientation="vertical">
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
 
                     <TextView
-                        android:layout_width="wrap_content"
+                        android:layout_width="0dp"
                         android:layout_height="wrap_content"
+                        android:layout_weight="1"
                         android:text="@string/lay_settings_text_orient_lock"
                         android:textAppearance="@style/APTextSubtitle" />
+
+                    <Switch
+                        android:id="@+id/swOrientLock"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:contentDescription="@string/lay_settings_cd_orient_lock" />
                 </LinearLayout>
 
-                <Switch
-                    android:id="@+id/swOrientLock"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:contentDescription="@string/lay_settings_cd_orient_lock" />
+                <TextView
+                    style="@style/APRowHint"
+                    android:text="@string/lay_settings_hint_orient_lock" />
             </LinearLayout>
         </LinearLayout>
 
@@ -407,17 +444,19 @@
             android:orientation="vertical">
 
         <!-- 主题方案 -->
-        <TextView
-            style="@style/APSectionTitle"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/lay_settings_text_theme" />
-
         <LinearLayout
             style="@style/APCard"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical">
+
+            <TextView
+                style="@style/APGroupTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/lay_settings_text_theme" />
+
+            <View style="@style/APGroupDivider" />
 
             <LinearLayout
                 android:id="@+id/themeBox"
@@ -427,17 +466,19 @@
         </LinearLayout>
 
         <!-- 模块配色：触控板 / 键盘 / 快捷键 各自一套（默认跟随主题） -->
-        <TextView
-            style="@style/APSectionTitle"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/lay_settings_text_color" />
-
         <LinearLayout
             style="@style/APCard"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical">
+
+            <TextView
+                style="@style/APGroupTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/lay_settings_text_color" />
+
+            <View style="@style/APGroupDivider" />
 
             <LinearLayout
                 android:id="@+id/skinBox"
@@ -487,17 +528,19 @@
         </LinearLayout>
 
         <!-- 背景与手感：背景（纯色 / 相册图）、动效速度、震动强度、按键音 -->
-        <TextView
-            style="@style/APSectionTitle"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/lay_settings_text_background" />
-
         <LinearLayout
             style="@style/APCard"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical">
+
+            <TextView
+                style="@style/APGroupTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/lay_settings_text_background" />
+
+            <View style="@style/APGroupDivider" />
 
             <LinearLayout
                 android:id="@+id/fxBox"
@@ -516,17 +559,19 @@
             android:orientation="vertical">
 
         <!-- TV / PC 控制：连接状态 + 文件传输 + 遥控键映射（长按底栏「触控板」也可进入连接菜单） -->
-        <TextView
-            style="@style/APSectionTitle"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/lay_settings_remote" />
-
         <LinearLayout
             style="@style/APCard"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical">
+
+            <TextView
+                style="@style/APGroupTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/lay_settings_remote" />
+
+            <View style="@style/APGroupDivider" />
 
             <LinearLayout
                 android:id="@+id/tvBox"
@@ -536,17 +581,19 @@
         </LinearLayout>
 
         <!-- 诊断：环境摘要（原在「通用」tab，挪到遥控 tab 与通道自检/日志同屏） -->
-        <TextView
-            style="@style/APSectionTitle"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/lay_settings_group_diag" />
-
         <LinearLayout
             style="@style/APCard"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical">
+
+            <TextView
+                style="@style/APGroupTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/lay_settings_group_diag" />
+
+            <View style="@style/APGroupDivider" />
 
             <TextView
                 android:id="@+id/tvDiag"
@@ -557,17 +604,19 @@
                 android:textAppearance="@style/APTextCaption" />
         </LinearLayout>
 
-        <TextView
-            style="@style/APSectionTitle"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/ui_filepanel_text_file" />
-
         <LinearLayout
             style="@style/APCard"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical">
+
+            <TextView
+                style="@style/APGroupTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/ui_filepanel_text_file" />
+
+            <View style="@style/APGroupDivider" />
 
             <LinearLayout
                 android:id="@+id/fileBox"
@@ -576,17 +625,19 @@
                 android:orientation="vertical" />
         </LinearLayout>
 
-        <TextView
-            style="@style/APSectionTitle"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/lay_settings_text_remote" />
-
         <LinearLayout
             style="@style/APCard"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical">
+
+            <TextView
+                style="@style/APGroupTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/lay_settings_text_remote" />
+
+            <View style="@style/APGroupDivider" />
 
             <LinearLayout
                 android:id="@+id/keymapBox"
@@ -600,25 +651,35 @@
             android:id="@+id/rowLocalSend"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical"
+            android:orientation="vertical"
             android:padding="@dimen/space_12"
             android:background="@drawable/bg_card"
             android:layout_marginBottom="@dimen/space_6">
 
-            <TextView
-                android:layout_width="0dp"
+            <LinearLayout
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="@string/lay_settings_localsend_title"
-                android:textColor="@color/md_on_surface"
-                android:textSize="14sp" />
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
 
-            <Switch
-                android:id="@+id/switchLocalSend"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:checked="false" />
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="@string/lay_settings_localsend_title"
+                    android:textColor="@color/md_on_surface"
+                    android:textSize="15sp" />
+
+                <Switch
+                    android:id="@+id/switchLocalSend"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:checked="false" />
+            </LinearLayout>
+
+            <TextView
+                style="@style/APRowHint"
+                android:text="@string/lay_settings_hint_localsend" />
         </LinearLayout>
 
         </LinearLayout><!-- /groupRemote -->
@@ -631,30 +692,35 @@
 
         <!-- 关于与支持：版本行 + 检查更新 + 意见反馈。
              自包含控件：状态、点击、静默检查都在 AboutCard 里，设置页其余代码零改动。 -->
-        <TextView
-            style="@style/APSectionTitle"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/lay_settings_tab_about" />
-
         <com.allperiph.ui.AboutCard
             style="@style/APCard"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="vertical" />
+            android:orientation="vertical">
+
+            <TextView
+                style="@style/APGroupTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/lay_settings_tab_about" />
+
+            <View style="@style/APGroupDivider" />
+        </com.allperiph.ui.AboutCard>
 
         <!-- 维护：两个按钮各占整行（并排时窄屏上文字会顶到边） -->
-        <TextView
-            style="@style/APSectionTitle"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/about_maintenance" />
-
         <LinearLayout
             style="@style/APCard"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical">
+
+            <TextView
+                style="@style/APGroupTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/about_maintenance" />
+
+            <View style="@style/APGroupDivider" />
 
             <Button
                 android:id="@+id/btnBattery"
@@ -688,12 +754,12 @@
                 android:layout_weight="1"
                 android:text="@string/lay_settings_export_log_title"
                 android:textColor="@color/md_on_surface"
-                android:textSize="14sp" />
+                android:textSize="15sp" />
 
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="›"
+                android:text="@string/ui_common_chevron"
                 android:textColor="@color/md_on_surface_variant"
                 android:textSize="18sp" />
         </LinearLayout>
@@ -708,16 +774,18 @@
             android:orientation="vertical"
             android:visibility="gone">
 
-            <TextView
-                style="@style/APSectionTitle"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="@string/ui_help_title_project" />
-
             <LinearLayout
                 style="@style/APCard"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content">
+
+                <TextView
+                    style="@style/APGroupTitle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/ui_help_title_project" />
+
+                <View style="@style/APGroupDivider" />
 
                 <TextView
                     android:layout_width="match_parent"
@@ -727,16 +795,18 @@
                     android:textSize="13sp" />
             </LinearLayout>
 
-            <TextView
-                style="@style/APSectionTitle"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="@string/ui_help_title_link" />
-
             <LinearLayout
                 style="@style/APCard"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content">
+
+                <TextView
+                    style="@style/APGroupTitle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/ui_help_title_link" />
+
+                <View style="@style/APGroupDivider" />
 
                 <TextView
                     android:layout_width="match_parent"
@@ -752,16 +822,18 @@
                     android:textAppearance="@style/APTextCaption" />
             </LinearLayout>
 
-            <TextView
-                style="@style/APSectionTitle"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="@string/ui_help_title_gesture" />
-
             <LinearLayout
                 style="@style/APCard"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content">
+
+                <TextView
+                    style="@style/APGroupTitle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/ui_help_title_gesture" />
+
+                <View style="@style/APGroupDivider" />
 
                 <TextView
                     android:layout_width="match_parent"
@@ -778,16 +850,18 @@
 
             </LinearLayout>
 
-            <TextView
-                style="@style/APSectionTitle"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="@string/ui_help_title_faq" />
-
             <LinearLayout
                 style="@style/APCard"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content">
+
+                <TextView
+                    style="@style/APGroupTitle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/ui_help_title_faq" />
+
+                <View style="@style/APGroupDivider" />
 
                 <TextView
                     android:layout_width="match_parent"
@@ -799,17 +873,19 @@
 
             <!-- 开关与日志（真机反馈：分组里的长文继续往这里收 —— 触摸板光标锁定 / 互传 /
                  导出日志三处的说明原来就是设置行的正文，行上现在只留标题） -->
-            <TextView
-                style="@style/APSectionTitle"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="@string/ui_help_title_switch" />
-
             <LinearLayout
                 style="@style/APCard"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical">
+
+                <TextView
+                    style="@style/APGroupTitle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/ui_help_title_switch" />
+
+                <View style="@style/APGroupDivider" />
 
                 <TextView
                     android:layout_width="match_parent"
@@ -841,17 +917,19 @@
             </LinearLayout>
 
             <!-- 遥控键位（原「遥控 · 工具 › 遥控键映射」卡里那三段长文；那边只留一条跳转行） -->
-            <TextView
-                style="@style/APSectionTitle"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="@string/ui_help_title_keymap" />
-
             <LinearLayout
                 style="@style/APCard"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical">
+
+                <TextView
+                    style="@style/APGroupTitle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/ui_help_title_keymap" />
+
+                <View style="@style/APGroupDivider" />
 
                 <TextView
                     android:layout_width="match_parent"
@@ -876,17 +954,19 @@
             </LinearLayout>
 
             <!-- 批C：功能说明（原状态页 boxIdleFeatures 九行搬来，原文零改动） -->
-            <TextView
-                style="@style/APSectionTitle"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="@string/ui_help_title_features" />
-
             <LinearLayout
                 style="@style/APCard"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical">
+
+                <TextView
+                    style="@style/APGroupTitle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/ui_help_title_features" />
+
+                <View style="@style/APGroupDivider" />
 
             <TextView
                 android:layout_width="match_parent"
@@ -958,17 +1038,19 @@
             </LinearLayout>
 
             <!-- 批C：三步上手（原状态页常显卡搬来，原文零改动） -->
-            <TextView
-                style="@style/APSectionTitle"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="@string/ui_help_title_howto" />
-
             <LinearLayout
                 style="@style/APCard"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical">
+
+                <TextView
+                    style="@style/APGroupTitle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/ui_help_title_howto" />
+
+                <View style="@style/APGroupDivider" />
 
             <TextView
                 android:layout_width="match_parent"
