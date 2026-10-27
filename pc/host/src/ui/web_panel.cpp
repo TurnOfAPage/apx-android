@@ -224,6 +224,18 @@ void buildState(const HostBundle& b, Json& out) {
         link["phaseName"] = L"idle";
     }
 
+    // 键盘/触摸板诊断 + 实体键盘状态（被控端 Ctrl9511Server）
+    if (b.ctrlSrv) {
+        auto cst = b.ctrlSrv->status();
+        Json ri = Json::makeArray();
+        for (const auto& r : cst.recentInputs) ri.push(Json(r));
+        out["recentInputs"] = ri;
+        Json pkb = Json::makeObject();
+        pkb["available"] = cst.padKbAvailable;
+        pkb["name"] = cst.padKbName;
+        out["padKb"] = pkb;
+    }
+
     if (b.media) {
         const auto st = b.media->status();
         const auto cc = b.media->counters();
@@ -546,6 +558,14 @@ void handleAct(Panel* p, const std::string& id, const std::string& name, const J
     if (name == "session.disconnect" && b.session) {
         b.session->disconnect();
         return postResponse(p, id, okResp());
+    }
+    if (name == "session.scanLan") {
+        auto ips = apxpc::wireless::scanLan9511(250);
+        Json out = Json::makeObject();
+        Json arr = Json::makeArray();
+        for (const auto& ip : ips) arr.push(Json(ip));
+        out["ips"] = arr;
+        return postResponse(p, id, okResp(out));
     }
 
     // —— 远程输入：对端请求本机代输 → 前端 RemoteInputModal 回传至此 ——
