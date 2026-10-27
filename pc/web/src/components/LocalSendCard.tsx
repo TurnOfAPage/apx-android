@@ -124,12 +124,16 @@ export const LocalSendCard: React.FC<Props> = ({ state }) => {
 
   return (
     <div className="card card-inner animate-slide-up flex flex-col gap-3">
-      {/* 浏览器面板的发送入口：页面的原生文件选择器（桌面壳不用它，走 openFile） */}
+      {/* 浏览器面板的发送入口：页面的原生文件选择器（桌面壳不用它，走 openFile）
+          —— 这里必须用 sr-only（视觉隐藏但仍然渲染），不能用 display:none：
+          WebKit/Safari 上 display:none 的 file input 不响应程序化 click()，
+          点了「发送」不会弹选择器（mac 的 `open` 默认浏览器就是 Safari）。 */}
       <input
         ref={fileRef}
         type="file"
         multiple
-        className="hidden"
+        tabIndex={-1}
+        className="sr-only"
         onChange={onFilesPicked}
       />
       <div className="flex items-center justify-between">
