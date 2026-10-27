@@ -423,6 +423,8 @@
     <string name="ui_localsend_none">没有可发送的文件</string>
     <string name="ui_localsend_sending">正在发送 %1$d 个文件到 %2$s…</string>
 
+    <string name="ui_remote_cursor_on">光标 开</string>
+    <string name="ui_remote_cursor_off">光标 关</string>
     <string name="ui_remote_touchpad_hint">触摸控制\n单点 = 确认 · 按住滑动 = 移动光标</string>
     <string name="ui_ime_panel_hint">已启用：物理键盘打字将发送到电脑；切回其他输入法可恢复手机打字</string>
     <string name="ui_touchpad_send_progress">发送 %1$d%%</string>

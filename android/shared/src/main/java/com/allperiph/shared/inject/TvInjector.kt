@@ -66,6 +66,42 @@ object TvInjector {
     /** P1-5：当前是否处于「真实触摸流」拖拽中（pressDown 注入 DOWN 成功，后续 MOVE/UP 走同一通道实时跟随） */
     private var streamTouch = false
 
+    /**
+     * 光标浮层开关（0x32，v223.10）：控制端可以关掉被控端的浮层光标。
+     * false = 不再画（并保证已收起）；重新打开后下一次移动帧恢复。
+     * 会话级状态，不持久化 —— 重连后由控制端重发自己的偏好（TvControllerClient.lastOverlayCursorEnabled）。
+     */
+    @Volatile
+    var overlayEnabled: Boolean = true
+        private set
+
+    /** 浮层被关掉期间已收起一次的标记：别在每一帧移动上都重复 hide() */
+    private var hiddenWhileDisabled = false
+
+    /** 控制端关/开被控端光标浮层（0x32 的落点）。关 = 立即收起，不等下一帧。 */
+    fun setOverlayEnabled(on: Boolean) {
+        overlayEnabled = on
+        if (!on) {
+            hiddenWhileDisabled = true
+            overlay?.hide()
+        }
+        // 重新打开时不主动画：等下一次移动帧经 paintOverlay() 恢复，避免凭旧坐标闪一下
+    }
+
+    /**
+     * 把浮层画到当前光标处。**所有** move 落点（cursorMove / nudge / setConnected）都走这里：
+     * 浮层被控制端关掉时不再画，并保证收起过一次 —— 不做这个门，开关就是假的。
+     */
+    private fun paintOverlay() {
+        if (overlayEnabled) {
+            hiddenWhileDisabled = false
+            overlay?.move(cursorX, cursorY)
+        } else if (!hiddenWhileDisabled) {
+            hiddenWhileDisabled = true
+            overlay?.hide()
+        }
+    }
+
     /** 手柄按钮上一帧状态（用于边沿检测） */
     private var lastGamepadButtons = 0
 
@@ -178,7 +214,7 @@ object TvInjector {
         val block: () -> Unit = {
             // 刚连上：立刻取一次真实尺寸（不能沿用节流里的旧值，横竖屏切换后它们会过期）
             refreshScreen(force = true)
-            if (on) overlay?.move(cursorX, cursorY) else overlay?.hide()
+            paintOverlay()   // 原来是 move/hide 直调 —— 走门：浮层被控制端关掉时不画
         }
         if (p.needsMainThreadSwitch) p.runOnMain(block) else block()
     }
@@ -192,7 +228,7 @@ object TvInjector {
             cursorX = (cursorX + x).coerceIn(0f, screenW.toFloat())
             cursorY = (cursorY + y).coerceIn(0f, screenH.toFloat())
         }
-        overlay?.move(cursorX, cursorY)
+        paintOverlay()   // 走门：浮层被控制端关掉时不画（0x32）
         // P1-5：拖拽中（真实触摸流已开）每个移动帧同步注入 MOVE —— 对端实时跟随，
         // 不再等抬起时才整段回放 swipe。
         if (streamTouch && touchDownX >= 0f) injectTouch(MotionEvent.ACTION_MOVE, cursorX, cursorY)
@@ -473,7 +509,7 @@ object TvInjector {
     fun nudge(dx: Float, dy: Float) {
         cursorX = (cursorX + dx).coerceIn(0f, screenW.toFloat())
         cursorY = (cursorY + dy).coerceIn(0f, screenH.toFloat())
-        overlay?.move(cursorX, cursorY)
+        paintOverlay()   // 走门：浮层被控制端关掉时不画（0x32）
     }
 
     /** 当前屏幕宽（像素），供平台的 handleExtraKey（如 MoveHome/End 走全屏位移）使用 */

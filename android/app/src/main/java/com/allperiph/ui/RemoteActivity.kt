@@ -60,6 +60,25 @@ class RemoteActivity : Activity() {
     private var targetView: TextView? = null
     private var landscape = false
 
+    // —— 光标浮层开关（0x32，v223.10）：被控端的蓝点有的场景嫌碍事 ——
+    private lateinit var cursorChip: TextView
+    /** 会话内当前偏好；持久化在 prefs，连接后自动发给被控端 */
+    private var cursorOverlayOn = true
+
+    private fun prefs() = getSharedPreferences(PREF, MODE_PRIVATE)
+
+    private fun cursorLabel(): String =
+        getString(if (cursorOverlayOn) R.string.ui_remote_cursor_on else R.string.ui_remote_cursor_off)
+
+    /** 切换被控端光标浮层：记偏好 + 立即发给当前被控端（没连着就只记，连上自动生效） */
+    private fun toggleCursorOverlay() {
+        cursorOverlayOn = !cursorOverlayOn
+        prefs().edit().putBoolean(KEY_CURSOR_OVERLAY, cursorOverlayOn).apply()
+        cursorChip.text = cursorLabel()
+        com.allperiph.wireless.TvControllerClient.lastOverlayCursorEnabled = cursorOverlayOn
+        if (ControlTarget.isControlling()) ControlTarget.controlClient?.overlayToggle(cursorOverlayOn)
+    }
+
     override fun attachBaseContext(newBase: Context) =
         super.attachBaseContext(ThemePref.wrap(newBase))
 
@@ -88,8 +107,15 @@ class RemoteActivity : Activity() {
             typeface = android.graphics.Typeface.DEFAULT_BOLD
         }, LinearLayout.LayoutParams(0, -2, 1f))
         head.addView(chip("选择设备") { pickTarget() })
+        cursorChip = chip(cursorLabel()) { toggleCursorOverlay() }
+        head.addView(cursorChip)
         head.addView(chip("关闭") { finish() })
         col.addView(head)
+        // 读回上次偏好并即时生效：重进本页（含重连）后，上次关掉的浮层不会又冒出来
+        cursorOverlayOn = prefs().getBoolean(KEY_CURSOR_OVERLAY, true)
+        cursorChip.text = cursorLabel()
+        com.allperiph.wireless.TvControllerClient.lastOverlayCursorEnabled = cursorOverlayOn
+        if (ControlTarget.isControlling()) ControlTarget.controlClient?.overlayToggle(cursorOverlayOn)
 
         targetView = TextView(this).apply {
             setTextColor(getColor(R.color.md_on_surface_variant))
@@ -524,6 +550,10 @@ class RemoteActivity : Activity() {
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
     private companion object {
+        // 光标浮层开关偏好（0x32）：关掉的状态跨会话记住
+        private const val PREF = "apx_remote"
+        private const val KEY_CURSOR_OVERLAY = "cursor_overlay"
+
         // HID usage（page 0x07）—— 与「TV 遥控」快捷键套一致，被控端 HID_MAP 负责翻译
         const val U_UP = 0x52
         const val U_DOWN = 0x51

@@ -6,6 +6,7 @@ import android.os.SystemClock
 import com.allperiph.shared.proto.ApxFrame
 import com.allperiph.shared.util.Log
 import com.allperiph.shared.input.RootInput
+import com.allperiph.shared.inject.TvInjector
 import java.io.InputStream
 import java.io.OutputStream
 import java.net.InetSocketAddress
@@ -265,6 +266,10 @@ class ControlServer(
                             0x25 -> if (body.size >= 2) actions.add { onRequestInput(body) }
                             0x26 -> if (body.size >= 2) actions.add { onInputText(body) }
                             0x27 -> actions.add { onInputDone() }
+                            // 0x32 光标浮层开关（v223.10）：控制端关/开被控端的浮层光标。
+                            // 直接落 TvInjector（同模块，无循环）—— 被控端不需要知道这个开关，
+                            // 浮层画不画由注入器统一门控（三个 move 落点都走 paintOverlay）。
+                            0x32 -> if (body.size >= 2) actions.add { TvInjector.setOverlayEnabled(body[1].toInt() and 0xFF != 0) }
                         }
                     }
                 }

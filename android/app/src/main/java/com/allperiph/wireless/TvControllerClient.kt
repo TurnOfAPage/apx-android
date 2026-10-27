@@ -61,6 +61,9 @@ class TvControllerClient(
         thread(name = "tvctrl-reader") { readerLoop(s) }
         startTx()
         startModeStatus()
+        // 重连后自动重发光标浮层偏好：被控端状态是会话级的，重连即重置，
+        // 不重发的话用户上次关掉的浮层又会冒出来
+        lastOverlayCursorEnabled?.let { sendControl(byteArrayOf(0x32.toByte(), (if (it) 1 else 0).toByte())) }
         Log.i("TvCtrl", "已连 TV $host:$port")
         true
     } catch (t: Throwable) { Log.e("TvCtrl", "连 TV 失败：${t.message}"); runCatching { s_close() }; false }
@@ -278,6 +281,16 @@ class TvControllerClient(
     fun sendInputDone() { sendControl(byteArrayOf(ApxFrame.INPUT_DONE.toByte())) }
 
     /**
+     * 光标浮层开关（0x32，v223.10）：关/开**被控端**的光标浮层。
+     * 手机控手机 / 手机控 TV 时，被控端会把本端光标画成全局浮层（蓝点）；
+     * 有的场景嫌它碍事 —— 控制端给个开关，经控制面告诉被控端收起来。
+     * 注意边界：浮层是**被控端全局**的（PC 控手机时同一颗点也走它），关掉对
+     * 所有控制端生效，不是「只对我的会话」。
+     */
+    fun overlayToggle(show: Boolean) =
+        sendControl(byteArrayOf(0x32.toByte(), (if (show) 1 else 0).toByte()))
+
+    /**
      * 模式状态上报（0x31）：[flags] 的位布局见 [ModeStatus] / phone_mode.hpp。
      *
      * 面板侧那三个开关原来只有无线是真的，蓝牙与 USB 是 PC 无从判断的假开关 ——
@@ -306,5 +319,15 @@ class TvControllerClient(
         }
     }
 
-    companion object { const val PORT = 9511 }
+    companion object {
+        const val PORT = 9511
+
+        /**
+         * 控制端最近一次的光标浮层偏好（null = 用户没动过）。
+         * 在 [openSocket] 成功后自动重发 —— 网络抖动自动重连后，被控端的浮层
+         * 不会又冒出来；用户没动过开关就是 null，什么都不发（老行为）。
+         */
+        @Volatile
+        var lastOverlayCursorEnabled: Boolean? = null
+    }
 }
