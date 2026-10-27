@@ -27,6 +27,9 @@ enum class LinkPhase {
 
 const char* linkPhaseName(LinkPhase p) noexcept;
 
+// 扫描局域网内 9511 端口（受控手机/TV 服务端），返回在线 IP 列表（web 管理页「扫描局域网」）。
+std::vector<std::string> scanLan9511(int timeoutMs = 200);
+
 struct SessionSnapshot {
     struct Counters {
         uint64_t mouse = 0;
