@@ -6,6 +6,8 @@
 #include "apxpc/wireless/ctrl9511.hpp"
 // 相对位移 → 目标坐标 / 拖动类型：纯算术抽出来给用例盯着（issue #47 第 6 条）。
 #include "apxpc/wireless/relative_move.hpp"
+// 手柄降级的算术（边沿/死区/缩放/滚轮限速）：与 Windows 共用，用例在 host 跑（第 5 条）。
+#include "apxpc/wireless/gamepad_fallback.hpp"
 
 #if defined(__APPLE__)
 
@@ -52,6 +54,29 @@ int hidToMacKey(uint8_t u) {
         default: return -1;
     }
 }
+
+/* 手柄按钮位 → macOS 虚拟键码（与 Windows 的 kGamepadVk 同语义：A→Enter、B→Esc、
+   X→E、Y→Q、L1/R1→1/2…）。macOS 没有 CGEvent 手柄通道，虚拟 HID（IOHIDUserDevice）
+   需要 Apple 受限 entitlement `com.apple.developer.hid.virtual.device`：ad-hoc 签名下
+   一注入就被 AMFI 直接 SIGKILL，所以这条链路只能降级成键盘 —— 至少游戏能收到确认键。 */
+const int kGamepadMacKey[apxpc::wireless::kGamepadButtonCount] = {
+    0x24,   // 0  A       → Return
+    0x35,   // 1  B       → Escape
+    0x0E,   // 2  X       → E
+    0x0C,   // 3  Y       → Q
+    0x12,   // 4  L1      → 1
+    0x13,   // 5  R1      → 2
+    0x14,   // 6  L2      → 3
+    0x15,   // 7  R2      → 4
+    0x30,   // 8  SELECT  → Tab
+    0x31,   // 9  START   → Space
+    0x0F,   // 10 C       → R
+    0x03,   // 11 Z       → F
+    0x3A,   // 12 MODE    → Option
+    0x38,   // 13 THUMBL  → Shift
+    0x3B,   // 14 THUMBR  → Control
+    -1,     // 15 未使用
+};
 
 // ---------- 自由函数共用：稳态时钟 + 剪贴板回环抑制（对齐 win 版 clipSuppressFor(600)）---
 long long steadyMsNow() {
@@ -113,7 +138,27 @@ CGMouseButton moveButton(MoveKind k) {
 
 class MacInjector : public InputInjector {
 public:
+    /* 权限自检（只提示一次）：macOS 没给「辅助功能」授权时 CGEventPost 会被系统**静默丢弃** ——
+       用户那边就是「手机连上了、按什么都没反应」，日志里也一片干净（issue#47 无线全失效
+       的最可能真因）。所以第一帧输入到达时弹一次系统授权引导：此刻用户正在操作，
+       看到弹窗才明白为什么要授权。 */
+    void ensureTrustedOnce() {
+        if (trustChecked_) return;
+        trustChecked_ = true;
+        if (platformInputTrusted()) return;
+        std::fprintf(stderr,
+                     "[AllPeriph] 未获得「辅助功能」权限：注入事件会被系统丢弃，正在弹出授权引导…\n"
+                     "            授权路径：系统设置 → 隐私与安全性 → 辅助功能 → 勾选 AllPeriph\n");
+        std::fflush(stderr);
+        if (requestPlatformInputTrust())
+            std::fprintf(stderr, "[AllPeriph] 已获得「辅助功能」权限\n");
+        else
+            std::fprintf(stderr, "[AllPeriph] 仍未授权：手机发来的键鼠在授权前不会生效\n");
+        std::fflush(stderr);
+    }
+
     void injectMouse(uint8_t buttons, int8_t dx, int8_t dy, int8_t wheel, int8_t pan = 0) override {
+        ensureTrustedOnce();
         // 顺序：先在**当前位置**结算按键状态变化（按下 / 抬起），再移动，最后滚轮。
         // 反过来的话「按下 + 同帧位移」会在键还没按下时先发拖动事件（部分应用直接丢），
         // 「抬起 + 同帧位移」则会先移动再抬手，拖拽尾巴被判成一次普通移动。
@@ -163,6 +208,7 @@ public:
     }
 
     void injectTouch(uint8_t action, uint8_t buttons, uint16_t x, uint16_t y) override {
+        ensureTrustedOnce();
         (void)buttons;
         CGRect pb = CGDisplayBounds(CGMainDisplayID());
         const CGFloat px = static_cast<CGFloat>(x) / 65535.0 * (pb.origin.x + pb.size.width);
@@ -176,6 +222,7 @@ public:
     }
 
     void injectKeyboard(uint8_t mod, const uint8_t* keys, size_t count) override {
+        ensureTrustedOnce();
         const size_t n = count > 6 ? 6 : count;
         // 修饰键：Mac 不区分左右，统一用左侧键码（控制=0x3B/0x38? 用 0x3B=Control,0x38=Shift,0x3A=Option,0x37=Cmd）
         const int modMap[8] = {0x3B, 0x38, 0x3A, 0x37, 0x3B, 0x38, 0x3A, 0x37};
@@ -200,10 +247,12 @@ public:
         kbMod_ = mod;
         for (uint8_t i = 0; i < 6; ++i) kbKeys_[i] = (i < n) ? keys[i] : 0;
     }
-    void postKey(uint8_t usage, bool down) {
-        const int kc = hidToMacKey(usage);
-        if (kc < 0) return;
-        CGEventRef e = CGEventCreateKeyboardEvent(nullptr, static_cast<CGKeyCode>(kc), down);
+    void postKey(uint8_t usage, bool down) { postCode(hidToMacKey(usage), down); }
+
+    /// 按键码直投（手柄降级用；-1 = 该位没有对应键，静默跳过）
+    void postCode(int cgKey, bool down) {
+        if (cgKey < 0) return;
+        CGEventRef e = CGEventCreateKeyboardEvent(nullptr, static_cast<CGKeyCode>(cgKey), down);
         CGEventPost(kCGHIDEventTap, e); CFRelease(e);
     }
 
@@ -211,12 +260,49 @@ public:
         // macOS 多媒体键需 NXSystemDefined，跨版本不稳定，暂忽略（不影响鼠标/键盘/触摸）。
     }
 
+    /* 手柄（网络帧 0x07）。
+       ⚠️ 这里曾经是**空实现**，只打一行告警 —— 用户看到的就只是「手柄接上完全没反应」。
+       macOS 确实没有 CGEvent 手柄通道（虚拟 HID 要 Apple 受限 entitlement，见 kGamepadMacKey
+       注释），但「什么都不做」等于功能不存在。现在做**与 Windows 同口径**的降级：
+         按钮   → 键盘等价键（A→Enter、B→Esc、L1/R1→1/2 …）
+         左摇杆 → 鼠标相对移动（死区 12、位移 1/4 缩放）
+         右摇杆 → 滚轮 / 水平滚轮（限速 20Hz，摇杆帧率下不限速会疯狂滚动）
+       边沿、死区、缩放、限速全部来自 gamepad_fallback.hpp（host 用例钉住那份算术）。 */
     void injectGamepad(uint16_t buttons, int8_t x, int8_t y, int8_t rx, int8_t ry) override {
-        // macOS 的 CGEvent 不提供游戏手柄注入；需虚拟 HID 驱动（不在本仓库零依赖范围内）。
-        // 帧已接收，但按钮/轴不会送达游戏——如实降级，仅告警一次。
-        (void)buttons; (void)x; (void)y; (void)rx; (void)ry;
-        static bool warned = false;
-        if (!warned) { warned = true; std::fprintf(stderr, "[AllPeriph] gamepad-over-network 在 macOS 需虚拟 HID 驱动，当前构建未包含，按钮/轴不会注入游戏\n"); }
+        ensureTrustedOnce();
+        const GamepadEdges e = gamepadEdges(gpButtons_, buttons);
+        for (int bit = 0; bit < kGamepadButtonCount; ++bit) {
+            const int kc = kGamepadMacKey[bit];
+            if (kc < 0) continue;
+            const uint16_t m = static_cast<uint16_t>(1u << bit);
+            if (e.pressed & m) postCode(kc, true);
+            if (e.released & m) postCode(kc, false);
+        }
+        gpButtons_ = buttons;
+
+        if (gamepadStickActive(x) || gamepadStickActive(y))
+            injectMouse(mouseButtons_, gamepadStickToMouse(x), gamepadStickToMouse(y), 0);
+
+        if (gamepadStickActive(rx) || gamepadStickActive(ry)) {
+            const uint64_t now = static_cast<uint64_t>(steadyMsNow());
+            if (gamepadWheelAllowed(lastWheelMs_, now)) {
+                lastWheelMs_ = now;
+                // 垂直：摇杆前推（ry 为负）→ 内容上滚（正滚轮），与 Windows 同号
+                const int wheel = (ry == 0) ? 0 : -gamepadStickStep(ry);
+                // 水平：右推为正，与 0x01 帧的 pan 同号
+                const int pan = (rx == 0) ? 0 : gamepadStickStep(rx);
+                injectMouse(mouseButtons_, 0, 0, static_cast<int8_t>(wheel),
+                            static_cast<int8_t>(pan));
+            }
+        }
+
+        if (!gpWarned_) {
+            gpWarned_ = true;
+            std::fprintf(stderr, "[AllPeriph] 手柄经网络接入：macOS 无 CGEvent 手柄通道"
+                                 "（虚拟 HID 需 Apple 受限 entitlement），已降级为"
+                                 "「按钮→键盘 + 左摇杆→鼠标 + 右摇杆→滚动」\n");
+            std::fflush(stderr);
+        }
     }
 
     void setClipboard(const std::string& text) override {
@@ -229,6 +315,10 @@ public:
     uint8_t mouseButtons_ = 0;
     uint8_t kbMod_ = 0;
     uint8_t kbKeys_[6] = {0, 0, 0, 0, 0, 0};
+    uint16_t gpButtons_ = 0;      ///< 手柄按钮上一帧位图（降级注入要算边沿）
+    uint64_t lastWheelMs_ = 0;    ///< 右摇杆滚轮限速时间戳
+    bool gpWarned_ = false;       ///< 手柄降级告警只打一次
+    bool trustChecked_ = false;   ///< 注入权限自检只做一次（别每帧查一次 TCC）
 };
 
 class MacClipboardWatcher : public ClipboardWatcher {
@@ -280,6 +370,27 @@ std::unique_ptr<InputInjector> createPlatformInjector() { return std::make_uniqu
 std::unique_ptr<ClipboardWatcher> createPlatformClipboardWatcher(
     std::function<void(const std::string&)> cb) {
     return std::make_unique<MacClipboardWatcher>(std::move(cb));
+}
+
+/* 注入权限：CGPreflightPostEventAccess = 此刻有没有权限投递事件（TCC「辅助功能」），
+   CGRequestPostEventAccess = 没有就弹一次系统引导。两者都是 10.15+ API，老 SDK 上
+   编不出来 —— 用宏兜住，那种情况下按「有权限」处理（10.14 及更早没有这道门槛）。 */
+bool platformInputTrusted() {
+#if defined(__MAC_OS_X_VERSION_MAX_ALLOWED) && __MAC_OS_X_VERSION_MAX_ALLOWED >= 101500
+    return CGPreflightPostEventAccess();
+#else
+    return true;
+#endif
+}
+
+bool requestPlatformInputTrust() {
+#if defined(__MAC_OS_X_VERSION_MAX_ALLOWED) && __MAC_OS_X_VERSION_MAX_ALLOWED >= 101500
+    if (CGPreflightPostEventAccess()) return true;
+    CGRequestPostEventAccess();          // 弹系统引导；用户点完即时生效，不必重启
+    return CGPreflightPostEventAccess();
+#else
+    return true;
+#endif
 }
 
 // ============================================================================

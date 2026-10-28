@@ -6,6 +6,237 @@
 
 ---
 
+## v223.10（2026-10-27）
+
+### 新增（遥控器页：被控端**光标浮层开关**）
+手机控手机 / 手机控 TV 时，被控端会把控制端光标画成全局浮层（蓝点跟随）。
+有的场景嫌它碍事 —— 控制端给个开关：
+
+- **新协议命令 `0x32`**（控制端 → 被控端，1 字节：0x00 隐藏 / 0x01 显示）。
+  被控端两端（手机 `TvControlServer` / TV `:shared` 的 `ControlServer`）都接，
+  落到 `TvInjector.setOverlayEnabled()` 统一门控 —— 注入器的**全部三个** move 落点
+  （cursorMove / nudge / setConnected）都走同一个 `paintOverlay()`，关掉后不再画、
+  且保证收起一次（不做这个门，开关就是假的）。
+- 遥控器页顶栏加「光标 开/关」chip：切换即发帧 + 记偏好；偏好持久化，
+  重进本页、自动重连后都会自动重发（`TvControllerClient.lastOverlayCursorEnabled`）——
+  被控端的状态是会话级的，不重发的话上次关掉的浮层又会冒出来。
+- 用户没动过开关时什么都不发（老行为不变）；被控端是旧版时帧被忽略，无副作用。
+- **边界如实说**：浮层是被控端**全局**的 —— PC 控手机时同一颗点也走它，
+  关掉对所有控制端生效，不是「只对我的会话」。
+
+### 文档（主页 README 更新）
+「能做什么」表补齐互传 / 手柄 / 被控 / 浏览器面板四行、副屏行写明 mac 出路；
+已知限制三条过时项更正（蓝牙键盘手柄已交付、被控显示名已是真实机型、
+macOS 边界补 Sunshine 出路与浏览器发文件口径）；新增「最近更新」小节。
+
+---
+
+## v223.9（2026-10-27）
+
+本版是**外部 patch 的落地与复核**（用户提供 `eb652332….patch`，要求「看看有能修的不」）。
+逐块核对事实后全量应用，其中两处按仓库现状修正；修出的结论如下。
+
+### 音频（Android）：UAC2 gadget 的 PCM **设备号**也改为运行时解析
+`AudioModule` 此前只解析卡号（`locateCard`），设备号写死 `D0`。`/proc/asound/pcm` 每行
+`卡号-设备号: 名称 : … : playback N : capture M`，两个号都随内核枚举顺序变化 —— 换机型
+写死 0 会打到别的设备上。新增 `locateDevice(card, playback)`：按卡号 + 方向关键字解析，
+解析不到**如实降级 0 并记日志**（UAC2 gadget 通常只暴露一个 PCM 设备，不会静默假装成功）。
+路径拼装收敛到 `AudioConst.pcmNode()`，`/proc/asound/{cards,pcm}` 两个路径进常量。
+
+### 面板（web）：「音箱 / 麦克风」设备下拉接上**真枚举**
+后端早就支持选设备（`speaker.toggle`/`mic.toggle` 都吃 `deviceId`，`AudioCapture` 的
+`opt.deviceId` 留空跟随系统默认、失效明确报错），但 web 面板的下拉是写死的
+「（暂未枚举播放设备）」—— 能力在，入口没接。本版补齐：
+
+- 两个面板入口（`web_panel.cpp` / `panel_http.cpp`）新增 query `audioDevices`，
+  返回 `{ devices: [{id,name,isDefault}], defaultName }`，与 Win32 原生面板
+  （`refreshSpeakerCombo`）同源：Windows 走 IMMDeviceEnumerator 有真实列表；
+  **macOS 的 Process Tap 采全局混音、不挂具体端点，Linux 未实现 —— 都返回空表**，
+  前端据此如实显示「本机不支持枚举播放设备」，不编造条目。
+- `bridge.audioDevices()` + `useAudioDevices()`（查询失败按「枚举不到」处理）；
+  Speaker/Mic 两卡的下拉改真实数据，选中后 `toggle` 带 `deviceId`（留空 = 跟随默认）。
+
+### 快捷键模板色（Android）：内联 ARGB → 颜色令牌
+模板色此前内联在 `HotkeyTemplates.kt`（`0xFF3482FF…`），深色下偏暗的两档
+（终端石墨 / 表格墨绿）靠 `tint()` 无差别向白提亮 45% —— 鲜艳色也被漂白。
+改为 `R.color.hotkey_tpl_*` 颜色资源（values-night 覆盖同组暗色档），
+取色统一走 `resolveColor()`；`tint()` 只提亮「最亮通道 < 170」的暗色，
+鲜艳色保持原样。设置页与自建模板色板同步换令牌。
+
+### 文档纠错（ROADMAP / 注释）：三条「待办」实际早已交付
+- 「桌面壳 apxdesktop：**托盘仍无**」→ v223.7 已交付 `tray_mac.mm`（本版核对时发现
+  v223.7 只改了待办段、漏改了表行）。
+- 「接入键盘出口 = 本 PR」→ 键盘出口已接入（`HidKeys.send` → `Uplink.BLUETOOTH`，
+  已对源码核实：`BtHidDevice.reportKeyboard` 在，`Uplink.BLUETOOTH` 分支在）。
+- 「蓝牙键盘/手柄仍缺失（`BtHidDevice` 无 reportKeyboard/reportGamepad）」→ 两者
+  自 v184 起都有，缺的是**真机配对与实测**。`pipeline.hpp`/`CMakeLists` 里的同类
+  过时注释一并更正。
+
+### 诚实说明
+- Android 侧改动（PCM 设备号解析、模板色令牌）**只有 CI 编译级验证**——本机无法
+  构建安卓，PCM 行为要真机（插 USB 后看 `AudioModule` 日志是否出现「按 0 降级」）。
+- 设备下拉在 mac/Linux 上依然是空表（平台能力边界，不是回归）；Windows 上选设备
+  的路径此前已有后端与原生面板验证，本次只是把 web 入口接上。
+
+---
+
+## v223.8（2026-10-27）
+
+### 新增（mac 副屏出路：面板里做 Sunshine 检测 + 指引）#47 建议落点
+ROADMAP §2.5 核实过的事实：mac 缺虚拟显示器驱动（Windows 有 IddCx，mac 没有对等物），
+不自研副屏；出路是用户自装 Sunshine（本机）+ Moonlight（手机）。而 Moonlight 客户端是
+GPLv3，与本项目 MIT 冲突，**不能内嵌** —— 所以面板能做的是检测 + 指引：
+
+- 新模块 `apxpc::screen::sunshineStatus()`（`include/apxpc/screen/sunshine_detect.hpp`，
+  只读）：**已安装** = `~/.config/sunshine/` 存在（mac 另认 `/Applications/Sunshine.app`）；
+  **在跑** = 默认 https 端口 47990 有人监听（复用 v223.7 的 `tcp_probe`）。
+  两条证据**分开存**：本工程托盘的默认端口恰好也是 47990，所以「有人在听」单独不构成
+  已安装证据（可能是本工程另一个实例），不合并成一句含糊的「已就绪」。
+- 面板「副屏」卡 mac 侧三态：已装且在跑 → 显示端口 + **打开 Sunshine 设置页**的链接
+  （浏览器会提示自签证书，写清「高级 → 继续访问」）；装了没跑 → 提示打开应用后刷新；
+  没装 → 指引下载地址 + 说明为什么不内置客户端。
+- 新动作 `screen.sunshine` 返回 `{ installed, running, httpsPort, url }`（url 在跑才给，
+  不猜端口）；Windows 有真副屏（自研已交付），这些字段缺省、整个块不渲染，不受影响。
+
+### 诚实说明
+- 端口探测只能说「这个端口有人在听」，说不清是谁 —— 这是 `tcp_probe` 的语义边界；
+  所以「在跑」的判定可能与「本工程另一个实例在监听」混淆，已用「配置存在」这条独立
+  证据把它压住，但**没有真机验证过**（本机无 mac，编译级交付）。
+- Linux 上包管理器的安装位置太散（/usr/bin、flatpak…），**不猜**：Linux 只认配置目录，
+  检测不到就按没装处理，面板文案里写清楚。
+
+---
+
+## v223.7（2026-10-27）
+
+### 修复（`apxhost serve` + 面板同时存在时，9511 每天一堆「已在运行」告警）
+面板（`panel_http`）与常驻服务（`apxhost serve`）都会去起 9511 受控端 —— 先起的占住端口，
+后起的 bind 失败，于是每次启动都在日志里刷一条告警。用户看到的「9511 已在运行」其实
+是**正常状态**，不是故障。现在：
+
+- 新模块 `apxpc::net::tcpPortResponds()` / `tcpPortRespondsLocal()`
+  （`include/apxpc/net/tcp_probe.hpp`，POSIX + Winsock 双实现）：非阻塞 connect + select，
+  200ms 超时。语义写清楚——**它只能说「这个端口有人在听」，说不清是谁**。
+- 面板启动前先探一次 9511：有人在听 → 标记 `ctrlShared`、**不再重复起受控端、不打告警**，
+  日志改成「9511 已有实例在跑，本面板共用」；没人听 → 正常起，bind 仍失败时再探一次，
+  以区分「被别人抢先」与「真起不来」（后者才 `APX_LOGW`，并带上错误原因）。
+- 状态里新增 `transports.ctrlServer = { listening, shared, connected, error }`，
+  面板「连接」卡多三行归属说明：**本面板提供 / 由另一个实例提供 / 未启动 + 原因**。
+  以前这类事只能翻日志，现在打开面板就能看到。
+
+### 新增（mac 托盘：菜单栏图标，终于有「退出」入口）
+mac 的 `.app` 此前**没有任何退出入口** —— 只能 `pkill -x apxdesktop` 或活动监视器。
+`src/tray/tray_mac.mm`（新文件，ARC）用 `NSStatusItem` + `NSMenu` 补上：
+`NSApplicationActivationPolicyAccessory`（只在菜单栏，不进 Dock）、SF Symbol `computermouse`
+（拿不到就退文字图标）、菜单项**谁注册才出谁** + 「退出全能外设」（⌘Q）。
+
+配套两个导出（`apxpc::ui`）：`requestPanelQuit()`（只置原子标志，面板线程 ≤1s 内自行收尾，
+托盘线程不碰面板状态）与 `panelUrl()`（端口是 `bind(0)` 运行时分配的，所以只能点击那刻取）。
+`desktop_main` 的 mac 分支接上这两个回调；「打开面板」用 `posix_spawn` 直接 exec
+`/usr/bin/open`，不经 shell（URL 里的 `?`、`&` 会被 shell 当元字符）。
+
+### 新增（mac USB 走 IOKit 枚举）
+非 Windows 侧本来只有 libusb（默认 OFF）与 sysfs（读 `/sys`）两条腿，mac 两条都够不着
+→ 枚举恒返回空，面板「USB」状态永远 false，看不出是「没插」还是「没实现」。
+新增 `src/discovery/usb_enum_iokit.cpp`：`IOServiceMatching("IOUSBHostDevice")` +
+IORegistry 属性（`idVendor`/`idProduct`/`USB Product Name`/`USB Vendor Name`/
+`USB Serial Number`/`bcdUSB`/`Device Speed`）+ 子 `IOUSBHostInterface` 节点的
+`bInterface*` 拼出与其它三端同构的 `usb::Device`。**速度（`Device Speed`）故意留 Unknown**：这个属性的
+值域有两套互不兼容的说法，能定音的 `tIOUSBHostConnectionSpeed` 不在公开 SDK 里
+（CI 实测头文件不存在）。猜错会把 480Mbps 的线标成 super-speed，而本工程的
+super-speed 门禁恰好靠这个字段 —— 标错比标 unknown 更坏。原始值写 debug 日志，
+有真机后 `ioreg -p IOUSB -l` 一眼就能补上映射。
+
+**诚实说明（三点没做，不假装做了）**：① 端点（Endpoint）恒为空 —— 要逐接口走
+`IOUSBHostPipe`，属性名随 SDK 漂移，没真机无法验证；② HID 集合（usagePage）恒为空 ——
+要开 `IOHIDDevice` 读元素，涉及 TCC 输入监控授权；③ CDC ACM 串口名恒为空（走
+`IOSerialBSDClient` 另需父子回溯）。角色判定（HID/UVC/UAC/NCM/CDC/Bulk）只用接口类码，
+不受影响。**本文件只做到编译级验证**（本机没有 mac），真实取值仍需真机回验。
+
+### 修复（Edge / Chromium 里面板「发送」点了没反应）#47 第 3 条
+浏览器模式下「发送」触发系统文件选择器靠的是对 `display:none`（`sr-only`）的
+`<input type=file>` 调 `click()` —— 这条路在 Safari 上踩过一次（v223.5 已改），
+Edge 上则卡在另一层：脚本内的 `click()` 缺少用户手势上下文时被静默忽略。
+这次不再跟引擎博弈：浏览器模式直接把「发送」做成**原生 `<label for=input>`**，
+点它触发的是浏览器自己的默认行为（天然带用户手势），JS 完全不介入；桌面壳仍是
+`<button>` + `window.chrome.webview` 的 `openFile`。另外补一条诚实分支：
+地址里没有 `?host=1`（= 不是从面板入口打开的静态部署页）时直接提示，而不是静默无反应。
+
+### 测试
+- 新增 `tcp_probe_test`（真起 socket 监听 → 探到 → 关 → 探不到 → 连续两次一致 →
+  边界：端口 0 / 空 host / 非法 IP），已进 `build.yml` 与 `macos.yml` 的 target 列表；
+- 本地 Linux 全量构建 + ctest 通过（`tcp_probe_test` 7 条断言全过）；
+- `pc/web`：`tsc --noEmit` 与 `vite build` 通过。
+
+### 仍待真机回验（只有编译级证据的部分）
+- mac 托盘：图标能否出现在菜单栏、菜单能否点开 —— 托盘跑在独立 NSThread 上跑
+  `[NSApp run]`（主线程被面板的 accept 循环占着）。若真机发现图标不出现或点了没反应，
+  正解是把主线程让给 AppKit、面板移进后台线程，那是另一件事，不在本版打补丁。
+- mac USB 枚举：插上手机后本机「系统信息 → USB」与面板 USB 状态是否一致。
+
+---
+
+## v223.6（2026-10-27）
+
+### 修复（无线模式下 macOS 端**所有输入都失效**）#47 第 6 条后半段
+用户报告：无线模式下 pad 实体键盘、实体触控板、app 内虚拟键盘、虚拟触控板全不能用，
+且「之前实体键盘能用」。查到两件各自独立的事：
+
+- **mac 手柄注入此前是空实现**：`injectGamepad` 只打一行告警就返回 —— 手柄接 mac
+  完全没反应的直接原因之一。现改为**免驱降级**：按钮 → 键盘（A→Return、B→Esc、
+  X→E、Y→Q、L1/R1→1/2、Select→Tab、Start→Space、Mode→Option、双摇杆按下→Shift/Ctrl），
+  左摇杆 → 鼠标位移，右摇杆 → 滚轮（带死区、缩放与限速）。算术抽到
+  `pc/host/include/apxpc/wireless/gamepad_fallback.hpp`，三端共用，Windows 侧同时删掉
+  自己那份硬编码（`kDead` / `x/4` / `/8`）。
+- **mac 上没有任何一口输入能落地时，先看 TCC「辅助功能」授权**：
+  `CGEventPost` 在未授权时被系统**静默丢弃** —— 连得上、帧也到、日志干净、屏幕不动，
+  与用户描述的现象完全一致。现在 `platformInputTrusted()`
+  （`CGPreflightPostEventAccess()`）会经 9511 状态回给面板，未授权时
+  ① 面板顶部显红色横幅（指引 系统设置 → 隐私与安全性 → 辅助功能），
+  ② 首帧输入前弹一次系统授权引导（`CGRequestPostEventAccess()`）。
+  Windows / Linux 无此门槛，恒为已授权。
+
+### 新增（web 面板「无线 / 蓝牙 / USB」三个开关改为**真实状态**）#47 第 6 条
+蓝牙与 USB 的真开关在**手机端**（系统配对 / root 配 gadget），PC 只是被动 host，
+摆一个拨不动的开关只会让人以为坏了（用户原话：面板显示三个模式无效，建议实装可用功能）。
+改为手机上报、面板照实显示「可用 / 当前在用」：
+
+- **新协议命令 `0x31`**（手机 → PC，1 字节 flags）：bit0 无线可用 bit1 蓝牙可用
+  bit2 USB 可用 bit3 无线在用 bit4 蓝牙在用 bit5 USB 在用；**可用 ≠ 在用**。
+  手机连上后立即报一次、之后每 2s 一次（`TvControllerClient.sendModeStatus`）。
+- 面板侧 `ConnectionCard` 三行：灰＝不可用或未上报、绿＝可用未在用、蓝＝当前在用。
+  无线行右侧保留原来的**真开关**（本机发现 / 断开），其余两行只读。
+- 两端各有一份位布局实现（Android `ModeStatus.kt` / PC `phone_mode.hpp`），
+  各有单测用**同一组期望值**钉住（`ModeStatusTest` / `phone_mode_test`）——
+  位序错不会崩，只会「面板说蓝牙在用、实际走的无线」。
+- 「无线可用」按有没有可用局域网判（Wi-Fi / 以太网），不是照抄「开关拨上去了」。
+
+### 修复（Android：`EventBus.onMain` 并不在主线程）
+`onMain` 的 reified 重载转调时把 handler 传成了 `null`，而 `null` 走的是
+「发布者线程直接回调」那条分支 —— 于是名字叫 onMain、实际在任意线程跑。已改为转调
+带 `MAIN_HANDLER` 的那个重载。手柄页的状态行订阅就吃了这一条。
+
+### 新增（手柄页不再只报「没反应」）
+手柄页顶部加出口状态行 + 指引行（`GamepadExit`）：绿＝免驱真手柄（蓝牙 / USB），
+橙＝降级或没有出口；按钮加按下 / 抬起两态反馈。文案按出口给，并如实写明
+mac 端真手柄需要 Apple 受限 entitlement（`com.apple.developer.hid.virtual.device`），
+第三方拿不到 —— 所以免驱真手柄只走蓝牙 / USB。
+
+### 测试
+- 新增 `gamepad_fallback_test`（死区 / 缩放 / 滚轮限速 / 边沿，含 i8 极值与同时按抬）、
+  `phone_mode_test`（位序 / 打包 / 优先级 / 可用 ≠ 在用），已进 `build.yml` 与 `macos.yml`；
+- Android 新增 `ModeStatusTest`、`GamepadExitTest`（纯 JVM，后者含一条防幻觉断言：
+  手柄文案不得出现心率 / 血氧这类与手柄无关的能力）；
+- 本地 Linux 全量构建通过（103 步，含两个新 target），逐二进制跑单测通过；
+  `pc/web` `tsc --noEmit` 通过；`scripts/check_protocol.py` 49 项一致（`0x31` 有发有收）。
+
+### 说明
+- 浏览器面板的文件互传（macOS Edge 拉不起文件选择）**本轮按用户要求不动** —— 用户
+  明确说「先不用修了」；已记下现象与浏览器版本（Edge ARM64 156），等有环境再查。
+- 心率 / 血氧与功能键映射**从排期移除**：用户说明那不是他提的诉求。
+
+---
+
 ## v223.5（2026-10-27）
 
 ### 修复（v223.4 里「发送」在 Safari 上点了没反应）

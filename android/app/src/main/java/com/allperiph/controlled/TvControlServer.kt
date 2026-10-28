@@ -285,6 +285,9 @@ class TvControlServer(
                             0x25 -> if (body.size >= 2) actions.add { onRequestInput(body) }
                             0x26 -> if (body.size >= 2) actions.add { onInputText(body) }
                             0x27 -> actions.add { onInputDone() }
+                            // 0x32 光标浮层开关（v223.10）：与 :shared 的 ControlServer 同一条 ——
+                            // 控制端（手机遥控器）关/开本端的浮层光标；直接落 TvInjector。
+                            0x32 -> if (body.size >= 2) actions.add { TvInjector.setOverlayEnabled(body[1].toInt() and 0xFF != 0) }
                         }
                     }
                 }

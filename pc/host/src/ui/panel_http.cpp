@@ -42,8 +42,12 @@
 #include "apxpc/localsend/local_send_receiver.hpp"
 #include "apxpc/localsend/local_send_sender.hpp"
 #include "apxpc/net/json.hpp"
+#include "apxpc/net/tcp_probe.hpp"
+#include "apxpc/screen/sunshine_detect.hpp"
 #include "apxpc/tray/tray_win32.hpp"
 #include "apxpc/wireless/ctrl9511.hpp"
+// 手机上报的三种接入模式状态（0x31）：位布局与解码抽在头文件里，和 Android 侧对拍。
+#include "apxpc/wireless/phone_mode.hpp"
 #include "apxpc/wireless/file_receiver.hpp"
 #include "apxpc/wireless/wireless_session.hpp"
 #include "apxpc/media/media_session.hpp"
@@ -53,6 +57,7 @@
 #if !defined(_WIN32)
 
 #include <arpa/inet.h>
+#include <fcntl.h>
 #include <netinet/in.h>
 #include <signal.h>
 #include <sys/select.h>
@@ -91,6 +96,14 @@ uint64_t steadyMs() {
         std::chrono::steady_clock::now().time_since_epoch()).count());
 }
 
+/* 托盘「退出」→ 面板线程：只跨线程传一个标志（托盘在自己的线程上，不能碰面板状态）。
+   volatile sig_atomic_t 不够 —— 面板线程用 select 的 200ms 超时轮询，这里只要
+   可见性，std::atomic 最省心。 */
+std::atomic<bool> g_quitRequested{false};
+// 面板地址：端口是 bind(0) 后由内核分配的，托盘（另一线程）在点击时读这里。
+std::mutex g_urlMu;
+std::string g_panelUrl;
+
 // ——— 事件队列（轮询消费；push 可能来自接收线程/会话回调线程，需锁）———
 struct EventEntry { long long seq = 0; std::string json; };
 std::mutex g_evMu;
@@ -120,6 +133,10 @@ struct HttpPanel {
     // 「TV 控制」设备列表才能发现本机（标为 (PC)）。缺这条时浏览器面板只能
     // **主动连手机**（session 客户端方向），手机反过来发现不了本机，受控场景缺失。
     apxpc::wireless::Ctrl9511Server ctrlSrv;
+
+    /* 9511 受控端是否**由本机另一个实例**提供（探测得名为「占用」，不改写状态）。
+       面板启动前若探测到端口已被监听 → 不再重复起受控端，也不再打告警级日志。 */
+    bool ctrlShared = false;
 
     // USB 传输探测节流（枚举较重，~10s 一次；macOS 无 /sys → enumerate 空 → 三态全 false，诚实）
     bool usbScanned = false;
@@ -249,6 +266,13 @@ void buildState(const HostBundle& b, Json& out, HttpPanel* p) {
         v["encodeMs"] = 0;
         v["dropped"] = 0;
         v["error"] = std::string("此平台不支持副屏（虚拟显示器仅 Windows）");
+        // mac 的副屏出路 = 用户自装 Sunshine + Moonlight（ROADMAP §2.5）。
+        // 检测是只读的：装没装、跑没跑、https 端口；面板据此给指引，不假装能开。
+        const auto sun = apxpc::screen::sunshineStatus();
+        v["sunshineInstalled"] = sun.installed;
+        v["sunshineRunning"]   = sun.running;
+        v["sunshineHttpsPort"] = static_cast<double>(sun.httpsPort);
+        v["sunshineUrl"] = apxpc::screen::sunshineUrl(sun);
         media["screen"] = v;
     }
 
@@ -281,6 +305,34 @@ void buildState(const HostBundle& b, Json& out, HttpPanel* p) {
         cfg["bitrateMbps"] = static_cast<double>(b.cfg->displayBitrateMbps);
         cfg["screenMode"] = static_cast<double>(b.cfg->displayEnabled ? 1 : 0);
         transports["btSupported"] = true;
+    }
+
+    if (p) {
+        /* 手机上报的「无线 / 蓝牙 / USB 三模式可用性 + 当前在用哪条」（0x31，issue#47 面板侧诉求）。
+           面板原来那三个开关里只有无线是真的（蓝牙与 USB 的真开关在手机端），拨了没反应
+           只能被当成坏了 —— 现在照实显示手机报上来的状态；没上报就如实说没上报。 */
+        const auto cs = p->ctrlSrv.status();
+        const auto pm = apxpc::wireless::decodePhoneMode(cs.modeFlags);
+        Json ph = Json::makeObject();
+        ph["reported"] = cs.modeStatus > 0;
+        ph["connected"] = cs.connected;
+        ph["frames"] = static_cast<double>(cs.modeStatus);
+        ph["wirelessAvailable"] = pm.wirelessAvailable;
+        ph["bluetoothAvailable"] = pm.bluetoothAvailable;
+        ph["usbAvailable"] = pm.usbAvailable;
+        ph["active"] = pm.active;
+        transports["phone"] = ph;
+        /* 注入权限（macOS 的「辅助功能」）：false 时手机发来的键鼠会被系统静默丢弃 ——
+           面板必须把这件事说出来，否则用户只会认定「手机连上了但按什么都没反应」。 */
+        transports["inputTrusted"] = cs.inputTrusted;
+        /* 受控端归属（9511）：listening=本面板自己的受控端在跑；shared=端口被本机另一个
+           AllPeriph 实例占着（受控端由它提供）。两者都 false 才是「本机没有受控端」。 */
+        Json csj = Json::makeObject();
+        csj["listening"] = cs.listening;
+        csj["shared"] = p->ctrlShared;
+        csj["connected"] = cs.connected;
+        csj["error"] = cs.error;
+        transports["ctrlServer"] = csj;
     }
 
     if (p && p->usbScanned) {
@@ -473,6 +525,17 @@ void handleAct(HttpPanel* p, const std::string& id, const std::string& name, con
     if (name == "screen.toggle") {
         return postResponse(p, id, failResp("此平台不支持副屏（虚拟显示器仅 Windows）"));
     }
+    // —— 副屏：mac 的出路是用户自装 Sunshine + Moonlight（结论见 ROADMAP §2.5）——
+    //    我们不内嵌（Moonlight 客户端 GPLv3 与 MIT 冲突），只在面板做**检测 + 指引**。
+    if (name == "screen.sunshine") {
+        auto d = apxpc::screen::sunshineStatus();
+        Json v = Json::makeObject();
+        v["installed"] = d.installed;
+        v["running"]   = d.running;
+        v["httpsPort"] = static_cast<double>(d.httpsPort);
+        v["url"] = apxpc::screen::sunshineUrl(d);
+        return postResponse(p, id, okResp(v));
+    }
 
     // —— 音箱 ——
     if (name == "speaker.toggle" && b.audio) {
@@ -657,11 +720,35 @@ void handleAct(HttpPanel* p, const std::string& id, const std::string& name, con
     return postResponse(p, id, failResp("未知动作: " + name));
 }
 
+/// 播放（渲染）设备列表 —— 前端「音箱 / 麦克风」设备下拉的数据源。
+/// 与 Win32 原生面板（panel_win32.cpp 的 refreshSpeakerCombo）同源：
+///   Windows 用 IMMDeviceEnumerator 枚举（AudioCapture::listRenderDevices）；
+///   macOS 的 Process Tap 采的是全局进程组混音、不挂具体端点，Linux 未实现 —— 两者都返回空表，
+///   前端据此如实显示「本机不支持枚举播放设备」，不编造列表。
+Json audioDevicesJson() {
+    Json arr = Json::makeArray();
+    for (const auto& d : apxpc::media::AudioCapture::listRenderDevices()) {
+        Json o = Json::makeObject();
+        o["id"] = d.id;
+        o["name"] = d.name;
+        o["isDefault"] = d.isDefault;
+        arr.push(std::move(o));
+    }
+    Json data = Json::makeObject();
+    data["devices"] = std::move(arr);
+    data["defaultName"] = apxpc::media::AudioCapture::defaultRenderDeviceName();
+    return data;
+}
+
 void handleQuery(HttpPanel* p, const std::string& id, const std::string& name) {
     if (name == "state") {
         Json s;
         buildState(p->bundle, s, p);
         return postResponse(p, id, okResp(s), "query-response");
+    }
+    // 播放设备列表（前端设备下拉）：Windows 有实体列表，macOS/Linux 返回空表
+    if (name == "audioDevices") {
+        return postResponse(p, id, okResp(audioDevicesJson()), "query-response");
     }
     postResponse(p, id, failResp("未知查询: " + name), "query-response");
 }
@@ -1143,13 +1230,31 @@ int runWebPanelHttp(const HostBundle& bundle, const std::string& webDir) {
     // **主动连手机**（session 客户端方向），手机反过来发现不了本机 —— 受控场景缺失。
     // 主机名：POSIX gethostname（Win 版 desktop_main 用 GetComputerNameW 同义）。
     {
-        char hname[256] = {};
-        if (gethostname(hname, sizeof(hname) - 1) == 0 && hname[0] != '\0') {
-            hname[sizeof(hname) - 1] = '\0';
-            if (!panel.ctrlSrv.start(9511, "", hname))
-                APX_LOGW("9511 受控端启动失败（端口可能已被 apxhost serve/其他实例占用）");
-            else
-                APX_LOGI("9511 受控端已启动（面板自带，主机名 {}）", hname);
+        /* 先探测：本机 9511 已经有人监听时，**不重复起**、也不打告警 ——
+           那是「另一个 AllPeriph 实例正在提供受控端」，不是故障（v223.7 已交付：
+           apxpc::net::tcp_probe 消除了双起告警）。仍然如实告诉用户受控端由谁提供，
+           免得他以为是这个面板起的。 */
+        if (apxpc::net::tcpPortRespondsLocal(9511, 200)) {
+            panel.ctrlShared = true;
+            APX_LOGI("9511 已有实例在跑（127.0.0.1:9511 可连）：本面板不再重复启动受控端，"
+                     "受控端由那个实例提供；手机「TV 控制」里看到的仍是它");
+        } else {
+            char hname[256] = {};
+            if (gethostname(hname, sizeof(hname) - 1) == 0 && hname[0] != '\0') {
+                hname[sizeof(hname) - 1] = '\0';
+                if (!panel.ctrlSrv.start(9511, "", hname)) {
+                    /* 探测说没人、绑定却失败：这才是真冲突（抢跑 / 权限 / 端口保留）。
+                       此时再探一次，把「已被占」与「绑定被拒」分开写清楚。 */
+                    panel.ctrlShared = apxpc::net::tcpPortRespondsLocal(9511, 200);
+                    const std::string cerr = panel.ctrlSrv.status().error;
+                    if (panel.ctrlShared)
+                        APX_LOGI("9511 在探测到绑定失败之间被别人占上了：受控端由该实例提供");
+                    else
+                        APX_LOGW("9511 受控端启动失败（{}）：手机将无法发现本机", cerr.c_str());
+                } else {
+                    APX_LOGI("9511 受控端已启动（面板自带，主机名 {}）", hname);
+                }
+            }
         }
     }
 
@@ -1233,6 +1338,10 @@ int runWebPanelHttp(const HostBundle& bundle, const std::string& webDir) {
     std::printf("\n[面板] 浏览器打开: %s\n", url.c_str());
     std::fflush(stdout);
     APX_LOGI("浏览器面板就绪: {}（webDir={}）", url.c_str(), panel.webDir.c_str());
+    {
+        std::lock_guard<std::mutex> g(g_urlMu);
+        g_panelUrl = url;
+    }
 
     // 自动打开浏览器（macOS `open`；其他 POSIX 仅打印地址）
 #if defined(__APPLE__)
@@ -1249,7 +1358,7 @@ int runWebPanelHttp(const HostBundle& bundle, const std::string& webDir) {
     ::sigaction(SIGTERM, &sa, nullptr);
 
     // —— select 主循环（1s 超时 tick：USB 10s / 媒体泵 4s 节流任务的兑底时机）——
-    while (panel.running.load()) {
+    while (panel.running.load() && !g_quitRequested.load()) {
         fd_set rfds;
         FD_ZERO(&rfds);
         FD_SET(lfd, &rfds);
@@ -1282,8 +1391,29 @@ int runWebPanelHttp(const HostBundle& bundle, const std::string& webDir) {
     if (panel.sendThread.joinable()) panel.sendThread.join();
     if (panel.mediaThread.joinable()) panel.mediaThread.join();
     g_hp = nullptr;
+    {
+        std::lock_guard<std::mutex> g(g_urlMu);
+        g_panelUrl.clear();          // 端口已关，旧地址就是死链 —— 托盘别再往那儿 open
+    }
+    g_quitRequested.store(false);   // 清标志：同一进程内再次 runWebPanelHttp 不被上次带走
     APX_LOGI("浏览器面板已退出");
     return 0;
+}
+
+/* 托盘「退出」入口（本文件导出）：只置标志，真正的收尾在面板线程里按既有顺序做
+   （停 9511 → 停互传 → join 工作线程 → 关监听）。托盘在自己的线程上，因此**不能**
+   直接去 stop 这些对象 —— 那会与面板线程的收尾并发。 */
+void requestPanelQuit() {
+    g_quitRequested.store(true);
+}
+
+bool ctrlPortOccupied(uint16_t port, int timeoutMs) {
+    return apxpc::net::tcpPortRespondsLocal(port, timeoutMs);
+}
+
+std::string panelUrl() {
+    std::lock_guard<std::mutex> g(g_urlMu);
+    return g_panelUrl;
 }
 
 }  // namespace apxpc::ui
@@ -1294,6 +1424,12 @@ namespace apxpc::ui {
 int runWebPanelHttp(const HostBundle&, const std::string&) {
     return -1;   // Windows 走 web_panel.cpp（WebView2 壳），本实现不启用（零交叉）
 }
+// Win 侧同名符号的诚实桩：头文件里声明了它们，而 Windows 的托盘/受控端由
+// desktop_main + web_panel 负责。给桩是为了「别处误引用时链接期报错而不是运行期崩」——
+// requestPanelQuit 无面板可退，ctrlPortOccupied 在 Win 上没有调用方。
+void requestPanelQuit() {}
+bool ctrlPortOccupied(uint16_t, int) { return false; }
+std::string panelUrl() { return {}; }   // Win 面板是 WebView2 窗口，没有「浏览器地址」
 }  // namespace apxpc::ui
 
 #endif  // !_WIN32

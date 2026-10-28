@@ -302,6 +302,7 @@ jobs:
         run: |
           cmake --build build_host --config Release --target `
             arbiter_test utf16_convert_test ctrl_frame_test relative_move_test `
+            gamepad_fallback_test phone_mode_test tcp_probe_test `
             wireless_session_lifecycle_test localsend_protocol_test `
             localsend_upload_test localsend_sender_test 2>&1 | `
             Tee-Object -FilePath test_build.log | Select-Object -Last 20
@@ -520,6 +521,36 @@ jobs:
           Get-ChildItem out/
         shell: pwsh
 
+      - name: Extract changelog section (Release 正文顶部必须写清「改了什么」)
+        # 规则：每个 Release 的正文 = docs/CHANGELOG.md 里对应版本的段（改了什么）
+        #       + .github/release-body-assets.md（各资产怎么用）+ GitHub 自动生成的
+        #       Full Changelog。明细的真源是 CHANGELOG；发版前没写那段，这里打 error
+        #       并降级为占位 —— 不允许「只有下载说明、不知道改了什么」的 Release。
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $lines = Get-Content docs/CHANGELOG.md
+          $start = -1
+          for ($i = 0; $i -lt $lines.Count; $i++) {
+            if ($lines[$i] -like "## $tag*") { $start = $i; break }
+          }
+          if ($start -lt 0) {
+            Write-Host "::error::docs/CHANGELOG.md 里没有 $tag 的段落 —— 发版前必须先写版本明细（改了什么）"
+            "## 全能外设 $tag`n`n> 本版本明细缺失：发版流程要求每个 Release 顶部写清「改了什么」，见 docs/CHANGELOG.md。`n" | Set-Content release_notes.md -Encoding utf8
+            exit 0
+          }
+          $end = $lines.Count
+          for ($i = $start + 1; $i -lt $lines.Count; $i++) {
+            if ($lines[$i] -like "## v*") { $end = $i; break }
+          }
+          $section = $lines[$start..($end - 1)]
+          while ($section.Count -gt 0 -and (($section[-1] -eq '---') -or ($section[-1].Trim() -eq ''))) {
+            $section = $section[0..($section.Count - 2)]
+          }
+          $assets = (Get-Content .github/release-body-assets.md -Raw) -replace '\{\{TAG\}\}', $tag
+          (($section -join "`n") + "`n`n---`n`n" + $assets) | Set-Content release_notes.md -Encoding utf8
+          Write-Host "release_notes.md：$tag 段 $($section.Count) 行 + 资产说明"
+
       - name: Upload Release
         uses: softprops/action-gh-release@v2
         with:
@@ -527,27 +558,4 @@ jobs:
           files: out/*
           generate_release_notes: true
           make_latest: true
-          body: |
-            ## 全能外设 ${{ github.ref_name }}
-
-            ### 推荐：单文件安装包（Windows）
-            下载 **AllPeriph-${{ github.ref_name }}-Setup.exe** —— 一个 exe 搞定一切：
-            - 双击进入现代 Windows 安装向导（欢迎 → 功能勾选 → 进度 → 完成）
-            - 默认装到 `%LOCALAPPDATA%\Programs\AllPeriph`（免管理员）
-            - 向导里可勾选「创建桌面图标」「开机自启」
-            - 自动检测 WebView2 Runtime，缺失时后台静默装（Win10 旧版无感知）
-            - 卸载自动进「应用和功能」
-            - 安装包自动压缩了 apxdesktop + apxhost + WebView2Loader + web/* 全部资源
-
-            ### 便携版（Windows zip）
-            解压到任意目录直接双击 apxdesktop.exe 运行，绿色免安装。
-
-            ### macOS（arm64，测试版）
-            下载 **AllPeriph-${{ github.ref_name }}-macos-arm64.zip**（由 macos.yml 独立上传）：
-            - 解压后 `./apxdesktop` 桌面壳 或 `./apxhost panel` 浏览器面板（自动开浏览器，自带 9511 受控端）
-            - **未签名**：首次打开需 系统设置 → 隐私与安全性 → 仍要打开（README 内有 xattr 一行命令）
-            - 音箱首次使用需授权「系统音频录制」；副屏暂不支持（虚拟显示器仅 Windows）
-
-            ### Android
-            - **AllPeriph-${{ github.ref_name }}-app.apk** —— 手机端（触控板/键盘/副屏）
-            - **AllPeriph-${{ github.ref_name }}-tv.apk** —— 电视端（被控/接收）
+          body_path: release_notes.md

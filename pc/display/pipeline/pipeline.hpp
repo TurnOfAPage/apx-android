@@ -44,8 +44,24 @@ struct PipelineConfig {
     // 运行
     uint32_t      maxFps = 60;                 // 0 = 不限
     size_t        maxFragmentBytes = kDefaultMaxFragment;
-    // v1.10：跳过 §4 控制面握手（HELLO/CONFIG）——手机端尚未实现应答，
-    // 直接推流（手机 VideoReceiver 按 streamId 分流，ctrl 帧仅计数，安全）。
+    // 控制面三开关（**默认全开**）：
+    //   enableHandshake —— §4 控制面握手（HELLO/CONFIG）。手机端未实现应答时关掉，
+    //                     直接推流（手机 VideoReceiver 按 streamId 分流，ctrl 帧仅计数，安全）。
+    //   enableInject    —— 触控注入通道。触控走 9511 控制面（0x04）时由上层负责，这里关掉。
+    //   enableHeartbeat —— 心跳 / RTT / 断线自愈（LinkMonitor）。
+    //
+    // 主机侧副屏（`pc/host/src/media/screen_push.cpp`）三个都关，根因是**控制帧归 9511**：
+    //   握手 —— 手机端未实现 CtrlSession 的 HELLO 应答，PC 会一直等；
+    //   注入 —— 触控上行走 9511 控制面，不经本管线；
+    //   心跳 —— LinkMonitor 要在这条媒体连接上发控制帧，与 9511 抢控制面。
+    // 这属于「手机端缺应答」的功能缺口，要恢复得先在手机端补 HELLO 应答，
+    // 不是本层能单独解决的，故保留开关而不是在此处假装实现。
+    //
+    // **心跳关掉 ≠ 链路健康不可知**：本管线的健康判定有两条腿 ——
+    //   ① 有心跳：LinkMonitor 用心跳 / RTT 判定并触发重连（transport/link_monitor.cpp）；
+    //   ② 无心跳：encodeThread 的发送失败计数判定 —— 连续 30 帧写失败即认定链路真断，
+    //      自动 close/open 重连（encodeThread 的 sendFailStreak_ 分支）。
+    // 即关掉心跳只丢 RTT 与主动探测，**断线判定与自愈仍然成立**。
     bool          enableHandshake = true;
     bool          enableInject = true;
     bool          enableHeartbeat = true;

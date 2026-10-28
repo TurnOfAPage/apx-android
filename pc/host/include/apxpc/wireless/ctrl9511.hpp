@@ -89,6 +89,17 @@ public:
 /// 按编译目标创建对应平台的注入器（失败返回 nullptr）。
 std::unique_ptr<InputInjector> createPlatformInjector();
 
+/// 本机是否具备「把输入注入到系统」所需的权限。**只有 macOS 会返回 false**：
+/// CGEventPost 需要一个「辅助功能」授权，没授权时事件被系统静默丢弃 ——
+/// 手机按了半天没反应、日志里也什么都看不到（issue#47「无线模式全都不能用」的最可能真因）。
+/// Windows / Linux 无此门槛，恒 true。
+bool platformInputTrusted();
+
+/// 无权限时发起一次系统授权引导（macOS：CGRequestPostEventAccess 弹窗），返回引导后的状态。
+/// 其他平台直接返回 platformInputTrusted()。调用点只在「真的收到了一帧输入」时才用 ——
+/// 用户正在操作的那一刻弹窗，他才明白为什么要授权。
+bool requestPlatformInputTrust();
+
 // ---------------------------------------------------------- 剪贴板反向监听 ----
 /// 监听本机剪贴板变化；变化时回调最新文本。受控端据此发送 0x21 反向剪贴板帧。
 class ClipboardWatcher {
@@ -136,6 +147,11 @@ struct Ctrl9511ServerStatus {
     uint64_t requestInput = 0;
     uint64_t inputText = 0;
     uint64_t inputDone = 0;
+    /// 手机上报的模式状态帧（0x31）计数与原始位图；位布局见 phone_mode.hpp
+    uint64_t modeStatus = 0;
+    uint8_t modeFlags = 0;
+    /// 本机是否具备注入权限（macOS 的「辅助功能」授权）；false 时收到的输入不会生效
+    bool inputTrusted = true;
 };
 
 class Ctrl9511Server {

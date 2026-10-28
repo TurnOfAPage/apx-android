@@ -30,7 +30,8 @@ import kotlin.concurrent.thread
  * - 手机麦克风 → PC：`AudioRecord` 采集 → 写 ALSA **playback**（`pcmC?D0p`）
  * - PC → 手机扬声器：读 ALSA **capture**（`pcmC?D0c`）→ `AudioTrack` 播放
  *
- * 声卡号**运行时定位**（[locateCard]），绝不硬编码 `hw:0,0`：卡号随内核枚举顺序变化。
+ * 声卡号与 PCM 设备号都**运行时定位**（[locateCard] / [locateDevice]），
+ * 绝不硬编码 `hw:0,0`：两者都随内核枚举顺序变化，换机型会取到别的设备。
  *
  * 前置条件：UAC2 已随 gadget 挂载（`f_uac2` 建卡），且 PCM 节点已被 root 放开权限。
  *
@@ -184,7 +185,7 @@ class AudioModule(private val app: Context) : Module {
     // ————————————————————————————— 内部 —————————————————————————————
 
     private fun locateCard(): Int? {
-        val text = runCatching { File(CARDS).readText() }.getOrNull() ?: return null
+        val text = runCatching { File(AudioConst.ALSA_CARDS_PATH).readText() }.getOrNull() ?: return null
         val re = Regex("""^\s*(\d+)\s*\[([^\]]+)\]""", RegexOption.MULTILINE)
         for (m in re.findAll(text)) {
             val idx = m.groupValues[1].toIntOrNull() ?: continue
@@ -195,8 +196,37 @@ class AudioModule(private val app: Context) : Module {
         return null
     }
 
+    /**
+     * 解析 UAC2 gadget 的 PCM **设备号**（`pcmC<D*>` 里的 D）。
+     *
+     * `/proc/asound/pcm` 每行形如 `01-00: UAC2 PCM : UAC2 PCM : playback 1 : capture 1`，
+     * 前缀是 `卡号-设备号`，后面标了该设备支持的方向。设备号同样随枚举顺序变化，
+     * 写死 0 会在别的机型上取到别的设备。
+     *
+     * 解析不到时按设备号 **0** 降级（UAC2 gadget 通常只暴露一个 PCM 设备），
+     * 并如实记日志 —— 不静默、也不假装成功。
+     */
+    private fun locateDevice(card: Int, playback: Boolean): Int {
+        val want = if (playback) "playback" else "capture"
+        val text = runCatching { File(AudioConst.ALSA_PCM_PATH).readText() }.getOrNull()
+        if (text == null) {
+            Log.w(TAG, "读不到 ${AudioConst.ALSA_PCM_PATH}：PCM 设备号按 0 降级（card=$card dir=$want）")
+            return 0
+        }
+        val re = Regex("""^\s*(\d+)-(\d+):(.*)$""", RegexOption.MULTILINE)
+        for (m in re.findAll(text)) {
+            val c = m.groupValues[1].toIntOrNull() ?: continue
+            if (c != card) continue
+            if (!m.groupValues[3].contains(want)) continue
+            val dev = m.groupValues[2].toIntOrNull() ?: continue
+            return dev
+        }
+        Log.w(TAG, "${AudioConst.ALSA_PCM_PATH} 里找不到 card=$card dir=$want 的 PCM 设备号：按 0 降级")
+        return 0
+    }
+
     private fun startMicToPc(card: Int): Boolean {
-        val path = "/dev/snd/pcmC${card}D0p"
+        val path = AudioConst.pcmNode(card, locateDevice(card, playback = true), playback = true)
         val stream = AlsaPcm.open(path, playback = true) ?: return false
 
         val minBuf = AudioRecord.getMinBufferSize(RATE, IN_CHANNEL, ENCODING)
@@ -284,7 +314,7 @@ class AudioModule(private val app: Context) : Module {
     }
 
     private fun startPcToSpeaker(card: Int): Boolean {
-        val path = "/dev/snd/pcmC${card}D0c"
+        val path = AudioConst.pcmNode(card, locateDevice(card, playback = false), playback = false)
         val stream = AlsaPcm.open(path, playback = false) ?: return false
 
         spkRun = true
@@ -379,8 +409,6 @@ class AudioModule(private val app: Context) : Module {
 
         private fun prefs(c: Context) =
             c.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-
-        private const val CARDS = "/proc/asound/cards"
 
         private const val RATE = AudioConst.SAMPLE_RATE
         private const val ENCODING = AudioFormat.ENCODING_PCM_16BIT

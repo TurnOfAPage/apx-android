@@ -92,6 +92,45 @@ export const ScreenCard: React.FC<Props> = ({ state }) => {
             <div className="caption-text">打开右侧开关：把本机桌面投到手机</div>
           </>
         )}
+
+        {/* mac/Linux：本机不挂虚拟显示器，副屏的出路 = 用户自装 Sunshine + Moonlight。
+            我们只做检测 + 指引（不内嵌 Moonlight 客户端：GPLv3 与 MIT 冲突，ROADMAP §2.5）。
+            C++ 侧没给这些字段时（WebView2/Win 有真副屏）整个块不渲染。 */}
+        {scr?.error && !scr.running && typeof scr.sunshineInstalled === 'boolean' && (
+          <div className="mt-1 pt-2 border-t border-stroke flex flex-col gap-1">
+            {scr.sunshineInstalled ? (
+              scr.sunshineRunning ? (
+                <>
+                  <div className="caption-text text-on-surface">
+                    检测到 Sunshine 已在跑（端口 {scr.sunshineHttpsPort}）—— 手机端装 Moonlight 即可连
+                  </div>
+                  {scr.sunshineUrl && (
+                    <a
+                      className="caption-text text-state-ok underline underline-offset-2"
+                      href={scr.sunshineUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      打开 Sunshine 设置页（浏览器会提示自签证书，点「高级 → 继续访问」）
+                    </a>
+                  )}
+                </>
+              ) : (
+                <div className="caption-text text-on-tertiary">
+                  检测到已安装 Sunshine，但 {scr.sunshineHttpsPort} 端口没有服务在监听 —— 打开 Sunshine 应用后刷新本页
+                </div>
+              )
+            ) : (
+              <div className="caption-text text-on-tertiary">
+                mac 上的副屏出路：安装 <a className="text-state-ok underline underline-offset-2"
+                  href="https://docs.lizardbyte.dev/projects/sunshine/latest/md_docs_2getting__started.html"
+                  target="_blank" rel="noreferrer">Sunshine</a>（本机）+ Moonlight（手机）；
+                本面板只做检测与指引，不内置客户端（Moonlight 是 GPLv3，与本项目 MIT 冲突）。
+                安装后若没被检测到，说明它不在 ~/.config/sunshine/，可在 Sunshine 里确认端口后手动连。
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

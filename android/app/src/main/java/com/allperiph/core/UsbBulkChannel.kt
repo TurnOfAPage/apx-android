@@ -11,7 +11,8 @@ package com.allperiph.core
  *
  * 返回值约定（与 native 一致）：0 表示成功，负数表示失败（通常为 -errno）。
  *
- * 注：本文件由 main 补入（L1 曾在 contractDeviations 中报此缺口，L2 未实现）。
+ * 注：本文件早已落地实现 —— L1 把它列进 contractDeviations、L2 记为「未实现」，
+ * 都是那两轮审计当时的状态，现在不再是缺口。
  */
 object UsbBulkChannel {
 

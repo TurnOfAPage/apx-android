@@ -10,6 +10,10 @@
 
 1. **确认 master 绿**：Actions → Build（push master 的那次）全绿。
 2. **更新 `docs/CHANGELOG.md`**：把 `Unreleased` 段收进新版本条目（倒序，新在上）。
+   **这条是发版门禁，不是建议**：Release 正文顶部的「改了什么」由 CI 从 CHANGELOG 的
+   对应版本段自动提取（`release` job 的 Extract changelog 步骤）——没写那段，
+   CI 打 `::error::` 并降级为占位正文，Release 页就看不到改了什么。段内要写清：
+   改了什么、为什么、行为有什么变化；只有编译级验证的部分要如实写「待真机回验」。
 3. **打 tag 并推送**（tag 必须 `v` + 数字开头，如 `v206`）：
    ```bash
    git tag v206
@@ -20,7 +24,9 @@
    - PC：`apxhost / apxdesktop / apxsetup + WebView2Loader + web/`
    - 协议校验（`scripts/check_protocol.py`）
    - Inno Setup 打单文件安装包 + portable zip + 四件套重命名
-   - **自动创建 GitHub Release**（中文说明 + 自动生成的变更记录，`make_latest: true`）
+   - **自动创建 GitHub Release**，正文 = CHANGELOG 对应版本段（改了什么）
+     + `.github/release-body-assets.md`（各资产怎么用）+ 自动生成的 Full Changelog，
+     `make_latest: true`
 5. **各端更新检查自动生效**（见第三节）。
 
 > 检查：Actions → Build → run 顶部 `push tag v*` 事件 → 等 `release` job 绿 → Releases 页确认四件套。

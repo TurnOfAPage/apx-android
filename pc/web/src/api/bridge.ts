@@ -25,6 +25,16 @@ type Kind = 'act' | 'query' | 'open-file';
 
 type Transport = 'webview' | 'http' | 'mock';
 
+/**
+ * 播放（渲染）设备 —— 与后端 `AudioCapture::listRenderDevices` 同源。
+ * Windows 走 IMMDeviceEnumerator 有真实列表；macOS / Linux 无此概念，后端返回空表。
+ */
+export interface AudioDevice {
+  id: string;
+  name: string;
+  isDefault: boolean;
+}
+
 export interface HostState {
   link: {
     phase: number;             // 0=idle 1=disconnecting 2=connecting 3=connected 4=failed
@@ -47,6 +57,12 @@ export interface HostState {
       running: boolean; fps: number; deviceName: string;
       width: number; height: number; framesSent: number;
       encodeMs: number; dropped: number; error: string;
+      /** mac/Linux：Sunshine 检测（ROADMAP §2.5：mac 副屏出路 = 用户自装 Sunshine+Moonlight） */
+      sunshineInstalled?: boolean;
+      sunshineRunning?: boolean;
+      sunshineHttpsPort?: number;
+      /** 设置页地址；没在跑时为空串 */
+      sunshineUrl?: string;
     };
     audio?: {
       running: boolean; peak: number; device: string;
@@ -264,6 +280,24 @@ class Bridge {
   }
   query(name: string): Promise<any> {
     return this.request('query', name);
+  }
+
+  /**
+   * 播放设备列表（音箱 / 麦克风设备下拉的数据源）。
+   *
+   * 后端 query `audioDevices` 与 Win32 原生面板（refreshSpeakerCombo）同源：
+   *   · Windows：IMMDeviceEnumerator 枚举真实播放端点；
+   *   · macOS：Process Tap 采全局进程组混音、不挂具体端点；Linux：未实现 —— 都返回空表。
+   * 空数组就是「本机枚举不到」，这里不做任何兜底编造。
+   */
+  async audioDevices(): Promise<{ devices: AudioDevice[]; defaultName: string }> {
+    const resp = await this.query('audioDevices');
+    const data = resp?.data ?? {};
+    const devices = Array.isArray(data.devices) ? (data.devices as AudioDevice[]) : [];
+    return {
+      devices,
+      defaultName: typeof data.defaultName === 'string' ? data.defaultName : '',
+    };
   }
   openFile(filter: string): Promise<any> {
     return this.request('open-file', 'dummy', { filter });

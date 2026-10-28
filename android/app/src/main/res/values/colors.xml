@@ -104,4 +104,22 @@
     <color name="ball_bg">#F2FFFFFF</color>
     <color name="ball_text">#CC000000</color>
     <color name="ball_stroke">#33000000</color>
+
+    <!--
+      快捷键模板色板（vXXX）：模板色此前内联在 `hid/HotkeyTemplates.kt` 里，
+      深色背景下偏暗的两档（终端石墨 / 表格墨绿）在 values-night 覆盖成可读值。
+      模板色是**场景识别色**，不是语义色，因此单独成组而不是塞进 md_* / state_*。
+    -->
+    <color name="hotkey_tpl_office">#FF3482FF</color>   <!-- 办公通用 -->
+    <color name="hotkey_tpl_ai">#FF7C5CFF</color>   <!-- AI 对话 -->
+    <color name="hotkey_tpl_code">#FF00A870</color>   <!-- 编程开发 -->
+    <color name="hotkey_tpl_video">#FFFF7A00</color>   <!-- 视频剪辑 -->
+    <color name="hotkey_tpl_slide">#FFE0457B</color>   <!-- 演示放映 -->
+    <color name="hotkey_tpl_design">#FF12B0C8</color>   <!-- 设计制图 -->
+    <color name="hotkey_tpl_browser">#FF3B6FF5</color>   <!-- 浏览网页 -->
+    <color name="hotkey_tpl_chat">#FF00B96B</color>   <!-- 聊天社交 -->
+    <color name="hotkey_tpl_term">#FF5B6470</color>   <!-- 终端运维 -->
+    <color name="hotkey_tpl_sheet">#FF1E9E5A</color>   <!-- 表格数据 -->
+    <color name="hotkey_tpl_tv">#FFE0457B</color>   <!-- TV 遥控 -->
+
 </resources>

@@ -50,7 +50,7 @@ App「状态」页打开总开关后，手机作为 USB 复合设备被 Windows 
 
 | 能力 | 报告 | 状态（2026-10-23 源码核对） |
 |---|---|---|
-| `reportKeyboard(mod, keys)` | rid 2 | ✅ 已实现（v184）：8B `[mod, reserved, k1..k6]`，`sendReport(0x02, …)`（Report ID 不进 data，v186 修复）；**接入键盘出口 = 本 PR** |
+| `reportKeyboard(mod, keys)` | rid 2 | ✅ 已实现（v184）：8B `[mod, reserved, k1..k6]`，`sendReport(0x02, …)`（Report ID 不进 data，v186 修复）；**键盘出口已接入**（`HidKeys.send` → `Uplink.BLUETOOTH` 分支，2026-10-23 起，见 §4 第 2 条） |
 | `reportGamepad(btn, x,y,rx,ry)` | rid 4 | ✅ 已实现（v184）：6B `[btn_lo, btn_hi, x, y, rx, ry]`，`GamepadController` 已走蓝牙优先 |
 
 > ✅ 已完成（2026-10-23 核对）：`registerApp` 优先取 `ApxNative.btReportDescriptor()`（native，与 `shared` 同源），
@@ -286,7 +286,7 @@ MSVC 回归），**真机实测尚未执行**（用户声明跳过）—— 下�
 | 能力 | 状态 | 落点 / 说明 |
 |---|---|---|
 | 浏览器控制面板 | ✅ | `apxhost panel` / `./apxdesktop` → `src/ui/panel_http.cpp`（方案 B：仅 127.0.0.1，`?host=1`），协议与 Windows WebView2 面板同构；前端 `bridge.ts` 第三态 `http`（400ms 轮询 state/events，POST act/query） |
-| 桌面壳 apxdesktop | ✅ | `desktop_main.cpp` mac 分支（GUI 基础设施 Win 条件化；`share.h` 归位），CI 已纳入编译（macos.yml `--target apxhost apxdesktop`）；zip 内含 **`AllPeriph.app`**（ad-hoc 签名 + Info.plist 授权宿主，双击起壳自动开面板），终端 `./apxdesktop` 等价；**托盘仍无**（退出 `pkill -x apxdesktop`） |
+| 桌面壳 apxdesktop | ✅ | `desktop_main.cpp` mac 分支（GUI 基础设施 Win 条件化；`share.h` 归位），CI 已纳入编译（macos.yml `--target apxhost apxdesktop`）；zip 内含 **`AllPeriph.app`**（ad-hoc 签名 + Info.plist 授权宿主，双击起壳自动开面板），终端 `./apxdesktop` 等价；**托盘 v223.7 起已交付**（`src/tray/tray_mac.mm`：菜单栏图标 + 「打开面板」「退出全能外设」，事件循环语义仍需实机确认） |
 | 9511 受控端 + 信标 | ✅ | `Ctrl9511Server` + `gethostname`（双入口自带），手机「TV 控制」列表可发现（标 `(PC)`）；与 `apxhost serve` 并存时端口冲突会警告降级 |
 | 控制面客户端（连手机） | ✅ | `wireless_session` 跨平台（此前已可编），`startAuto` 自动发现 |
 | 文件接收 9512 | ✅ | `file.list`/`file.delete` 可用（浏览器文件卡）；**发送本机文件 ❌**（浏览器无系统文件对话框，明确报错） |
@@ -295,7 +295,8 @@ MSVC 回归），**真机实测尚未执行**（用户声明跳过）—— 下�
 | 音箱（系统声音） | ✅ | `audio_capture_mac.mm`：**CoreAudio Process Tap**（`CATapDescription` 全局立体声 + 聚合设备 + IOProc），**macOS 14.2+**，需「系统音频录制」TCC 授权；DRM 内容可能静音（平台限制）；部署目标压 12.0 使新 API 弱链接可降级 |
 | 副屏 | ❌ | 虚拟显示器仅 Windows；`screenPush=nullptr`，面板显示未初始化形态 + `screen.toggle` 明确拒绝 |
 | 音箱设备下拉 | ❌（无此概念） | Process Tap 采全局进程组混音，不挂具体端点（`listRenderDevices` 返回空、面板下拉为空，自洽） |
-| 全局热键 / USB 有线 | ❌ | 热键 Win-only；mac 无 `/sys`（`usb_enum_sysfs` 空枚举），USB 线路不可用（IOKit 枚举为后续项） |
+| 全局热键 | ❌ | 热键 Win-only（mac 侧 `HotkeyManager` 是空实现，面板如实显示不可用） |
+| USB 有线（枚举） | ◑ | v223.7 起 mac 走 **IOKit**（`usb_enum_iokit.cpp`）：VID/PID/名称/序列号/bcdUSB/接口类码齐（速度留 unknown，理由见文件头），面板 USB 状态不再恒 false；**端点/HID 集合/CDC 串口名未做**（见文件头注释），且只有编译级验证 |
 | 开机自启 | ✅ | `~/Library/LaunchAgents/` plist（`autostart.cpp` 非 Win 分支） |
 | 检查更新 | ✅ | `update_check_mac.mm`（NSURLSession + gh-proxy 镜像兑底，与 Windows 同比对算法） |
 | 发版产物 | ✅ | macos.yml `tags: ['v*']` → `AllPeriph-<tag>-macos-arm64.zip` 上传 Release（与 build.yml release job 双向幂等） |
@@ -304,9 +305,45 @@ MSVC 回归），**真机实测尚未执行**（用户声明跳过）—— 下�
 （部署目标自动压 12.0）；前端 `pc/web` npm build 后 dist 拷到 exe 旁 `web/`；日常直接用
 CI artifact 或 Release 资产。详见 [`使用说明.md`](./使用说明.md) 二/七/九章与 README。
 
-**待办（按价值排序）**：① 真机实测（面板/连接/媒体/系统授权弹窗）② NSStatusItem 托盘 +
-.app 内退出入口（`.app` 壳已交付：ad-hoc 签名 + Info.plist 授权宿主，壳内无运行时改造，
-事件循环语义待实机） ③ USB/IOKit 枚举 ④ `panel_http` 的 9511 "已在运行"检测（消除双起警告日志）。
+**待办（按价值排序）**：① 真机实测（面板/连接/媒体/系统授权弹窗）② USB/IOKit 枚举的**真机核对**
+（枚举后端 v223.7 已交付，当前只有编译级验证；端点/HID 集合/CDC 串口名待真机比对）。
+
+**v223.7 已清掉的三条**：NSStatusItem 托盘 + `.app` 内退出入口（`src/tray/tray_mac.mm`，
+菜单栏图标 + 「打开面板」「退出全能外设」；托盘跑在独立 NSThread 上跑 `[NSApp run]`，
+事件循环语义仍需实机确认）· USB/IOKit 枚举（`src/discovery/usb_enum_iokit.cpp`）·
+`panel_http` 的 9511 「已在运行」检测（`apxpc::net::tcp_probe`：已在运行的实例不再重复起
+受控端、不打告警，面板显示归属）。
+
+### 2.5 副屏与 Sunshine / Moonlight 的关系（结论，2026-10-27）
+
+背景：#47 反馈建议「把私有实现移出，用成熟开源方案 —— Sunshine 对 macOS 有原生支持，
+正好补 Mac 副屏」。核实后给的结论如下（事实已查证，见文末链接）。
+
+**核实到的事实**
+
+| 事实 | 影响 |
+|---|---|
+| Sunshine（LizardByte）是 Moonlight 协议的**宿主端**，有 Windows / Linux / macOS 二进制（macOS 分 arm64 与 x86_64 两个 dmg） | 它能替我们解决「mac 上没有虚拟显示器驱动」这件事 |
+| Sunshine 官方把 **macOS 标为 experimental**，并明确写 **Gamepads do not work**；系统音频在 macOS 14.0+ 才走 Apple Audio Tap，更早要靠 BlackHole / Soundflower | 手柄这条**不能指望它** —— 正好是 #47 里最痛的那条 |
+| 客户端是 Moonlight，**Moonlight 全部客户端（含 `moonlight-android`）是 GPLv3** | 本项目是 MIT，**不能把它的代码嵌进来** |
+| Sunshine 系统要求表写 macOS 14.2+ | 用户的 mac 版本需要先满足 |
+
+**结论**
+
+1. **副屏 Windows 侧维持自研**：私有链路已交付（虚拟显示器 + 硬件编码，真机解码 393 帧），没有替换理由。
+2. **mac / Linux 副屏不再自研**：这两端缺的恰恰是虚拟显示器驱动（Windows 有 IddCx，mac 没有对等物），
+   自研成本高、且与成熟方案重叠 —— 改为**用户在 mac 上自装 Sunshine + Moonlight**，
+   我们只在面板里做**检测 + 指引**（不内嵌客户端）。
+3. **不内嵌 Moonlight 客户端**：GPLv3 与 MIT 不兼容（唯一合规的内置路径是照协议自研
+   「RTSP 握手 + RTP 解密 + 硬件解码 + 输入回传」，工作量按一整个模块算，排在现有待办之后）。
+4. **手柄在 mac 上的正解仍然是蓝牙 / USB HID**（手机自己就是 HID 设备、免驱），
+   不是无线出口、也不是 Sunshine —— Sunshine 在 mac 上同样没有手柄。
+
+**依据**：Sunshine 官方文档（macOS 安装 / 系统要求 / 「Gamepads do not work」）
+<https://docs.lizardbyte.dev/projects/sunshine/latest/md_docs_2getting__started.html>；
+`moonlight-android` 仓库 `LICENSE.txt` = GNU GPL v3
+<https://github.com/moonlight-stream/moonlight-android>。
+
 
 ---
 
@@ -365,8 +402,8 @@ runtime.attachSerial(tcpChan) // Wi‑Fi 挂载后
 > 现在蓝牙优先（`BtHidDevice.reportGamepad`）→ 再走 `Uplink.resolve`（无线 9511 → USB），
 > 三条出口都在。以 `ui/GamepadController.kt` 的 `send()` 为准。
 
-两者都有代价：① 三份重复的判据容易改漏一处；② 蓝牙键盘/手柄仍缺失
-（`BtHidDevice` 无 `reportKeyboard` / `reportGamepad`）。
+两者都有代价：① 三份重复的判据容易改漏一处；② 蓝牙键盘/手柄缺的是**真机配对与实测**
+（`BtHidDevice` 自 v184 起已有 `reportKeyboard` / `reportGamepad`，出口也已接入）。
 
 建议新增 `core/InputHub.kt`（或 `ui` 层），把四类输入统一：
 

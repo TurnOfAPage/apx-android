@@ -47,8 +47,13 @@ object EventBus {
     inline fun <reified T : Any> on(handler: Handler? = null, noinline block: (T) -> Unit): Disposable =
         on(T::class.java, handler, block)
 
+    /* ⚠️ 这里必须转调下面那个带 MAIN_HANDLER 的重载。
+       历史写法是 `on(T::class.java, null, block)` —— handler 为 null 时 Sub.deliver 走
+       「发布者线程直接回调」，也就是一个叫 onMain 的函数**并不在主线程回调**。
+       谁按名字用它去碰 View，就会踩 CalledFromWrongThreadException（或更糟：什么都不发生）。
+       目前唯一调用方是手柄页的出口状态行，正是「碰 View」的场景。 */
     inline fun <reified T : Any> onMain(noinline block: (T) -> Unit): Disposable =
-        on(T::class.java, null, block)
+        onMain(T::class.java, block)
 
     fun <T : Any> on(type: Class<T>, handler: Handler? = null, block: (T) -> Unit): Disposable {
         val sub = Sub(type, handler, block)

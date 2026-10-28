@@ -129,6 +129,13 @@ set(APXPC_COMMON_SRC
   "${APXPC_ROOT}/src/log/log.cpp"
   "${APXPC_ROOT}/src/platform/clock.cpp"
   "${APXPC_ROOT}/src/util/crc32.cpp"
+  # 本机端口占用探测：面板用它区分「9511 已由另一个实例提供」与「真的起不来」。
+  # 放 core 而不是面板 TU 里 —— 它要能被真起 socket 的用例覆盖（tests/tcp_probe_test.cpp）。
+  "${APXPC_ROOT}/src/net/tcp_probe.cpp"
+  # Sunshine 只读检测（装没装/在跑没跑）：mac/Linux 副屏出路 = 用户自装 Sunshine
+  # + Moonlight（ROADMAP §2.5，不内嵌 —— Moonlight 客户端 GPLv3 与 MIT 冲突）。
+  # panel_http（两端 exe 的源列表）无条件 include 它，所以进 core 而非按平台分支。
+  "${APXPC_ROOT}/src/screen/sunshine_detect.cpp"
 )
 set(APXPC_DISCOVERY_SRC
   "${APXPC_ROOT}/src/discovery/descriptor_parse.cpp"
@@ -170,6 +177,11 @@ else()
       "${APXPC_ROOT}/src/discovery/usb_enum_libusb.cpp")
     list(APPEND APXPC_CTRL_SRC
       "${APXPC_ROOT}/src/ctrl/bulk_transport_libusb.cpp")
+  elseif(APPLE)
+    # mac：既没有 /sys（sysfs 后端恒返回空枚举 → 面板 USB 状态永远 false），
+    # 默认也不装 libusb。IOKit 是系统自带框架，零外部依赖，走它。
+    list(APPEND APXPC_DISCOVERY_SRC
+      "${APXPC_ROOT}/src/discovery/usb_enum_iokit.cpp")
   else()
     list(APPEND APXPC_DISCOVERY_SRC
       "${APXPC_ROOT}/src/discovery/usb_enum_sysfs.cpp")
@@ -192,6 +204,11 @@ add_library(apxpc_core STATIC ${APXPC_COMMON_SRC})
 target_include_directories(apxpc_core PUBLIC "${APXPC_ROOT}/include")
 target_link_libraries(apxpc_core PUBLIC apx_shared)
 target_compile_features(apxpc_core PUBLIC cxx_std_20)
+if(WIN32)
+  # tcp_probe.cpp 在 Windows 上走 winsock（WSASocket/select/getsockopt）——
+  # 静态库自身不必链，但**使用者**必须带上 ws2_32，在这里用 INTERFACE 传播出去。
+  target_link_libraries(apxpc_core INTERFACE ws2_32)
+endif()
 
 # ---------------------------------------------------------------- 目标：discovery
 add_library(apxpc_discovery STATIC ${APXPC_DISCOVERY_SRC})
@@ -218,6 +235,10 @@ if(WIN32)
 endif()
 if(UNIX AND NOT APPLE)
   target_link_libraries(apxpc_core PUBLIC pthread)
+endif()
+if(APPLE)
+  # usb_enum_iokit.cpp：IORegistry（IOKit）+ CFType/CFString/CFNumber（CoreFoundation）
+  target_link_libraries(apxpc_discovery PUBLIC "-framework IOKit" "-framework CoreFoundation")
 endif()
 
 # ---------------------------------------------------------------- 目标：sdk
@@ -249,6 +270,12 @@ if(APPLE)
   # enable OBJCXX，否则 .mm 无法识别语言。
   enable_language(OBJCXX)
   list(APPEND APXPC_SERVICE_SRC "${APXPC_ROOT}/src/app/update_check_mac.mm")
+  # mac 托盘（NSStatusItem + NSMenu）：**v223.7 已交付**（src/tray/tray_mac.mm）。
+  # 此前这里写的是「ROADMAP §2.4 待办 ②」，那条待办已过时（ROADMAP §2.4 桌面壳
+  # 一行的「托盘仍无」同期已更正）。
+  # 托盘主机进 service 静态库 —— apxhost 与 apxdesktop 都链它，一处实现两处可用；
+  # 同时 tray_win32.cpp 的「非 Windows 空桩」已按 __APPLE__ 排除，不会重复定义。
+  list(APPEND APXPC_SERVICE_SRC "${APXPC_ROOT}/src/tray/tray_mac.mm")
 endif()
 add_library(apxpc_service STATIC ${APXPC_SERVICE_SRC})
 target_link_libraries(apxpc_service PUBLIC apx_shared)
@@ -262,8 +289,10 @@ endif()
 if(APPLE)
   # update_check_mac.mm：NSURLSession 的 completionHandler block 跨异步生命周期持有
   # 对象，必须 ARC；静态库内只有这一个 .mm，按语言粒度开选项不影响其他 C++ TU。
+  # ARC 对本库内的 .mm 全开（tray_mac.mm 与 update_check_mac.mm 都按 ARC 写）。
   target_compile_options(apxpc_service PRIVATE $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
-  target_link_libraries(apxpc_service PUBLIC "-framework Foundation")
+  # AppKit：tray_mac.mm 的 NSStatusItem / NSMenu / NSEvent / NSUserNotification。
+  target_link_libraries(apxpc_service PUBLIC "-framework Foundation" "-framework AppKit")
 endif()
 
 # ---------------------------------------------------------- 目标：统一控制面（9511）
@@ -549,6 +578,25 @@ if(APXPC_BUILD_TESTS)
   add_executable(relative_move_test "${APXPC_ROOT}/tests/relative_move_test.cpp")
   target_include_directories(relative_move_test PRIVATE "${APXPC_ROOT}/include")
   add_test(NAME relative_move_test COMMAND relative_move_test)
+
+  # 手柄免驱降级的算术（边沿/死区/缩放/滚轮限速）：同样是纯头文件算术，不链库。
+  # 盯的是 issue #47 第 5 条 —— macOS/Windows 变不出真手柄，降级路径必须真能出东西。
+  add_executable(gamepad_fallback_test "${APXPC_ROOT}/tests/gamepad_fallback_test.cpp")
+  target_include_directories(gamepad_fallback_test PRIVATE "${APXPC_ROOT}/include")
+  add_test(NAME gamepad_fallback_test COMMAND gamepad_fallback_test)
+
+  # 本机端口占用探测：真起监听 → 探到 → 关掉 → 探不到。
+  # 盯的是 v223.7 已交付的「9511 已在运行检测」（apxpc::net::tcp_probe）——这条判错的后果是面板不再起受控端，
+  # 却又没人提供，手机就永远发现不了本机（静默失效），所以必须有用例钉住。
+  add_executable(tcp_probe_test "${APXPC_ROOT}/tests/tcp_probe_test.cpp")
+  target_link_libraries(tcp_probe_test PRIVATE apxpc_core)
+  add_test(NAME tcp_probe_test COMMAND tcp_probe_test)
+
+  # 手机模式状态帧（0x31）位布局：C++ 面板侧与 Android ModeStatus.kt 对拍的那份期望值。
+  # 盯的是 issue #47 的「面板三个开关改成真实状态」——位序漂移不会崩，只会显示错模式。
+  add_executable(phone_mode_test "${APXPC_ROOT}/tests/phone_mode_test.cpp")
+  target_include_directories(phone_mode_test PRIVATE "${APXPC_ROOT}/include")
+  add_test(NAME phone_mode_test COMMAND phone_mode_test)
 
   # v198 无线会话生命周期压测：worker 在 stop() 之后不得重建 beacon 线程，
   # 否则 stop() 末尾 join 收不回，进程无法退出（必须 kill）。

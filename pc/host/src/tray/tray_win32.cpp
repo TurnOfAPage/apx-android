@@ -172,7 +172,10 @@ void TrayIcon::notify(const std::string& title, const std::string& text) {
     Shell_NotifyIcon(NIM_MODIFY, &nid);
 }
 
-#else
+#elif !defined(__APPLE__)
+/* 非 Windows 且非 macOS：托盘只做空桩（Linux 侧本来就走 CLI）。
+   macOS 的实现在同目录 tray_mac.mm（NSStatusItem + NSMenu）；两边若同时定义
+   会撞重复符号 —— 所以这里必须把 Apple 排除掉，不是忘了。 */
 bool TrayIcon::create(const std::string&) { return true; }
 void TrayIcon::quit() { if (onQuit_) onQuit_(); }
 void TrayIcon::setQuitCallback(std::function<void()> cb) { onQuit_ = std::move(cb); }

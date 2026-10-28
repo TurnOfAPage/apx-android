@@ -96,10 +96,19 @@ class SettingsFragment : Fragment() {
     private lateinit var swHotkeySort: Switch
 
     private val customPrefix = "custom:"
-    private val templatePalette = intArrayOf(
-        0xFF3482FF.toInt(), 0xFF7C5CFF.toInt(), 0xFF00A870.toInt(), 0xFFFF7A00.toInt(),
-        0xFFE0457B.toInt(), 0xFF12B0C8.toInt(), 0xFF5B6470.toInt(), 0xFF1E9E5A.toInt(),
+    /**
+     * 自建模板的色板：**与内置模板同一套颜色令牌**（`R.color.hotkey_tpl_*`），
+     * 不再在 Kotlin 里内联 ARGB —— 深浅色两套取值由 res/values 与 values-night 决定。
+     */
+    private val templatePaletteRes = intArrayOf(
+        R.color.hotkey_tpl_office, R.color.hotkey_tpl_ai, R.color.hotkey_tpl_code,
+        R.color.hotkey_tpl_video, R.color.hotkey_tpl_slide, R.color.hotkey_tpl_design,
+        R.color.hotkey_tpl_term, R.color.hotkey_tpl_sheet,
     )
+
+    /** 色板取当前主题下的实际色值（自定义模板存的是色值，不是资源 id） */
+    private fun templatePalette(): IntArray =
+        templatePaletteRes.map { resources.getColor(it) }.toIntArray()
     private var customTemplates: MutableList<HotkeyTemplates.Template> = mutableListOf()
 
     companion object {
@@ -357,7 +366,8 @@ class SettingsFragment : Fragment() {
         (HotkeyTemplates.ALL + customTemplates).forEach { t ->
             val on = t.key == current
             val custom = t.key.startsWith(customPrefix)
-            val tc = HotkeyTemplates.tint(activity, t.color)
+            // 取色统一走 resolveColor：内置模板是颜色资源，自定义模板是持久化的字面量
+            val tc = HotkeyTemplates.tint(activity, HotkeyTemplates.resolveColor(activity, t))
             val act = activity ?: return@forEach
             val row = LinearLayout(act).apply {
                 orientation = LinearLayout.HORIZONTAL
@@ -451,13 +461,14 @@ class SettingsFragment : Fragment() {
         var pickedIndex = 0
         val dots = mutableListOf<TextView>()
         val colorRow = LinearLayout(act).apply { orientation = LinearLayout.HORIZONTAL }
-        templatePalette.forEachIndexed { idx, color ->
+        val palette = templatePalette()
+        palette.forEachIndexed { idx, color ->
             val dot = TextView(act).apply {
                 background = dotBg(color, idx == 0)
                 isClickable = true
                 setOnClickListener {
                     pickedIndex = idx
-                    dots.forEachIndexed { k, d -> d.background = dotBg(templatePalette[k], k == idx) }
+                    dots.forEachIndexed { k, d -> d.background = dotBg(palette[k], k == idx) }
                 }
             }
             dots += dot
@@ -483,7 +494,7 @@ class SettingsFragment : Fragment() {
                             key = customPrefix + System.currentTimeMillis(),
                             name = nameEt.text.toString().trim().ifEmpty { getString(R.string.ui_main_text_template) },
                             desc = "${board.shortcuts.size} 项 · 自建",
-                            color = templatePalette[pickedIndex],
+                            color = palette[pickedIndex],
                             combos = board.shortcuts.toList(),
                         )
                         customTemplates.add(t)

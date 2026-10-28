@@ -67,6 +67,22 @@ object GamepadController {
         return bt.isConnected
     }
 
+    /**
+     * 此刻**预计**会走的出口（还没发过输入时给界面显示用）。
+     *
+     * 与 [send] 里同一条判据（[Uplink.resolve]）：发过之后界面改读 `Uplink.current`
+     * —— 那里才是真的发出去了没。两者分开是因为「刚进界面还没碰摇杆」不该被报成无出口。
+     */
+    fun predictedPath(): String {
+        val rt = AgentController.runtime
+        val cc = ControlTarget.controlClient
+        return Uplink.resolve(rt?.hid, btConnected(), cc != null && cc.ready)
+    }
+
+    /** 手柄页状态行：发过输入看真实出口，没发过看预计出口。 */
+    fun hint(): String =
+        if (Uplink.observed) Uplink.hint() else Uplink.describe(predictedPath())
+
     private fun send() {
         // 蓝牙优先：BT HID 已连接时直接走蓝牙（与 USB / 无线互斥）
         if (btConnected()) {
