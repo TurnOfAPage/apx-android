@@ -1,2 +1,4 @@
 fix build 20261016-1040
 build trigger 20261023-0643
+
+retry macos 20261027-2 (ensureWsa fixed)
