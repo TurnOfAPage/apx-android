@@ -27,31 +27,31 @@ jobs:
               raise SystemExit(0)
           section = """## 1.0.2（2026-11-01）
 
-自 1.0.1（2026-10-27）之后 master 上的集中发布，主线是 **issue #52 真机实测反馈的连续修复**、界面迁移与热修。
+          自 1.0.1（2026-10-27）之后 master 上的集中发布，主线是 **issue #52 真机实测反馈的连续修复**、界面迁移与热修。
 
-### 修了什么
+          ### 修了什么
 
-- **实体键盘全局转发三条缺口**（v223.17）：窗口转发桥在主用例里从没挂上（真机日志 2477 条按键全走系统默认路径）、无障碍与窗口两条路的长按语义分叉导致长按只出 1 个字符、抬键丢失后 Ctrl/Shift 残留引发「打快了触发系统快捷键」—— 分别补幂等挂载、逐条对齐、onPause/关开关时放键自愈。
-- **遥控器页触摸条在 USB / 蓝牙下失效**（v223.18）：新增 HidMouse 把鼠标与多媒体键三条真实出口（无线 9511 / USB rid 0x02 / 蓝牙 HID）收拢，按 Uplink.resolve 择路，失败不再静默丢帧。
-- **蓝牙 HID 配对后被认成手机**（v223.18）：补上全仓缺失的主动 connect、蓝牙开关变化时自动重注册 SDP。
-- **各端模式状态不一致 / 模式识别循环**（v223.15）：关「无线」即断 9511 控制目标；Uplink 新增 reset；PC 面板改按会话计数判断上报；切换后即刻补发模式帧。
-- **三端键映射表补全**（v223.19）：macOS 小键盘整块错位一格（按 KP1 出 Keypad2）按 kVK 逐键重排 18 键；三端补 PrtSc / ScrLk / Pause / 菜单键 / 非美键；「按键未映射」日志 DEBUG→WARN；另修 Linux 重复 case 编译错误与 Windows 死代码映射。
-- **界面批次**（v223.12–v223.16）：按钮文字居中、横屏弹窗限高滚动与排版、双指滚动误判右键、悬浮球开关状态四态文案、自定义键盘编辑体验等。
+          - **实体键盘全局转发三条缺口**（v223.17）：窗口转发桥在主用例里从没挂上（真机日志 2477 条按键全走系统默认路径）、无障碍与窗口两条路的长按语义分叉导致长按只出 1 个字符、抬键丢失后 Ctrl/Shift 残留引发「打快了触发系统快捷键」—— 分别补幂等挂载、逐条对齐、onPause/关开关时放键自愈。
+          - **遥控器页触摸条在 USB / 蓝牙下失效**（v223.18）：新增 HidMouse 把鼠标与多媒体键三条真实出口（无线 9511 / USB rid 0x02 / 蓝牙 HID）收拢，按 Uplink.resolve 择路，失败不再静默丢帧。
+          - **蓝牙 HID 配对后被认成手机**（v223.18）：补上全仓缺失的主动 connect、蓝牙开关变化时自动重注册 SDP。
+          - **各端模式状态不一致 / 模式识别循环**（v223.15）：关「无线」即断 9511 控制目标；Uplink 新增 reset；PC 面板改按会话计数判断上报；切换后即刻补发模式帧。
+          - **三端键映射表补全**（v223.19）：macOS 小键盘整块错位一格（按 KP1 出 Keypad2）按 kVK 逐键重排 18 键；三端补 PrtSc / ScrLk / Pause / 菜单键 / 非美键；「按键未映射」日志 DEBUG→WARN；另修 Linux 重复 case 编译错误与 Windows 死代码映射。
+          - **界面批次**（v223.12–v223.16）：按钮文字居中、横屏弹窗限高滚动与排版、双指滚动误判右键、悬浮球开关状态四态文案、自定义键盘编辑体验等。
 
-### 稳定性
+          ### 稳定性
 
-- **Android 首启闪退热修**（v223.20.1）：ApShellActivity 在 DecorView 安装前读 window.insetsController 触发 NPE，改 window.decorView.post 后首启恢复正常。
-- **mac 双击启动闪退**（签名封印破损 + AppKit 线程问题）修复随 v223.11 进入发布线。
+          - **Android 首启闪退热修**（v223.20.1）：ApShellActivity 在 DecorView 安装前读 window.insetsController 触发 NPE，改 window.decorView.post 后首启恢复正常。
+          - **mac 双击启动闪退**（签名封印破损 + AppKit 线程问题）修复随 v223.11 进入发布线。
 
-### 界面与工具
+          ### 界面与工具
 
-- 状态页 / 触控板页 / 设置页核心分组 / 电视主屏迁移到 **Compose + Miuix**（v223.15）。
-- **日志导出三端统一**（v223.16）：文件名带设备标识、按时间范围导出、TV 新增导出入口、Windows WebView2 壳补齐 log.list / log.export。
+          - 状态页 / 触控板页 / 设置页核心分组 / 电视主屏迁移到 **Compose + Miuix**（v223.15）。
+          - **日志导出三端统一**（v223.16）：文件名带设备标识、按时间范围导出、TV 新增导出入口、Windows WebView2 壳补齐 log.list / log.export。
 
-### 质量关卡
+          ### 质量关卡
 
-- 新增 `scripts/check_keymap.py` 进 CI：键映射覆盖率 / 重复 case / 死代码 / macOS 小键盘 kVK 锚点核对（v223.19），三端键表从此有静态门禁。
-"""
+          - 新增 `scripts/check_keymap.py` 进 CI：键映射覆盖率 / 重复 case / 死代码 / macOS 小键盘 kVK 锚点核对（v223.19），三端键表从此有静态门禁。
+          """
           idx = next(i for i, l in enumerate(lines) if l.startswith("## v"))
           lines[idx:idx] = section.split("\n") + [""]
           p.write_text("\n".join(lines), encoding="utf-8")
