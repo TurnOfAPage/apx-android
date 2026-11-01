@@ -511,10 +511,18 @@ jobs:
   # macOS 资产由 macos.yml 的 tag 构建独立上传（两边对同一 Release 幂等协作：
   # 谁先完成谁建 Release，后到者 --clobber 追加 —— 见 macos.yml Upload to GitHub Release）
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/master'
     needs: [pc, android]
     runs-on: windows-latest
     steps:
+      - name: Set release version
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            echo "REL_VERSION=$GITHUB_REF_NAME" >> "$GITHUB_ENV"
+          else
+            echo "REL_VERSION=1.0.2" >> "$GITHUB_ENV"
+          fi
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
@@ -547,7 +555,7 @@ jobs:
           New-Item -ItemType Directory -Force out | Out-Null
           $out = (Resolve-Path out).Path
           & $iscc "scripts\installer\AllPeriph.iss" `
-            "/DMyAppVersion=${env:GITHUB_REF_NAME}" `
+            "/DMyAppVersion=$env:REL_VERSION" `
             "/DArtifactsDir=$art" `
             "/DIconDir=$ico" `
             "/DOutputDir=$out"
@@ -558,7 +566,7 @@ jobs:
       - name: Build portable zip
         run: |
           Set-Location $env:GITHUB_WORKSPACE
-          $VER = $env:GITHUB_REF_NAME
+          $VER = $env:REL_VERSION
           New-Item -ItemType Directory -Force portable | Out-Null
           Copy-Item dist/pc-exes-webview2/apxdesktop.exe portable/
           Copy-Item dist/pc-exes-webview2/apxhost.exe portable/
@@ -571,7 +579,7 @@ jobs:
       - name: Collect Android APKs
         run: |
           Set-Location $env:GITHUB_WORKSPACE
-          $VER = $env:GITHUB_REF_NAME
+          $VER = $env:REL_VERSION
           Copy-Item dist/apk-app/app-release.apk "out/AllPeriph-${VER}-app.apk"
           Copy-Item dist/apk-tv/tv-release.apk "out/AllPeriph-${VER}-tv.apk"
           Get-ChildItem out/
@@ -584,7 +592,7 @@ jobs:
         #       并降级为占位 —— 不允许「只有下载说明、不知道改了什么」的 Release。
         shell: pwsh
         run: |
-          $tag = "${{ github.ref_name }}"
+          $tag = "${{ env.REL_VERSION }}"
           $lines = Get-Content docs/CHANGELOG.md
           $start = -1
           for ($i = 0; $i -lt $lines.Count; $i++) {
@@ -610,7 +618,7 @@ jobs:
       - name: Upload Release
         uses: softprops/action-gh-release@v2
         with:
-          name: 全能外设 ${{ github.ref_name }}
+          name: 全能外设 ${{ env.REL_VERSION }}
           files: out/*
           generate_release_notes: true
           make_latest: true
