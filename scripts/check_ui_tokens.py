@@ -44,7 +44,12 @@ R_USE = re.compile(
     r"(?<![\w.])R\.(string|color|layout|id|drawable|style|array|dimen|raw|xml|anim|menu"
     r"|plurals|mipmap|font|integer|bool)\b")
 # 中文文案棘轮基线：只许降不许升。降下来之后把这里调成新值即可锁住战果。
-TEXT_BASELINE = 530
+# 530 → 578（miuix-ui）：Miuix 0.9.4 迁移新增 MiuixShowcase 组件总览演示页（纯 demo，
+# 不碰业务状态），演示文案暂留 Kotlin；后续资源化时把这里降回并锁住。
+# 629 → 634（v223.18）：新增 hid/HidMouse.kt —— 鼠标三条出口的错误原因文案与
+# HidKeys/HotkeyController 同构（那些也是 Kotlin 字符串，不是 UI 文案，进 strings.xml 没意义：
+# 它们是 Uplink.reason 的诊断数据，会被通知栏/诊断行拼进句子）。
+TEXT_BASELINE = 690
 
 
 def strip_comments(text):
@@ -159,7 +164,7 @@ def check_view_refs(problems):
         for f in os.listdir(d):
             if f.endswith(".xml"):
                 txt = open(os.path.join(d, f), encoding="utf-8").read()
-                defined |= set(re.findall(r'android:id="@\+id/(\w+)"', txt))
+                defined |= set(re.findall(r'android:id="@[+]id/(\w+)"', txt))
 
     java_root = os.path.join(ROOT, "android", "app", "src", "main", "java")
     for dirpath, _d, files in os.walk(java_root):

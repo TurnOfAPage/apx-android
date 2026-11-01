@@ -98,14 +98,23 @@
           右上角操作条 pill）；其余页面的横屏适配都在代码里做（运行时重排），
           写在这里是为了以后别再去找不存在的布局文件。
         -->
+<!-- miuix-ui 分支：组件总览（开发页，从设置页「关于」卡进入） -->
         <activity
-            android:name=".ui.MainActivity"
+            android:name=".ui.miuix.MiuixShowcaseActivity"
+            android:label="Miuix 组件总览"
+            android:exported="false" />
+
+        <!--
+          状态页迁移宿主（阶段 2）：Compose + Miuix 重写的状态页，并行于旧主界面。
+          没有 LAUNCHER，只能从组件总览/调试入口进入；全部屏迁完后才把主入口切到这里，
+          切换与回退都只涉及这一处。
+        -->
+        <activity
+            android:name=".ui.compose.ApShellActivity"
+            android:label="全能外设"
             android:exported="true"
-            android:launchMode="singleTop"
-            android:screenOrientation="sensor"
-            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|density|keyboardHidden|uiMode"
             android:windowSoftInputMode="adjustResize"
-            android:theme="@style/Theme.AllPeriph">
+            android:theme="@style/Theme.AllPeriph" >
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

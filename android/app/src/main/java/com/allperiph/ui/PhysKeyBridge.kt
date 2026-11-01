@@ -26,8 +26,11 @@ import com.allperiph.wireless.ControlTarget
  *  ② [Uplink.resolve] 无可用出口 → 放行（没连电脑时蓝牙键盘就是普通手机键盘）
  *  ③ 修饰键（Shift/Ctrl/Alt/Win）→ 消费并自记 heldMods（位图随后续按键发）
  *  ④ 认不出的键（音量/媒体/Back/Home…）→ 放行，手机系统功能不受影响
- *  ⑤ 其余映射 USB HID usage → [HidKeys.combo]（与屏上快捷键同一条链路，
- *     60ms 自动释放；重复事件会续期释放定时器 = 电脑侧自然长按/自动重复）
+ *  ⑤ 其余映射 USB HID usage → 按下用 [HidKeys.hold] **按住不放**，抬起才 [HidKeys.releaseHold]
+ *     （旧实现一律走 [HidKeys.combo]，60ms 后自动全释放；系统的自动重复事件再把这个窗口
+ *     续期，于是长按只出首按 + 首个重复两个字符 —— issue #52 第三条）
+ *     系统自动重复事件：USB / 蓝牙 HID 的对端是真键盘设备，重复由对端系统自己做，这里忽略；
+ *     无线 9511 注入的是合成事件、对端不会重复 —— 由本机按重复节奏补一对 抬起 → 按下。
  *
  * 出口判据不自写：一律 [Uplink.resolve]（与 HidKeys.send / 通知栏 / 界面同口径）。
  */
@@ -54,6 +57,37 @@ internal class PhysKeyBridge(private val act: Activity) {
         window.callback = w
     }
 
+    /**
+     * 幂等（重）挂载：已在链上就什么都不做；**不在链上就重新挂上去**。
+     *
+     * 为什么需要它（issue #52 第 6 条「退后台收不到按键」与第 11 条的真机断点）：
+     * 转发桥靠**包装 `Window.Callback`** 抢先拦按键，而「窗口回调还是不是自己」这件事
+     * 没有任何保证 —— 宿主换壳、`setContentView` 之后有人重设回调、Fragment 重建、
+     * 系统回收 Activity 视图，都会把包装悄悄摘掉。原来的 [attach] 只在挂载那一刻判
+     * `wrapper != null`，而**外层调用点**（TouchpadFragment.ensureViews 的一次性守卫）
+     * 更狠：只要那次调用时 Activity 取不到，就连 attach 都没发生，且此后所有
+     * ensureViews() 都会被守卫挡回，桥**永远**不会挂上 —— 真机表现正是
+     * 「2477 条按键全到了 MainActivity 的 ViewRootImpl，转发桥一条都没收到」。
+     * 所以把「挂没挂」交给本方法自己判断，并在每次界面回到前台时复核一遍。
+     *
+     * @return true = 本次调用真的（重）挂上了；false = 原本就在链上，无需动作
+     */
+    fun ensureAttached(window: Window): Boolean {
+        current = this
+        val orig = original
+        val w = wrapper
+        if (w != null && orig != null && window.callback === w) return false
+        if (w != null && orig != null && window.callback !== w) {
+            // 包装已被别的东西换掉：这里**不还原**（当前回调不是我们，硬塞回 original
+            // 会踩掉别人的包装），只重新包一层，把转发重新接回链上。
+            android.util.Log.w("ApxBridge", "窗口回调已不是转发桥，重新包装（实体键盘转发自愈）")
+        }
+        wrapper = null
+        original = null
+        attach(window)
+        return wrapper != null
+    }
+
     /** 只在窗口回调仍是自己时还原，避免 Fragment 重建后旧桥拆掉新桥的包装 */
     fun detach() {
         val w = wrapper ?: return
@@ -63,6 +97,20 @@ internal class PhysKeyBridge(private val act: Activity) {
         wrapper = null
         original = null
         heldMods = 0
+    }
+
+    /**
+     * 放掉「按住的键」：清修饰位图 + 立即全释放（幂等）。
+     *
+     * 与 [GlobalKeyForwarder.resetKeys] 同一目的：转发是**有状态**链路，
+     * 按下才发、抬起才放，而抬起并不保证送达（退后台、切应用、系统丢帧都可能丢
+     * ACTION_UP）。抬起一旦丢了，电脑侧就一直按着那个 Ctrl / Shift，此后每个字母
+     * 都带修饰发出 —— 正是 issue #52 第 11 条「打快了概率性触发系统功能键」。
+     * 在界面离开前台时调用，让状态回到确定的零点。
+     */
+    fun releaseStuckKeys() {
+        heldMods = 0
+        HidKeys.releaseNow()
     }
 
     private inner class Wrapper(private val delegate: Window.Callback) : Window.Callback by delegate {
@@ -117,9 +165,21 @@ internal class PhysKeyBridge(private val act: Activity) {
         val usage = usageOf(event.keyCode)
         if (usage == 0) return false
 
-        // ⑤ 发送：与屏上快捷键同链路（60ms 自动释放；重复事件续期 = 电脑侧自然长按）
+        // ⑤ 发送
+        val combo = HidKeys.Combo("", heldMods or metaMod(event.metaState), usage)
         if (action == KeyEvent.ACTION_DOWN) {
-            HidKeys.combo(HidKeys.Combo("", heldMods or metaMod(event.metaState), usage))
+            if (event.repeatCount == 0) {
+                // 首次按下：按住不放，直到 ACTION_UP 才释放（长按/按住 Shift 连续选字都对）
+                HidKeys.hold(combo)
+            } else if (Uplink.current == Uplink.WIRELESS) {
+                // 无线：对端收到的是合成注入事件，不会自己重复 —— 每来一次自动重复，
+                // 先清一次再按下，造出真实的边沿 = 对端出一个字符。
+                HidKeys.releaseNow()
+                HidKeys.hold(combo)
+            }
+            // USB / 蓝牙 HID：对端是真实键盘设备，按住不放它自己就会重复，这里什么都不做
+        } else {
+            HidKeys.releaseHold()
         }
         return true
     }
@@ -155,6 +215,10 @@ internal class PhysKeyBridge(private val act: Activity) {
     }
 
     private fun forwardPointerImpl(event: android.view.MotionEvent): Boolean {
+        // root 直读桥接管时让位：那条读的是真正的一手 EV_REL，而本函数拿的是
+        // 绝对 hover 坐标、靠相邻帧差求位移。两条同时跑会把位移算两遍
+        // （光标跑得比手快一倍），按钮状态也会互相覆盖 —— 见 RootPointerBridge.active。
+        if (com.allperiph.touchpad.RootPointerBridge.active) return false
         val src = event.source
         val isPointer = src and android.view.InputDevice.SOURCE_MOUSE != 0 ||
             src and android.view.InputDevice.SOURCE_TOUCHPAD != 0
@@ -195,60 +259,9 @@ internal class PhysKeyBridge(private val act: Activity) {
         ) != Uplink.NONE
     }
 
-    private fun metaMod(meta: Int): Int {
-        var m = 0
-        if (meta and KeyEvent.META_CTRL_ON != 0) m = m or HidKeys.MOD_CTRL
-        if (meta and KeyEvent.META_SHIFT_ON != 0) m = m or HidKeys.MOD_SHIFT
-        if (meta and KeyEvent.META_ALT_ON != 0) m = m or HidKeys.MOD_ALT
-        if (meta and KeyEvent.META_META_ON != 0) m = m or HidKeys.MOD_WIN
-        return m
-    }
-
-    /** Android keyCode → USB HID Keyboard Page (0x07) usage；认不出返回 0（放行本地） */
-    private fun usageOf(kc: Int): Int = when (kc) {
-        in KeyEvent.KEYCODE_A..KeyEvent.KEYCODE_Z -> 0x04 + (kc - KeyEvent.KEYCODE_A)
-        KeyEvent.KEYCODE_0 -> 0x27
-        in KeyEvent.KEYCODE_1..KeyEvent.KEYCODE_9 -> 0x1E + (kc - KeyEvent.KEYCODE_1)
-        KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> 0x28
-        KeyEvent.KEYCODE_ESCAPE -> 0x29
-        KeyEvent.KEYCODE_DEL -> 0x2A                        // 退格
-        KeyEvent.KEYCODE_TAB -> 0x2B
-        KeyEvent.KEYCODE_SPACE -> 0x2C
-        KeyEvent.KEYCODE_MINUS -> 0x2D
-        KeyEvent.KEYCODE_EQUALS -> 0x2E
-        KeyEvent.KEYCODE_LEFT_BRACKET -> 0x2F
-        KeyEvent.KEYCODE_RIGHT_BRACKET -> 0x30
-        KeyEvent.KEYCODE_BACKSLASH -> 0x31
-        KeyEvent.KEYCODE_SEMICOLON -> 0x33
-        KeyEvent.KEYCODE_APOSTROPHE -> 0x34
-        KeyEvent.KEYCODE_GRAVE -> 0x35
-        KeyEvent.KEYCODE_COMMA -> 0x36
-        KeyEvent.KEYCODE_PERIOD -> 0x37
-        KeyEvent.KEYCODE_SLASH -> 0x38
-        KeyEvent.KEYCODE_CAPS_LOCK -> 0x39
-        in KeyEvent.KEYCODE_F1..KeyEvent.KEYCODE_F12 -> 0x3A + (kc - KeyEvent.KEYCODE_F1)
-        KeyEvent.KEYCODE_SYSRQ -> 0x46                      // PrtSc
-        KeyEvent.KEYCODE_SCROLL_LOCK -> 0x47
-        KeyEvent.KEYCODE_BREAK -> 0x48
-        KeyEvent.KEYCODE_INSERT -> 0x49
-        KeyEvent.KEYCODE_MOVE_HOME -> 0x4A
-        KeyEvent.KEYCODE_PAGE_UP -> 0x4B
-        KeyEvent.KEYCODE_FORWARD_DEL -> 0x4C                // Del
-        KeyEvent.KEYCODE_MOVE_END -> 0x4D
-        KeyEvent.KEYCODE_PAGE_DOWN -> 0x4E
-        KeyEvent.KEYCODE_DPAD_RIGHT -> 0x4F
-        KeyEvent.KEYCODE_DPAD_LEFT -> 0x50
-        KeyEvent.KEYCODE_DPAD_DOWN -> 0x51
-        KeyEvent.KEYCODE_DPAD_UP -> 0x52
-        KeyEvent.KEYCODE_DPAD_CENTER -> 0x28                // 方向确认 = Enter
-        KeyEvent.KEYCODE_NUM_LOCK -> 0x53
-        KeyEvent.KEYCODE_NUMPAD_DIVIDE -> 0x54
-        KeyEvent.KEYCODE_NUMPAD_MULTIPLY -> 0x55
-        KeyEvent.KEYCODE_NUMPAD_SUBTRACT -> 0x56
-        KeyEvent.KEYCODE_NUMPAD_ADD -> 0x57
-        in KeyEvent.KEYCODE_NUMPAD_1..KeyEvent.KEYCODE_NUMPAD_9 -> 0x59 + (kc - KeyEvent.KEYCODE_NUMPAD_1)
-        KeyEvent.KEYCODE_NUMPAD_0 -> 0x62
-        KeyEvent.KEYCODE_NUMPAD_DOT -> 0x63
-        else -> 0
-    }
+    // 键映射与 metaState 换算搬到 [HidKeyMap]（单一真源）—— issue #52 建议 6 加了
+    // 第二条转发路径（无障碍 onKeyEvent，无界面也能转发），两处各写一份码表必然
+    // 分叉（问题 3「标点键无反应」就是码表漏行导致的）。
+    private fun metaMod(meta: Int): Int = HidKeyMap.metaMod(meta)
+    private fun usageOf(kc: Int): Int = HidKeyMap.usageOf(kc)
 }

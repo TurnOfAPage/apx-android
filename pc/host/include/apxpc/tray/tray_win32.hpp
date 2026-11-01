@@ -34,7 +34,8 @@ public:
 #if defined(_WIN32)
     bool create(const std::string& tip, HICON icon = nullptr);
 #else
-    // 非 Windows：托盘主体在 .cpp 内已是空实现，不接受图标句柄（HICON 是 Win32 类型）
+    // 非 Windows：mac 的实现在 tray_mac.mm（NSStatusItem，AppKit 占主线程），
+    // Linux 为空桩；不接受图标句柄（HICON 是 Win32 类型）
     bool create(const std::string& tip);
 #endif
     void setQuitCallback(std::function<void()> cb);
@@ -61,7 +62,25 @@ public:
     /// 非 Windows 平台为空实现；窗口/托盘未创建时静默忽略。
     void notify(const std::string& title, const std::string& text);
 
+    /// AppKit 事件泵（仅 macOS 实际生效，其他平台 no-op 返回 false）：在**调用方主线程**
+    /// 上分发菜单动作与通知，阻塞到 quit()（或 keepGoing() 返回 false——供 SIGINT 这类
+    /// 非 AppKit 退出路径）。返回 false = 没有可泵的托盘（未创建或初始化失败）。
+    /// AppKit 规矩：NSStatusItem/NSApp 必须在主线程，非主线程创建会抛
+    /// NSInternalInconsistencyException（NSException）→ 无人接住就是 terminate（issue#47）。
+    bool run(const std::function<bool()>& keepGoing = nullptr);
+
     void quit();
+
+    /// 托盘状态（面板可见性诊断）：created = 图标建起来了；active = 在菜单栏上活着；
+    /// reason = create 失败/降级的原因（成功时为空）。
+    /// 为什么值得暴露：托盘创建失败以前只有日志里一行 LOGW —— 用户看面板只会觉得
+    /// 「app 莫名其妙没图标、连退出入口都没有」。回传面板后，失败原因直接可见。
+    struct TrayStatus {
+        bool created = false;
+        bool active = false;
+        std::string reason;
+    };
+    TrayStatus status() const;
 
 // 以下成员供本翻译单元内的线程/窗口过程自由函数访问（内部工具类，直接公开）
 public:

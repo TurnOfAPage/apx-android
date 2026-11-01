@@ -6,10 +6,10 @@ import android.view.Gravity
 import android.view.View
 import android.widget.Button
 import android.widget.LinearLayout
-import android.widget.ScrollView
 import android.widget.TextView
 import com.allperiph.R
 import com.allperiph.hid.HidKeys
+import com.allperiph.ui.kit.DialogKit
 
 /**
  * 自定义键盘布局编辑器（v1.33）。
@@ -26,9 +26,11 @@ object CustomKeyboardDialog {
     fun show(act: Activity, onDone: () -> Unit) {
         val rows = KeyPref.customRows(act)?.map { it.toMutableList() }?.toMutableList()
             ?: defaultRows()
-        AlertDialog.Builder(act, R.style.Theme_AllPeriph_Miuix_Dialog)
+        AlertDialog.Builder(act, com.allperiph.ui.ThemeSkin.dialogStyle())
             .setTitle(act.getString(R.string.ui_custom_kbd_title))
-            .setView(buildView(act, rows))
+            // 限高滚动（issue #52 第 2/4 条）：横屏可视高度只剩一半，自绘长列表会把
+            // 标题和底部按钮顶出屏幕。DialogKit 给内容一个屏高比例的上限，超了就滚。
+            .setView(DialogKit.scrollable(act, buildView(act, rows)))
             .setPositiveButton(act.getString(R.string.ui_common_save)) { _, _ ->
                 KeyPref.setCustomRows(act, rows.map { it.toList() })
                 onDone()
@@ -52,11 +54,17 @@ object CustomKeyboardDialog {
     private fun dp(v: View, x: Int) = (v.context.resources.displayMetrics.density * x).toInt()
 
     private fun buildView(act: Activity, rows: MutableList<MutableList<String>>): View {
-        val root = ScrollView(act)
         val col = LinearLayout(act).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(this, 16), dp(this, 16), dp(this, 16), dp(this, 16))
         }
+        col.addView(TextView(act).apply {
+            text = act.getString(R.string.ui_custom_kbd_hint)
+            textSize = 12f
+            setTextColor(act.getColor(R.color.md_on_surface))
+            setPadding(0, 0, 0, dp(this, 10))
+        })
+
         fun rebuild() {
             col.removeAllViews()
             rows.forEachIndexed { i, row ->
@@ -93,9 +101,11 @@ object CustomKeyboardDialog {
                         setTextColor(act.getColor(R.color.md_on_surface))
                         setBackgroundColor(act.getColor(R.color.md_surface))
                         setPadding(dp(this, 14), dp(this, 7), dp(this, 14), dp(this, 7))
-                        setOnClickListener {
+                        isLongClickable = true
+                        setOnLongClickListener {
                             rows[i].remove(label)
                             rebuild()
+                            true
                         }
                     })
                 }
@@ -112,8 +122,7 @@ object CustomKeyboardDialog {
             })
         }
         rebuild()
-        root.addView(col)
-        return root
+        return col
     }
 
     private fun smallBtn(act: Activity, text: String, onClick: () -> Unit) =
@@ -122,6 +131,9 @@ object CustomKeyboardDialog {
             textSize = 11f
             minHeight = 0
             minWidth = 0
+            // framework Button 默认 gravity 是 left|center_vertical（issue #52 第 10 条
+            // 「按钮内文字没有居中」就是这个默认值），代码里 new 出来的按钮也得显式居中。
+            gravity = Gravity.CENTER
             setPadding(dp(this, 8), dp(this, 4), dp(this, 8), dp(this, 4))
             setOnClickListener { onClick() }
         }
@@ -129,11 +141,11 @@ object CustomKeyboardDialog {
     /** 两段选键：先选分组，再选该组下的键 */
     private fun pickKey(act: Activity, onPick: (String) -> Unit) {
         val groups = HidKeys.KEY_GROUPS
-        AlertDialog.Builder(act, R.style.Theme_AllPeriph_Miuix_Dialog)
+        AlertDialog.Builder(act, com.allperiph.ui.ThemeSkin.dialogStyle())
             .setTitle(act.getString(R.string.ui_custom_kbd_pick_group))
             .setItems(groups.map { it.first }.toTypedArray()) { d1, gi ->
                 d1.dismiss()
-                AlertDialog.Builder(act, R.style.Theme_AllPeriph_Miuix_Dialog)
+                AlertDialog.Builder(act, com.allperiph.ui.ThemeSkin.dialogStyle())
                     .setTitle(groups[gi].first)
                     .setItems(groups[gi].second.map { it.first }.toTypedArray()) { _, ki ->
                         onPick(groups[gi].second[ki].first)

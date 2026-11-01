@@ -17,8 +17,14 @@ interface UsbTransports {
   usbName?: string;
   usbSpeed?: string;
   btSupported?: boolean;
-  /** macOS「辅助功能」授权：false = 手机发来的输入会被系统静默丢弃 */
+  /** macOS 输入注入授权：false = 手机发来的输入会被系统静默丢弃（macOS 26 起系统设置里叫「设备控制与数据访问」） */
   inputTrusted?: boolean;
+  /** 实际注入进程的 exe 路径（TCC 按进程/签名归属授权，用户要对上「该勾哪一个」） */
+  inputProc?: string;
+  /** 权限面板在系统设置里的显示名（后端按系统版本下发，macOS 26+ = 设备控制与数据访问） */
+  inputTrustLabel?: string;
+  /** 注入进程身份：app-bundle = .app 双击启动；bare-binary = 终端启动的裸可执行文件 */
+  inputProcKind?: string;
   /** 手机上报的三种接入模式状态（9511 帧 0x31） */
   phone?: PhoneMode;
   /** 9511 受控端的归属：listening=本面板起的；shared=端口被本机另一个实例占着（它提供） */
@@ -49,6 +55,8 @@ interface PhoneMode {
   reported?: boolean;
   connected?: boolean;
   frames?: number;
+  /** 9511 由本机另一个实例提供：本面板收不到手机上报（modeStatus=0），不是故障 */
+  shared?: boolean;
   wirelessAvailable?: boolean;
   bluetoothAvailable?: boolean;
   usbAvailable?: boolean;
@@ -65,13 +73,15 @@ const ModeRow: React.FC<{
   reported: boolean;
   available?: boolean;
   active?: boolean;
+  /** 受控端由另一实例提供：本面板读不到手机上报，如实说，别误读成「未上报/坏了」 */
+  shared?: boolean;
   note: string;
   sub?: string;
   extra?: React.ReactNode;
-}> = ({ name, reported, available, active, note, sub, extra }) => {
+}> = ({ name, reported, available, active, shared, note, sub, extra }) => {
   const usable = reported && available;
   const dot = !usable ? 'bg-state-idle' : active ? 'bg-primary' : 'bg-state-ok';
-  const tag = !reported ? '未上报' : !available ? '不可用' : active ? '当前在用' : '可用';
+  const tag = shared ? '经另一实例' : !reported ? '未上报' : !available ? '不可用' : active ? '当前在用' : '可用';
   const tagColor = !usable ? 'text-on-tertiary' : active ? 'text-primary' : 'text-state-ok';
   return (
     <div className="pt-3 border-t border-stroke flex items-start gap-3">
@@ -108,8 +118,33 @@ const ModeRow: React.FC<{
 export const ConnectionCard: React.FC<Props> = ({ state, onManualConnect }) => {
   const [host, setHost] = useState('');
   const [port, setPort] = useState('9511');
+  // 授权自救三出口（issue #52 第 1 条）：TCC 对已拒绝的客户端不再弹窗 ——
+  // 「重新检测」只在未决定时能拉起弹窗；改回决定的入口是「打开系统设置」，
+  // 授权后必须重启应用才生效（系统只在进程启动时读一次授权状态）。
+  const [rechecking, setRechecking] = useState(false);
+  const [recheckHint, setRecheckHint] = useState('');
+  const recheck = async () => {
+    setRechecking(true);
+    try {
+      const r: any = await bridge.act('input.recheck');
+      if (r?.ok && r?.data?.trusted === false)
+        setRecheckHint('仍未授权：请用「打开系统设置」勾选上面那一项，回来点「重启应用」');
+      else setRecheckHint('');
+    } catch { /* 宿主未就绪：横幅会随 400ms 轮询自己刷新 */ }
+    setRechecking(false);
+  };
+  const openSettings = async () => {
+    try { await bridge.act('input.openSettings'); } catch { /* 宿主未就绪 */ }
+  };
+  const relaunch = async () => {
+    try { await bridge.act('app.relaunch'); } catch { /* 宿主未就绪 */ }
+  };
   const s = state.link;
   const tp = (state.transports ?? {}) as UsbTransports;
+  // 权限面板显示名由后端按系统版本下发（macOS 26+ = 「设备控制与数据访问」）；旧后端回退旧名
+  const trustLabel = (tp.inputTrustLabel as string) || '辅助功能';
+  const procKind = (tp.inputProcKind as string) || '';
+  const procName = tp.inputProc ? tp.inputProc.split(/[\\/]/).pop() || tp.inputProc : '';
   const phone = tp.phone ?? {};
   const ctrl = tp.ctrlServer;
   const usbSpeedText = tp.usbSpeed && tp.usbSpeed !== 'unknown' ? ` · ${tp.usbSpeed}` : '';
@@ -165,11 +200,29 @@ export const ConnectionCard: React.FC<Props> = ({ state, onManualConnect }) => {
       {tp.inputTrusted === false && (
         <div className="mx-5 mb-3 px-3 py-2 rounded-chip bg-state-error/10">
           <div className="body-text text-state-error">
-            本机未授予「辅助功能」权限：手机发来的键鼠会被系统丢弃
+            本机未授予「{trustLabel}」权限：手机发来的键鼠会被系统丢弃
           </div>
           <div className="data-text text-on-tertiary mt-1">
-            系统设置 → 隐私与安全性 → 辅助功能 → 勾选 AllPeriph（apxdesktop / apxhost），然后重启面板。
-            首次收到手机输入时也会自动弹一次授权引导。
+            系统设置 → 隐私与安全性 → {trustLabel} → 勾选这一项：
+            {procKind === 'app-bundle'
+              ? '全能外设（AllPeriph.app，进程 ' + procName + '）'
+              : procName + '（终端启动的裸可执行文件 —— 授给「终端」App 不算，要勾这个文件名）'}
+          </div>
+          <div className="data-text text-on-tertiary mt-1">
+            授权后必须重启本应用才生效（系统只在进程启动时读一次授权状态）。
+            「重新检测」不会重复弹窗 —— 系统对已经拒绝过的请求不再询问，请用「打开系统设置」改回来。
+          </div>
+          <div className="flex items-center gap-2 mt-2">
+            <button className="btn-ghost h-[30px]" disabled={rechecking} onClick={openSettings}>
+              打开系统设置
+            </button>
+            <button className="btn-ghost h-[30px]" disabled={rechecking} onClick={recheck}>
+              {rechecking ? '检测中…' : '重新检测'}
+            </button>
+            <button className="btn-ghost h-[30px]" onClick={relaunch}>
+              重启应用
+            </button>
+            {recheckHint && <span className="data-text text-state-error">{recheckHint}</span>}
           </div>
         </div>
       )}
@@ -182,7 +235,9 @@ export const ConnectionCard: React.FC<Props> = ({ state, onManualConnect }) => {
           available={phone.wirelessAvailable}
           active={phone.active === 'wireless'}
           note={
-            phone.reported
+            phone.shared
+              ? '受控端由另一实例提供：本面板读不到手机上报（不是故障）'
+              : phone.reported
               ? phone.wirelessAvailable
                 ? '手机已选定受控目标：输入经 9511 上行，本机就地注入'
                 : '手机未启用无线出口（未选受控目标，或不在同一局域网）'
@@ -204,7 +259,9 @@ export const ConnectionCard: React.FC<Props> = ({ state, onManualConnect }) => {
           available={phone.bluetoothAvailable}
           active={phone.active === 'bluetooth'}
           note={
-            phone.reported
+            phone.shared
+              ? '受控端由另一实例提供：本面板读不到手机上报（不是故障）'
+              : phone.reported
               ? phone.bluetoothAvailable
                 ? '手机蓝牙已开启：配对后本机免驱识别为鼠标 / 键盘 / 多媒体键'
                 : '手机蓝牙出口不可用（未开启，或未配对）'
@@ -222,7 +279,9 @@ export const ConnectionCard: React.FC<Props> = ({ state, onManualConnect }) => {
           available={phone.usbAvailable ?? tp.usbDevice}
           active={phone.active === 'usb'}
           note={
-            phone.reported
+            phone.shared
+              ? '受控端由另一实例提供：本面板读不到手机上报（不是故障）'
+              : phone.reported
               ? phone.usbAvailable
                 ? '手机 USB gadget 已就绪：插线即用（HID 键鼠 + UAC2 声卡 + NCM）'
                 : '手机 USB 出口不可用（未插线，或手机端「有线（USB）」开关未开）'

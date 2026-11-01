@@ -66,8 +66,17 @@ object HidKeys {
         "Ctrl" to MOD_CTRL, "Alt" to MOD_ALT, "Shift" to MOD_SHIFT, "Win" to MOD_WIN,
     )
 
+    /** 常驻第 3 排：Windows 11 新常用（重开标签 / 任务视图 / 截图等） */
+    val ROW3 = listOf(
+        Combo("重开标签", MOD_CTRL or MOD_SHIFT, 0x17),  // Ctrl+Shift+T
+        Combo("任务视图", MOD_WIN, 0x2B),                // Win+Tab
+        Combo("截图", MOD_WIN or MOD_SHIFT, 0x16),       // Win+Shift+S
+        Combo("通知中心", MOD_WIN, 0x04),                // Win+N
+        Combo("最小化", MOD_WIN, 0x2D),                  // Win+M
+    )
+
     /** 出厂预置快捷键（快捷键页「恢复默认」与首次启动的初始值） */
-    val DEFAULTS: List<Combo> get() = ROW1 + ROW2
+    val DEFAULTS: List<Combo> get() = ROW1 + ROW2 + ROW3
 
     /**
      * 可配置按键清单（快捷键编辑弹窗的下拉项）：显示名 → Keyboard Page (0x07) usage。
@@ -81,9 +90,10 @@ object HidKeys {
         listOf(
             "Enter" to 0x28, "Esc" to 0x29, "Backspace" to 0x2A, "Tab" to 0x2B, "Space" to 0x2C,
             "-" to 0x2D, "=" to 0x2E, "[" to 0x2F, "]" to 0x30,
-            ";" to 0x33, "'" to 0x34, "," to 0x36, "." to 0x37, "/" to 0x38,
+            "`" to 0x35, "\\" to 0x31, ";" to 0x33, "'" to 0x34, "," to 0x36, "." to 0x37, "/" to 0x38,
             "Insert" to 0x49, "Home" to 0x4A, "PageUp" to 0x4B, "Delete" to 0x4C,
             "End" to 0x4D, "PageDown" to 0x4E,
+            "PrSc" to 0x46, "ScrLk" to 0x47, "Pause" to 0x48,
             "→" to 0x4F, "←" to 0x50, "↓" to 0x51, "↑" to 0x52,
         ).forEach { add(it) }
         (1..12).forEach { add("F$it" to 0x39 + it) }
@@ -103,11 +113,12 @@ object HidKeys {
         listOf(
             "字母" to KEY_CHOICES.filter { it.first.length == 1 && it.first[0] in 'A'..'Z' },
             "数字" to KEY_CHOICES.filter { it.first.length == 1 && it.first[0] in '0'..'9' },
-            "符号" to KEY_CHOICES.filter { it.first in listOf("-", "=", "[", "]", ";", "'", ",", ".", "/") },
+            "符号" to KEY_CHOICES.filter { it.first in listOf("-", "=", "`", "[", "]", ";", "'", ",", ".", "/") },
             "编辑键" to KEY_CHOICES.filter {
                 it.first in listOf(
                     "Enter", "Esc", "Backspace", "Tab", "Space",
                     "Insert", "Delete", "Home", "End", "PageUp", "PageDown",
+                    "PrSc", "ScrLk", "Pause",
                 )
             },
             "方向键" to KEY_CHOICES.filter { it.first in listOf("→", "←", "↓", "↑") },
@@ -177,6 +188,22 @@ object HidKeys {
         send(0, IntArray(0))
     }
 
+    /**
+     * 立刻全释放，不等 60ms 的自动释放定时器（幂等）。
+     *
+     * 用途：**连发**。连发的节奏（屏上键盘 55ms、实体键盘跟系统自动重复约 50ms）
+     * 与 [combo] / [tap] 的自动释放窗口（60ms）几乎相等 —— 同一个键在窗口内被再次按下时，
+     * 报告内容与上一次完全相同，对端看不到新的按下边沿，于是长按只出第一个字符。
+     * （issue #52 第三条：「实体键盘长按只能键入 2 个」，就是首次按下 + 首个自动重复
+     * 各出一次，之后被 60ms 窗口吞掉。）
+     * 每轮连发前先清一次，保证每轮都是一次真实的 按下 → 抬起。
+     */
+    fun releaseNow() {
+        heldCombo = null
+        handler.removeCallbacks(releaseTask)
+        send(0, IntArray(0))
+    }
+
 
 
     /**
@@ -198,7 +225,7 @@ object HidKeys {
         "Esc" -> 0x29; "Tab" -> 0x2B; "Enter" -> 0x28; "Space" -> 0x2C
         "⌫" -> 0x2A; "Del" -> 0x4C
         "-" -> 0x2D; "=" -> 0x2E; "[" -> 0x2F; "]" -> 0x30
-        ";" -> 0x33; "'" -> 0x34; "," -> 0x36; "." -> 0x37; "/" -> 0x38
+        "`" -> 0x35; "\\" -> 0x31; ";" -> 0x33; "'" -> 0x34; "," -> 0x36; "." -> 0x37; "/" -> 0x38
         else -> when (val c = label.firstOrNull() ?: return 0) {
             in 'A'..'Z' -> 0x04 + (c - 'A')
             in '1'..'9' -> 0x1E + (c - '1')

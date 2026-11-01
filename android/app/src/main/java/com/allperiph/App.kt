@@ -35,7 +35,7 @@ class App : Application() {
          * 真要截图随时可以用音量下 + 电源键（那条系统组合键没动）。
          */
         private val SHIELD_ACTIVITIES = setOf(
-            "com.allperiph.ui.MainActivity",
+            "com.allperiph.ui.compose.ApShellActivity",
             "com.allperiph.touchpad.TouchpadActivity",
         )
     }
@@ -48,6 +48,23 @@ class App : Application() {
         // 三指手势遮蔽的自愈：上次进程被杀时可能还留着「系统三指手势被改掉」的状态。
         // 必须在这里做 —— 用户可能再也不会打开触控板，靠界面还原就永远等不到。
         GestureShield.healIfNeeded(this)
+        // issue #52 建议 6：全局键盘转发（默认关）——开关从偏好恢复，并把转发实现
+        // 注册进无障碍服务的钩子。无障碍服务由系统随时拉起、没有自己的初始化时机，
+        // 开关状态与实现都只能由 Application 在进程起点灌进去。
+        com.allperiph.ui.GlobalKeyForwarder.loadPref(
+            getSharedPreferences("apx_ime_bridge", Context.MODE_PRIVATE)
+        )
+        // 键映射覆盖层：与转发开关一样在进程起点灌进去，无障碍服务随时被拉起也能读到。
+        com.allperiph.ui.HidKeyOverrides.load(
+            getSharedPreferences("apx_key_overrides", Context.MODE_PRIVATE)
+        )
+        com.allperiph.shared.accessibility.ApxAccessibilityService.keyForwarder =
+            com.allperiph.ui.GlobalKeyForwarder::forward
+        // issue #52 建议 6 第二条腿：外接触控板的 root 直读（默认关）—— 同样在进程
+        // 起点恢复；模块起来后由 RootPointerBridge.start() 实际接管。
+        com.allperiph.touchpad.RootPointerBridge.loadPref(
+            getSharedPreferences("apx_root_pointer", Context.MODE_PRIVATE)
+        )
         registerActivityLifecycleCallbacks(ShieldLifecycle)
     }
 

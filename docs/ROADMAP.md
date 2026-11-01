@@ -352,6 +352,51 @@ CI artifact 或 Release 资产。详见 [`使用说明.md`](./使用说明.md) �
 
 ---
 
+### 2.6 界面层迁移到 Compose + Miuix（2026-11-01 口径）
+
+**决定**：手机端 `android/app` 与电视端 `android/tv` 的界面层**全面**改用 Jetpack Compose +
+Miuix 重写，替换旧的 Views/XML 实现。此前「暂不迁移、只在 TV 试点」的草稿口径作废；
+README 里的「零第三方依赖」不再是界面层的否决理由，改为「逻辑层零依赖 + 界面层依赖白名单」。
+
+**依赖基线**（已在 master）：`androidx.activity:activity-compose:1.10.1`、
+`top.yukonga.miuix.kmp:miuix-ui/blur/preference/icons-android:0.9.4`、
+`dev.chrisbanes.haze:haze:1.7.3`；`compileSdk 37`（Miuix 0.9.4 的 AAR 要求）、
+`minSdk 34` / `targetSdk 35`、AGP 9.4.1、Kotlin 2.4.20。
+
+**迁移顺序**（每阶段一个可独立 revert 的提交）：
+1. 设计系统与主题骨架（`ui/miuix/ApTheme|ApAccent|ApInsets|ApMotion|ApComponents`）；
+2. 手机端主壳 + 状态页；
+3. 手机端触控板页；
+4. 手机端设置页（含「关于」卡从 PoC 转正）；
+5. 电视端主屏 + 文件页；
+6. 切换默认入口、删除遗留 Views/XML、同步文档。
+
+**进度（2026-11-01，master `417cd7f` 之后的实测口径）**：
+
+| 阶段 | 状态 | 说明 |
+|---|---|---|
+| 1 设计系统与主题骨架 | 已完成 | `ui/miuix/ApInsets|ApMotion|ApAccent|ApComponents|ApEffects|ApAdaptive|ApOverlayHost` |
+| 2 手机端主壳 + 状态页 | 已完成 | `ApShellActivity` 接管 LAUNCHER；四页签、四指切页、设备选择器、横屏手势盾 |
+| 3 手机端触控板页 | 已完成 | `TouchpadPage`，手势面用 `pointerInteropFilter` 保原始 MotionEvent |
+| 4 手机端设置页 | 已完成 | 模板/模板管理/环境诊断/文件与传输/传输分类/遥控与键盘/主题数据/键映射/背景图/运行日志（筛选·查看·导出） |
+| 5 电视端主屏 + 文件页 | 已完成 | `TvHome`、`TvFileScreen`、`TvOverlayHost` + 通知浮窗；`TvOverlay`/`RemoteInputOverlay` 有书面理由留 View |
+| 6 切换默认入口、删除遗留 Views/XML | 进行中 | 已删 `MainActivity.kt`/三个 Fragment/`KeyboardPanels`/`TouchpadSplit`/`activity_main`/`activity_screen` 等；`SendActivity`、`GamepadActivity`、`ScreenActivity`、`RemoteInputActivity`、`FilePanelActivity` 已迁 Compose 并脱钩旧主题栈；**旧主题栈剩余调用方**：`TouchpadActivity`、`RemoteActivity`、`ApShellActivity`（仅 `ThemePref.wrap` 提供明暗，`ThemeSkin.applyRuntimeTheme` 已去）、`FloatingBallService`（`wrapService` 还要给 Service 挂 `Theme.AllPeriph`）、`SettingsPage` 切皮肤后的同步调用 |
+
+**剩余一处口径**：`RemoteInputActivity`（被控端输入面板）仍是 View 实现，冻结在
+`EditText` + `TextWatcher` + 平台 IME 这条链路上——逐字增量上屏是文字到对端的**唯一**通道，
+把输入法搬进 Compose 的 `BasicTextField` 属于「拿能不能打出字换一致性」，因此判定为
+**用 `AndroidView` 包住输入框、只迁外壳**，而不是整页重写。这一页迁完，`ThemeSkin`/`ThemePref`
+的取色职责即可正式下线（导出/导入/预设管理属于功能，保留）。
+
+**必须保留的行为**（来自 2026-10-28 三条未落地补丁中仍然成立的部分）：
+edge-to-edge 用框架 `WindowInsets` 手动垫边（systemBars + displayCutout + ime，不引 androidx）；
+模板色只把色相拉向 `system_accent*_600`、饱和度与明度不动；动效与震动档位可关，关时直接落位、不震。
+
+**范围外**：`core/` `hid/` `audio/` `bt/` `gadget/` `wireless/` `localsend/` 逻辑层、
+`shared/` 的 C++、`pc/` 全部。
+
+---
+
 ## 三、已预留的扩展点（改代码前先看这里）
 
 设计原则：**上层业务模块不感知底层是 USB、蓝牙还是 TCP**。所有链路差异收敛到下面两个抽象。

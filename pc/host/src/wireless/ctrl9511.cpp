@@ -183,6 +183,8 @@ struct Ctrl9511Server::Impl {
     /// 手机模式状态（0x31）：计数 + 最近一次位图（位布局见 phone_mode.hpp）
     std::atomic<uint64_t> aModeStatus_{0};
     std::atomic<uint8_t> modeFlags_{0};
+    /// 本次会话是否收到过模式帧（见 Ctrl9511ServerStatus::modeReported）
+    std::atomic<bool> modeReported_{false};
 
     // 远程输入回调（UI 层注册）
     std::function<void(const std::string&)> onRequestInput_;
@@ -273,6 +275,10 @@ struct Ctrl9511Server::Impl {
             st.connected = true;
             st.peer = "(peer)";
         }
+        /* 新会话从「未上报」开始：上一会话的手机模式快照（可用性 + 在用哪条）必须作废，
+           否则面板会把上一模式当成当前状态一直显示（issue#52：切了模式却看到旧状态）。 */
+        modeReported_.store(false);
+        modeFlags_.store(0);
         // ★ 新会话必须清空发送队列：没有对端时 onClipboardChanged() 每变一次剪贴板就
         //   enqueue 一帧反向剪贴板(0x21)，只增不减；不清的话手机一连上就被灌一串历史
         //   旧内容、剪贴板被刷乱。（媒体层 media_session.cpp 同场景已有 outQ_.clear()）
@@ -290,6 +296,10 @@ struct Ctrl9511Server::Impl {
         clientFd = kBadSock;
         st.connected = false;
         st.peer.clear();
+        /* 断链即作废手机模式快照：留着的话面板会继续显示上一模式的「可用 / 在用」，
+           用户看到的就是「都断了还写着无线在用」。——「不知道」就说不知道。 */
+        modeReported_.store(false);
+        modeFlags_.store(0);
     }
 
     void readerLoop(Sock s) {
@@ -457,6 +467,7 @@ struct Ctrl9511Server::Impl {
                拨了没反应只能被当成坏了；改成照实显示手机报上来的状态。
                位布局见 include/apxpc/wireless/phone_mode.hpp（用例钉住，与 Android 侧对拍）。 */
             modeFlags_.store(p[1]);
+            modeReported_.store(true);
             aModeStatus_.fetch_add(1);
         }
     }
@@ -577,8 +588,8 @@ bool Ctrl9511Server::start(uint16_t port, const std::string& token, const std::s
            系统丢弃。真机报障里「手机按了全无反应」最难查的就是这种「连上了、帧也到了、
            注入被吞」；面板横幅 + 首次输入时的系统授权引导兜住它。 */
         if (!platformInputTrusted()) {
-            APX_LOGW("本机未获得输入注入权限（macOS：系统设置 → 隐私与安全性 → 辅助功能 → 勾选 AllPeriph）"
-                     "：手机发来的键鼠此刻不会生效");
+            APX_LOGW("本机未获得输入注入权限（macOS：系统设置 → 隐私与安全性 → {} → 勾选全能外设；改完须重启应用）"
+                     "：手机发来的键鼠此刻不会生效", inputTrustSettingsLabel());
         }
 
         /* 顺序很关键（issue#47 根因）：先把监听端口占上，成功之后再起剪贴板监视线程。
@@ -654,7 +665,14 @@ void Ctrl9511Server::stop() {
 }
 
 Ctrl9511ServerStatus Ctrl9511Server::status() const {
-    if (!impl_) return Ctrl9511ServerStatus{};
+    if (!impl_) {
+        // 受控端没在本进程跑（9511 被另一个实例占用）：其余字段保持默认，但注入权限是
+        // 进程级 TCC 检测 —— 面板自己的 preflight 照实问一次。别让「本面板与另一实例
+        // 都没被授权」的丢输入场景因为默认 true 而伪装成横幅消失。
+        Ctrl9511ServerStatus s0;
+        s0.inputTrusted = platformInputTrusted();
+        return s0;
+    }
     Ctrl9511ServerStatus s;
     {
         std::lock_guard<std::mutex> lk(impl_->clientMu);
@@ -672,6 +690,7 @@ Ctrl9511ServerStatus Ctrl9511Server::status() const {
     s.inputDone = impl_->aInputDone_.load();
     s.modeStatus = impl_->aModeStatus_.load();
     s.modeFlags = impl_->modeFlags_.load();
+    s.modeReported = impl_->modeReported_.load();
     /* 注入权限：macOS 无「辅助功能」授权时 CGEventPost 会被系统静默丢弃。
        每次读状态实时问一次（一次 TCC 查询），面板据此打横幅 —— 不让「连上了、
        帧也到了、注入被吞」这种最难查的组合继续伪装成「没反应」。 */

@@ -73,7 +73,7 @@
 
     <!-- 原「延迟预算 / 触控上行 ≤2ms」：那是研发指标，用户要的是"跟不跟手、不跟手怎么办" -->
 
-    <string name="accessibility_desc">全能外设「被控模式」：把本机作为被控设备，接收另一台设备发来的光标、点击、键盘输入、文件与剪贴板，并作用到本机系统（无需 root）。需要在系统「无障碍」里启用本服务，并允许「显示在其他应用上层」以显示光标。</string>
+    <string name="accessibility_desc">全能外设无障碍服务，两种用途：① 被控模式 —— 把本机作为被控设备，接收另一台设备发来的光标、点击、键盘输入、文件与剪贴板，并作用到本机系统（需另外允许「显示在其他应用上层」以显示光标）；② 键盘转发（默认关闭）—— 把本机接的实体键盘按键转发到电脑，这样不必把 app 挂在前台。两种用途都无需 root。</string>
     <string name="controlled_enable_hint">被控模式已打开：请到系统「无障碍」里启用「全能外设」，并允许「显示在其他应用上层」，手机发来的操作才能真正作用到本机（没授权时只能看到一个跟着动的光标）。</string>
 
     <!-- ↓↓↓ 从 Kotlin 迁入（scripts/kotlin_i18n.py）↓↓↓ -->
@@ -111,6 +111,15 @@
     <string name="ui_main_label_recent_devices">最近连过的设备</string>
     <string name="ui_main_text_no_recent">还没有记录 —— 连上一次就会出现在这里</string>
     <string name="ui_main_btn_a11y_settings">无障碍设置</string>
+    <!-- issue #52 建议 6：物理键盘全局转发（无界面也能用键盘） -->
+    <string name="ui_main_label_global_key_forward">物理键盘全局转发</string>
+    <string name="ui_main_label_global_key_forward_2">不打开 app 也能用</string>
+    <string name="ui_main_hint_global_key_forward_on">已开启：实体键盘按键会转发到电脑。仅转发按键本身，不读取输入内容、不落盘。需在系统「无障碍」里启用本应用。</string>
+    <string name="ui_main_hint_global_key_forward_off">关闭：仅在 app 前台时转发物理键盘。</string>
+    <string name="ui_main_label_root_pointer">外接触控板直读（需 root）</string>
+    <string name="ui_main_hint_root_pointer_on">已接管：外接触控板的移动/按键/滚轮走一手硬件事件（App 不在前台也能用）。仅转发事件、不落盘。</string>
+    <string name="ui_main_hint_root_pointer_need_root">未能接管：读硬件事件需要 root 授权，且要接上外接鼠标/触控板。当前两者有一项不满足，仍走原来的窗口通路（仅 app 前台有效）。</string>
+    <string name="ui_main_hint_global_key_forward_need_a11y">已开启转发，但系统「无障碍」里尚未启用本应用 —— 请点这里去开启。</string>
     <string name="ui_common_close">关闭</string>
     <string name="ui_common_copy">复制</string>
     <string name="ui_common_copied">已复制</string>
@@ -134,6 +143,7 @@
     <string name="ui_main_label_sound">音效</string>
     <string name="ui_main_label_keyrow_arrange">键位排列</string>
     <string name="ui_main_label_keycap_density">键帽密度</string>
+    <string name="ui_main_label_keycap_style">键帽材质</string>
     <string name="ui_main_toast_no_gallery">没有可用的图库</string>
     <string name="ui_main_dialog_color">%1$s 配色</string>
     <string name="ui_main_toast_file_no">没有可用的文件管理器</string>
@@ -189,6 +199,8 @@
     <string name="ui_main_label_mic">　· 麦克风（手机麦克风 → 电脑）</string>
     <string name="ui_main_text_image">自定义图片</string>
     <string name="ui_main_label_motion_2">动效快慢</string>
+    <string name="ui_main_label_color_source">取色方案</string>
+    <string name="ui_main_label_color_source_2">强调色来源</string>
     <string name="ui_main_label_haptic_2">震动强度</string>
     <string name="ui_main_label_sound_2">按键音效</string>
     <string name="ui_main_text_theme">全能外设主题</string>
@@ -285,6 +297,8 @@
     <string name="lay_transport_bt">蓝牙</string>
     <string name="lay_transport_bt_cd">蓝牙开关</string>
     <string name="lay_transport_usb_cd">USB 开关</string>
+    <!-- 状态块三个传输入口按钮的可见标签（原为布局里的字面量「USB」，现由 Compose 渲染） -->
+    <string name="lay_transport_usb">USB</string>
     <string name="lay_status_text_touchpad_cursor_swipe">触控板 —— 手机当鼠标：滑动控光标，轻点左键、双指右键、长按拖选</string>
     <string name="lay_status_text_remote_keyboard">键盘 —— 8 套布局（快捷 / 遥控 / 游戏 / 数字 / 九宫格 / 方向 / F 区 / 自定义），插线与 Wi‑Fi 都能用，电脑免驱</string>
     <string name="lay_status_text_hotkey_template">常用快捷键 —— 多套场景模板一键铺开，可拖拽排序、长按按住不放</string>
@@ -335,9 +349,47 @@
     <string name="ui_main_label_floating_ball">悬浮球</string>
     <string name="ui_main_floating_ball_on">已开启</string>
     <string name="ui_main_floating_ball_off">未开启</string>
+    <!-- 悬浮球开关与画面对不上时（issue #52 第 7 条）：
+         开关读的是持久化「意愿位」，屏幕上的球是「实际结果」——
+         两件事分开说，别让用户对着「已开启」满屏找球。 -->
+    <string name="ui_main_floating_ball_on_not_shown">已开启，但未显示</string>
+    <string name="ui_main_floating_ball_off_but_shown">已关闭，但仍显示</string>
     <string name="ui_main_floating_ball_note">单击展开触控板，长按关闭</string>
     <string name="ui_main_floating_ball_hint">单指移动 · 双指滚动 · 三指滑动</string>
     <string name="ui_main_floating_ball_collapse">收起</string>
+
+    <!--
+      悬浮球功能菜单（issue #52 建议 2）：单击悬浮球展开的菜单项文案。
+      「连接模式」三颗对应 AgentController.TRANSPORTS 的 wifi / bt / usb。
+    -->
+    <string name="ui_ball_menu_connect_mode">连接模式</string>
+    <string name="ui_ball_menu_wifi">无线</string>
+    <string name="ui_ball_menu_bt">蓝牙</string>
+    <string name="ui_ball_menu_usb">USB</string>
+    <string name="ui_ball_menu_touchpad">触控板面板</string>
+    <string name="ui_ball_menu_devices">扫描 / 切换设备</string>
+    <string name="ui_ball_menu_files">文件互传</string>
+    <string name="ui_ball_menu_quit">退出 app</string>
+    <string name="ui_ball_menu_mode_on">已开启 %1$s</string>
+    <string name="ui_ball_menu_mode_off">已关闭 %1$s</string>
+    <string name="ui_ball_menu_quit_done">外设服务已停止</string>
+
+    <!--
+      v223.15 MIUI 快捷球：扇形菜单的快捷项文案 + 设置页「悬浮球功能」多选。
+      快捷项 id → 文案的映射在 BallConfig.labelRes()，加新项要两处一起改。
+    -->
+    <string name="ui_ball_fn_touchpad">触控板</string>
+    <string name="ui_ball_fn_devices">设备</string>
+    <string name="ui_ball_fn_files">文件</string>
+    <string name="ui_ball_fn_console">全屏触控板</string>
+    <string name="ui_ball_fn_quit">退出</string>
+    <string name="ui_ball_group_title">悬浮球</string>
+    <string name="ui_ball_cfg_label">悬浮球功能</string>
+    <string name="ui_ball_cfg_note">单击球展开扇形，只显示勾选项</string>
+    <string name="ui_ball_cfg_title">选择悬浮球功能</string>
+    <string name="ui_ball_cfg_hint">顺序即扇形顺序；勾多了会自动环绕一圈</string>
+    <string name="ui_ball_cfg_keep_one">至少保留一项</string>
+    <string name="ui_ball_cfg_saved">已保存，下次展开生效</string>
     <string name="ui_main_cat_general">通用</string>
     <string name="ui_main_cat_general_hint">模板 · 功能开关 · 方向锁定</string>
     <string name="ui_main_cat_look">外观</string>
@@ -383,6 +435,7 @@
     <string name="ui_hotkey_title">快捷键管理</string>
     <string name="ui_hotkey_title_new">新建快捷键</string>
     <string name="ui_hotkey_title_edit">编辑快捷键</string>
+    <string name="ui_hotkey_auto_sort">自动按使用频率排序</string>
     <string name="ui_hotkey_empty">还没有快捷键，点下面「新建」加一条</string>
     <string name="ui_hotkey_reset_msg">把快捷方式恢复为出厂预置？自建项会丢失。</string>
     <string name="ui_hotkey_field_name">名称</string>
@@ -399,6 +452,7 @@
     <string name="ui_keyboard_power_sent">已发送%1$s 指令</string>
 
     <string name="ui_custom_kbd_title">自定义键盘布局</string>
+    <string name="ui_custom_kbd_hint">长按行内键删除；「＋键」添加，「＋新行」加一行</string>
     <string name="ui_custom_kbd_pick_group">选分组</string>
 
     <string name="ui_filepanel_delete_title">删除文件</string>
@@ -425,7 +479,12 @@
 
     <string name="ui_remote_cursor_on">光标 开</string>
     <string name="ui_remote_cursor_off">光标 关</string>
+    <string name="ui_remote_cursor_need_target">光标浮层由被控端（PC / TV 面板）绘制，连上受控设备后才会出现；开关状态已记住</string>
     <string name="ui_remote_touchpad_hint">触摸控制\n单点 = 确认 · 按住滑动 = 移动光标</string>
+    <string name="ui_remote_target_controlling">正在控制：%1$s（%2$s）</string>
+    <string name="ui_remote_target_fallback">未连接受控设备 —— 按键与触摸条会走 %1$s（作用在已配对的主机 / 本机）</string>
+    <string name="ui_remote_target_no_exit">没有可用出口 —— 点「选择设备」连 TV / PC，或插 USB 线 / 配蓝牙 HID</string>
+    <string name="ui_remote_toast_no_exit">没有可用出口：插 USB 线、配蓝牙 HID，或先选受控设备</string>
     <string name="ui_ime_panel_hint">已启用：物理键盘打字将发送到电脑；切回其他输入法可恢复手机打字</string>
     <string name="ui_touchpad_send_progress">发送 %1$d%%</string>
 
@@ -456,7 +515,7 @@
     <string name="ui_log_empty">没有可导出的日志内容</string>
     <string name="ui_log_empty_hint">暂无日志 —— 只有达到「日志级别」的记录才会留下</string>
     <string name="ui_log_export_failed">导出失败：%1$s</string>
-    <string name="ui_log_exported">已保存到 Download/AllPeriph/%1$s</string>
+    <string name="ui_log_exported">已保存到 %1$s</string>
     <string name="ui_log_head">=== AllPeriph 运行日志导出 ===\n时间: %1$s\n设备: %2$s / SDK %3$s\n\n</string>
 
     <!-- 帮助页：开关与日志说明 / 遥控键位（从各分组搬来的长文） -->
@@ -465,4 +524,33 @@
     <string name="ui_help_cursor_lock">触摸板光标锁定：连上电脑后本窗隐藏系统光标，触控板点击只转发到电脑（Pad 防误触）。</string>
     <string name="ui_help_localsend">互传（LocalSend）：开关 = 接收文件；点行 = 发送文件到电脑 / 其他平台。</string>
     <string name="ui_help_export_log">导出运行日志：一键保存 log.txt 到 Download/AllPeriph，反馈问题时附上。</string>
+    <!-- 主页／帮助页新增文案（迁移到 Compose 时丢了「帮助与说明」入口，本轮补回） -->
+    <string name="ui_help_howto">① 电脑装好 PC 端并打开；② 手机开「运行状态」开关；③ 点顶栏设备名选「本机 / PC」或发现到的设备。Wi-Fi 免 root，USB 需 root 且仅 Windows。</string>
+    <string name="ui_help_open_full">查看完整说明</string>
+    <string name="ui_help_close">关闭</string>
+    <string name="ui_home_section_state">运行状态</string>
+    <string name="ui_home_section_transport">传输通道</string>
+    <string name="ui_home_section_modules">模块</string>
+    <string name="ui_home_label_env">环境自检</string>
+    <string name="ui_home_btn_start">启动</string>
+    <string name="ui_ball_items_title">悬浮球菜单项（勾选后扇形菜单立即按此重建）</string>
+    <string name="ui_ball_item_quit_summary">菜单最后一项：一键停止外设服务</string>
+    <string name="ui_kb_full">全键盘</string>
+    <string name="ui_kb_close">关闭</string>
+    <string name="ui_kb_shift_on">⇧(开)</string>
+    <string name="ui_kb_caps_on">⇪(开)</string>
+    <string name="ui_kb_space">空格</string>
+    <string name="ui_set_sec_skin">皮肤</string>
+    <string name="ui_set_sec_general">通用</string>
+    <string name="ui_set_sec_ball">悬浮栏</string>
+    <string name="ui_set_sec_tpl">快捷键模板</string>
+    <string name="ui_set_sec_env">环境诊断</string>
+    <string name="ui_set_sec_files">文件与传输</string>
+    <string name="ui_set_sec_remote">遥控与键盘</string>
+    <string name="ui_set_sec_theme">主题数据</string>
+    <string name="ui_set_sec_tpl_custom">模板管理（自定义）</string>
+    <string name="ui_set_sec_transport">传输分类</string>
+    <string name="ui_set_sec_keymap">键映射</string>
+    <string name="ui_set_sec_bg">背景图</string>
+    <string name="ui_set_sec_log">运行日志</string>
 </resources>

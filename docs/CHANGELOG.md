@@ -4,6 +4,552 @@
 > **版本线**：v0.4.0 起变更明细随 **GitHub Releases** 随 tag 自动发布（tag 为真源）；
 > 本文件维护 Unreleased 与重要节点（v0.3.x 历史见下）。
 
+## v223.20.1（2026-11-01）
+
+热修 v223.20 的**首启闪退**：装上点开就黑屏退出，进不了界面。
+
+### 根因
+
+`ApShellActivity.onCreate` 在 `setContent {}` **之前**调 `applyImmersive()`，里面读
+`window.insetsController`。Android 15/16 的 `PhoneWindow.getInsetsController()` 直接读
+尚未赋值的 `mDecor` 字段 —— DecorView 还没安装时它**抛 NPE，而不是返回 null**，
+所以 `?: return` 这种写法挡不住。v223.20 恰好把 LAUNCHER 从旧主界面切到
+`ApShellActivity`，潜伏的这行就成了「一开就崩」。
+
+### 修法
+
+改成 `window.decorView.post { ... }`：DecorView attach 到 Window 之后再取 controller，
+未 attach 时先排队 —— 不漏执行，也不会再抛。其余 Activity 的同类调用都在
+`setContentView()` 之后，本来就没有这个窗口期。
+
+### 影响面
+
+只动 Android 手机端的 `ApShellActivity`（主入口）。逻辑层、PC 端、电视端无改动。
+
+## v223.19（2026-11-01）
+
+本版接 issue #52 的**第 13 条**里被漏掉的一半：**电脑端的按键映射表**，以及第 10 条
+剩下的最后一处按钮居中。三份注入器（Windows / Linux / macOS）各有一张
+HID usage → 宿主键码表，漏一条 case **编译器不会报错**，只会落 `default` 被静默丢弃，
+用户看到的是「按了没反应」而日志里一片干净 —— 本轮就是这么漏掉的。
+
+### 修了什么
+
+- **macOS：小键盘整块错位一格**（input_injector_mac.mm）。从 `0x53` 起，每一行都被
+  挪到了**相邻**的键上：按 KP 1 出来的是 Keypad2、按 KP Enter 出来的是 Keypad1、
+  按 KP `*` 出来的是 KeypadMinus……末尾还漏了 **KP 2** 与 **KP =**。
+  现已按 Apple `HIToolbox/Events.h` 的 kVK 值逐键重排
+  （Clear / Divide / Multiply / Minus / Plus / Enter / 1–9 / 0 / . / = 共 18 键）。
+- **macOS：补上原先整段缺失的键** —— PrtSc / ScrLk / Pause 折到 F13–F15；
+  「菜单」键（HID 0x65）改用**右键事件**表达（macOS 公开头文件里没有
+  `kVK_ContextualMenu`，**不猜键码**）；非美键盘 `\|`（0x64）按反斜杠兜底。
+  「按键未映射」日志从 `DEBUG` 升到 **`WARN`** —— 原先 Release 构建下这行被全关掉，
+  用户报「按了没反应」时日志里查不到任何线索。
+- **Windows：补上同一批缺失键** —— PrtSc(`VK_SNAPSHOT`) / ScrLk / Pause /
+  菜单(`VK_APPS`) / 键盘 Power(`VK_SLEEP`) / 小键盘 `=` / 非美 `\|`。
+- **Linux：补上同一批 + 小键盘数字 KP1–KP9**（原先只有 KP0 与 KP .）
+  —— 数字小键盘在 Linux 上此前整片按不动。
+- **两处「够不着 / 编译不过」的错误映射**（同一批排查里查出来的）：
+  - Linux：`case 0x5A → KEY_CLEAR` 与下面的 `case 0x5A → KEY_KP2` 构成
+    **重复 case 标签 → C++ 直接编译失败**。0x5A 是**小键盘 2**，`KEY_CLEAR` 那条已删。
+  - Windows：`case 0x5A → VK_OEM_CLEAR` 被函数开头的 `0x59–0x61` 范围分支**提前拦下**，
+    永远执行不到，既是死代码又语义错，已删。
+- **第 10 条剩余**：代码 `new` 出来的按钮（触控板页的「电视 / 电脑」按钮、「编辑」chip、
+  按键选择器）文字未居中 —— framework `Button` 默认 `gravity=left|center_vertical`，
+  宽按钮上文字贴左。已逐处补 `CENTER`。
+
+### 实现方式
+
+- 新增 `scripts/check_keymap.py` 并接入 CI 的 protocol job。三张表**没有编译器管**，
+  所以做静态关卡：① 覆盖率（100 项必需 usage 全覆盖，不映射必须进白名单并写明理由）；
+  ② **重复 case**（会编译失败）；③ **范围分支之后的死代码**；④ macOS 小键盘
+  18 键 kVK 锚点逐键核对（就是本轮错位的地方，钉死它）。
+  已做反向验证：往 macOS 表里注入一处错位能立刻报出。
+- 三端共用同一份 usage 全集，避免以后再出现「Windows 补了、Linux 没补」。
+
+### 需要确认
+
+1. **macOS 用户**：小键盘数字与四则运算键现在是否**对应正确**（此前会串到相邻键）。
+2. **Windows / Linux 用户**：遥控器上的「菜单」键、键盘的 PrtSc / ScrLk / Pause
+   现在是否有反应。
+3. 若仍有按键无反应，请把日志里的 **`按键未映射：HID usage=0x…`** 那行发上来
+   —— 本版起它一定会出现在日志里（原先 Release 下不输出），能直接定位到是哪一键。
+
+## v223.18（2026-11-01）
+
+本版接 issue #52 的**第 13 条**（遥控器页）与**第 5 条**（蓝牙不成 HID 键鼠），两条都有源码级根因。
+
+### 修了什么
+
+- **遥控器页的虚拟触摸板在 USB / 蓝牙模式下等于废掉**（第 13 条后半）。
+  `RemoteActivity` 的触摸条**直接**读 `ControlTarget.controlClient?.mouse(...)`，只覆盖
+  「无线 9511」一条链路；而**同一页**的方向键 / 确认 / 返回走的是 `HidKeys` → `Uplink.resolve`，
+  USB 与蓝牙都通。于是插线用遥控器时——按键有反应、光标一动不动，只能得出「触摸板坏了」。
+  现在新增 `hid/HidMouse.kt`，把鼠标与多媒体键的三条真实出口收拢成一处（判据仍是
+  `Uplink.resolve`）：无线 9511 → `TvControllerClient.mouse`；USB → rid 0x02
+  `[rid, buttons, dx, dy, wheel, pan]`；蓝牙 → `BtHidDevice.reportMouse`；三条都没有 →
+  记 `Uplink.NONE` 并**返回 false**，界面按失败处理，不再静默丢帧。
+  `RemoteActivity` 的移动 / 单击 / 按下提示与目标行文案全部改走它。
+- **光标浮层开关（0x32）在非无线出口下不再静默无反应**：浮层是**被控端**画的，USB / 蓝牙
+  没有这个能力，过去点了毫无反馈。现在切到被控端能力之外会提示「连上受控设备后才出现，
+  开关已记住」，偏好照旧持久化。
+- **蓝牙 HID 的两处硬缺口**（第 5 条「配对之后系统还是识别为 pad / 手机」）：
+  1. **`BtHidDevice.connect(host)` 全仓没有任何调用点** —— Android 只把 HID SDP 注册上去，
+     HID profile 的连接必须有一端主动 connect，而两端当时都没人做。现在注册成功后
+     向**已配对的电脑 / 电视**（majorDeviceClass = COMPUTER / AUDIO_VIDEO）主动补一次连接；
+     不往耳机 / 车机 / 另一部手机上乱连。
+  2. **没有蓝牙开关监听**：Android 在蓝牙关闭时会拆掉 profile proxy，注册随之失效，
+     而旧实现从不重注册 —— 用户「为了配对去关一次蓝牙再开」之后就一直显示成手机，
+     只有重启模块才恢复。现在挂 `ACTION_STATE_CHANGED`（API 33+ 用 `RECEIVER_NOT_EXPORTED`），
+     关闭时如实降级、开启时自动重注册；`start()` 先看开关，蓝牙没开就 DEGRADED 并说明，
+     不再永远停在 STARTING。
+  - 注册时把 SDP 子类与描述符长度落日志，便于定位主机为什么这么认。
+
+### 实现方式
+
+- `RemoteActivity` 的触摸条不再自己择路；出口判据只有 `Uplink.resolve` 一处。
+  鼠标帧格式复用既有约定：USB 侧 rid 0x02、蓝牙侧 rid 0x01（`sendReport` 负责 Report ID，
+  载荷不含 ID 字节），与触控板模块完全同源。
+- `HidMouse` 只服务「低频、单发」场景，**不复制**触控板模块的 USB 背压状态机
+  （失败帧合并、16ms 补发）：两处各养一份积压状态会互相打架。
+- 蓝牙重注册走幂等的 `openProxy()`，已拿到 proxy 就只补注册，避免代理泄漏。
+
+### 需要真机确认
+
+1. **遥控器页**：USB 有线接电脑、蓝牙连电脑两种情况下，触摸条滑动能否移动光标、单点能否点击。
+2. **蓝牙 HID**：先在**主机端删掉本机旧的配对记录**再重新配对（旧的缓存有设备类型，
+   App 侧改不了），然后看电脑是否认成键鼠。若仍显示成手机，请把
+   `蓝牙 HID 注册状态=…` / `注册 HID：subclass=…` 那几行日志发上来。
+3. 蓝牙自动连不上时，界面会怎样提示（目前只有「自动连已配对的电脑 / 电视」这条路径，
+   **还没有**「手动选择主机」的入口 —— 如果自动连不成功，这条需要补 UI，请反馈）。
+
+## v223.17（2026-11-01）
+
+本版修的是 issue #52 里**两轮都没定位**的那条：实体键盘转发（第 6 条「退后台收不到按键」
+与第 11 条「打快了概率性触发系统功能键」）。根因有真机日志实证，不是推测。
+
+### 修了什么
+
+- **窗口转发桥在主用例里根本没挂上**。转发桥靠包装 `Window.Callback` 拦按键，而它原先
+  **只**在 `TouchpadFragment.ensureViews()` 里挂一次 —— 那是幂等的一次性守卫，首次调用
+  若拿不到 Activity，此后所有调用都被挡回，桥就**永远**挂不上。
+  真机日志（pad，v223.15）里：`MIUIInput` 记录 **2477 条按键全部到达**
+  `MainActivity` 的 ViewRootImpl，而**同一时段本进程除它之外一条日志都没有** ——
+  桥在链上的话，那 2477 次 `dispatchKeyEvent` 必然各留一行 `ApxBridge KEY`。
+  一条都没有 = 桥没挂。
+- **无障碍那条路的长按语义和窗口那条路分叉了**。v223.14 修「长按只出 2 个字符」时
+  只改了 `PhysKeyBridge`；声称「逐条对齐」的 `GlobalKeyForwarder`（无障碍 `onKeyEvent`）
+  仍是 `HidKeys.combo`（60ms 自动释放）—— 释放窗口被系统自动重复事件反复续期，
+  只发一次「按下」、**又始终不发「抬起」**，而 Windows / macOS 对**注入**按键不做自动
+  重复，于是无线模式下长按恒只出一个字符。
+- **抬起丢失没有自愈**（第 11 条的真机制）。转发是有状态链路：按下才发、抬起才放，
+  而 `ACTION_UP` 并不保证送达（退后台、切应用、系统丢帧都会丢）。丢了以后电脑侧会一直
+  按着那个 Ctrl / Shift，此后敲的**每个**字母都带修饰发出 —— 表现正是「输入过快时
+  触发系统快捷键 / 输入错乱」。
+
+### 实现方式
+
+- `PhysKeyBridge` 新增 `ensureAttached(window)`：幂等（重）挂载，已在链上返回 false、
+  不在就重新包装；窗口回调被别人换掉时**不还原**（硬塞回原回调会踩掉别人的包装），
+  只重新包一层并打一条日志，便于下次日志直接看出自愈发生过。
+- 宿主 `MainActivity` 自己持有桥并在**每次 `onResume` 复核**；全屏操控面的
+  `TouchpadActivity` 同样复核；`TouchpadFragment` 不再挂第二份（两处各挂一份会互相拆包装）。
+- `GlobalKeyForwarder` 按 `PhysKeyBridge` ⑤ 逐条对齐：首次按下 `hold()` 按住不放；
+  无线 9511 下每次系统自动重复补一对「释放 → 按下」造出真实边沿；USB / 蓝牙 HID 下
+  对端是真键盘设备、重复由对端负责，本机忽略；抬起 `releaseHold()`。
+- 新增 `PhysKeyBridge.releaseStuckKeys()` 与 `GlobalKeyForwarder.resetKeys()`，
+  在 `onPause` 与转发开关关闭时放掉残留按键，把状态拉回零点。
+
+### 顺带核对掉的一条旧账
+
+- v223.15 的 `accessibility_service_config.xml` **没有** `canRequestFilterKeyEvents`
+  （v223.16 才补上），所以当时「退后台收不到按键」是**两个缺口叠在一起**：窗口那条路
+  没挂桥、无障碍那条路拿不到按键路由。两者本版都已闭环。
+
+### 需要复测
+
+1. 开「物理键盘全局转发」+ 系统无障碍后，把 app 退后台，实体键盘敲字能否到电脑。
+   若仍不行，请导出日志 —— 现在能一眼区分断在「桥没挂」「无障碍没收到」「开关没开」。
+2. 无线模式长按字母 / 退格是否连续出字符（原先只出 1 个）。
+3. 快速连打后是否还会概率性触发系统快捷键。
+4. 回归：主页触控板页与全屏操控面里实体键盘是否都可用。
+
+### 本版未做（等你确认后动）
+
+- mac Dock / 授权对象（第 1 条，方向相反，等你定）、蓝牙设备类型主动上报（第 5 条）、
+  手柄按钮自定义（第 6 条）、悬浮球圆形图标（第 7 条，图请重发）、
+  重复入口合并（第 12 条，等你说全删还是折叠）、遥控器概率失效（第 13 条）。
+
+## v223.16（2026-11-01）
+
+本轮全部来自 issue #52 最新一轮实测反馈（2026-11-01 凌晨那批）。
+
+### 1. 日志导出三端统一（第 3 条）
+
+- **文件名带设备标识**：以前是 `log_1793466844855.txt`，pad + 手机 + 电脑三台的日志
+  摆一起根本分不清是谁的。现在三端统一
+  `apx-logs-<类型>@<设备标识>-<yyyyMMdd-HHmmss>.<ext>`；
+  PC 端 `exportRange` 增 `note` 参数（用户可自定义标识，留空回落本机主机名），
+  同名不再覆盖（自动 `-2` / `-3` 后缀）。
+- **选目录弹窗**：新增 `log.pickDir`。Windows 走 `IFileOpenDialog`（`FOS_PICKFOLDERS`）
+  真弹窗；**macOS / Linux 如实回 `canPickDir=false`**（面板主线程被 accept 循环占着，
+  AppKit 模态框必须在主线程），前端据此把按钮换成「常用目录」下拉。不假装能弹。
+- **Android / TV 共用**新增的 `shared/util/LogExport.kt`：手机写 `下载/AllPeriph/`，
+  电视写 `<外部文件>/APX/`（「收到的文件」目录 —— 电视没文件管理器，只有那里
+  能把文件发回手机/电脑）。
+- **TV 之前完全没有日志导出入口**：主页新增「导出日志」，内容取应用环形缓冲
+  （不读系统 logcat，电视多数没 root）。
+- **修一个平台级缺口**：`web_panel.cpp`（Windows WebView2 壳）此前完全没有
+  `log.list` / `log.export` —— Windows 是主发布平台，日志导出整块不可用，现补齐。
+
+### 2. 界面（第 2 / 4 / 10 条）
+
+- **按钮内文字没居中的根因**：framework `Button` 默认 `gravity=left|center_vertical`。
+  `APButtonGhost` 补 `android:gravity=center` + `minHeight 48dp`；
+  `CustomKeyboardDialog` 里代码 new 出来的按钮同样补 `gravity`。
+- **自定义键盘编辑弹窗**是最后一个没用限高滚动的弹窗（横屏把标题和底部按钮顶出屏幕、
+  编辑不了），套上 `DialogKit.scrollable`，与快捷键管理/编辑/新建同口径。
+
+### 3. 无障碍转发（第 6 条，只加了可诊断性，没改转发逻辑）
+
+- `accessibility_service_config` 补 `canRequestFilterKeyEvents` ——
+  光在 accessibilityFlags 里写 `flagRequestFilterKeyEvents` 只声明「能过滤」，
+  系统不会把按键路由过来；缺这个声明，真机表现正是「无障碍开了、开关也开了，
+  退到后台却收不到按键」。
+- `GlobalKeyForwarder` 在「无障碍收到按键但转发开关没开」时打一条日志，
+  下次用日志就能区分「通道没通」和「开关没开」。
+  **本轮真机日志显示按键到得了窗口、转发器没在路上，具体哪一环未定，不猜、不改。**
+
+### 本版未做（下一批）
+
+- mac Dock 图标 / 授权对象错位（第 1 条）：根因未定，且与现有设计方向相反，
+  等用户确认后再动。
+- 手柄 / 蓝牙设备类型主动上报（第 5 条）、手柄按钮自定义（第 6 条）
+- 悬浮球 UI 换圆形图标（第 7 条）
+- 无线快速输入误触系统键与 Shift 标点（第 11 条）
+- 重复入口合并精简（第 12 条）、遥控器概率失效（第 13 条）
+
+## v223.15（2026-11-01）
+
+本版把 v223.14 之后 master 上的四批改动一起发出 —— 实测反馈里“改了没发 release”
+那几项（Miuix 界面、issue#52 第三轮修复、模式状态同步）现在都在这个 tag 里。
+
+### 1. 模式状态同步（PR #67，issue #52 第 8 条）
+
+用户定的优先级：先修「各端模式状态显示不一致 + 模式识别循环」，再谈各模式功能。
+
+- **关「无线」传输开关时没断开 9511 控制目标** —— 这是「模式循环」的真正来源。
+  三个切换入口只写了 `transport.wifi=false`、不断开客户端，
+  而 `Uplink.resolve` 判「无线可用」的依据正是客户端还活着 —— 于是
+  切到 USB 后输入继续走无线、PC 面板继续显示「无线在用」。
+  现收在 `AgentController.setTransportEnabled`（三处唯一公共写点）：关 wifi 即断开。
+- **`Uplink.observed` 一旦为真永不回退**：切了模式但还没碰屏幕时，
+  手机徽章、通知栏、上报给 PC 面板的「当前在用」全是过期值。
+  新增 `Uplink.reset()`，切传输类、换 / 断开受控目标时调用。
+- **PC 面板按累计计数判「有没有上报」**：`ctrl9511` 的 modeStatus 是历史累计、
+  跨会话不清 —— 断链后仍把上一会话位图当当前状态显示。
+  新增 `Ctrl9511ServerStatus::modeReported`（本次会话是否收过 0x31），握手与断链都清零。
+- 切换后不再等那 2s：模式上报线程比对 `Uplink.generation`，一变即刻补发一帧。
+- 顺带：**悬浮球开关与画面不一致**（第 7 条）按「意愿 + 实际」四态给文案；
+  **mac 浏览器面板的「隐藏」按钮**（第 9 条）按通道隐掉（HTTP 无宿主窗口，
+  后端只能是 no-op）。
+
+### 2. 界面层迁移到 Compose + Miuix（PR #64，阶段 1–5）
+
+状态页、触控板页、设置页核心分组、电视端主屏都换成 Compose + Miuix 嬉皮外壳；
+新增 `ui/miuix/`（设计系统骨架：强调色、组件、边距、动效）与 `ui/compose/`（四张页）。
+
+### 3. issue #52 第三轮反馈（PR #65）
+
+- **USB 提交设备类型 / 手柄不可用**：USB 描述符把 Gamepad 顶层 collection 提到首位
+  —— macOS 用描述符里第一个 TLC 定主用途，排第四时 GameController 不认手柄。
+- **无线音频下拉「本机不支持枚举设备」**：按平台分叉，macOS / Linux 换成说明态
+  （那个列表是宿主的播放端点，无线音频是应用内 PCM 直连、不注册成系统设备）。
+- **无线模式长按只出 2 个字符**：连发节奏短于自动释放窗口，同一帧被反复重发。
+  改为按下 hold、连发前先释放，保证每轮都是真实的按下 → 抬起。
+
+### 4. TV 主屏编译修复（PR #66）
+
+焦点描边色 `Color(if (…) accent else Color.Transparent)` 两分支公共类型退化成 Any 导致编不过，已修。
+
+### 本版未做（下一批）
+
+- mac Dock 图标（第 1 条）：现有设计是「只在菜单栏 + 浏览器面板」，与反馈「未在 Dock 显示」
+  方向相反，已在 issue 里请用户确认后再动。
+- 日志导出多端同步与自定义命名 / 路径选择弹窗（第 3 条）
+- 横竖屏排版、按键变形拉伸（第 4 条）与按屏幕比例切方案
+- 手柄 / 蓝牙设备类型主动上报（第 5 条）、手柄按钮自定义（第 6 条）
+- 悬浮球 UI 按提供的圆形图标改（第 7 条，本版只修了开关与画面不一致）
+- 按钮文字居中（第 10 条）、无线快速输入误触系统键（第 11 条）
+- 重复入口合并精简（第 12 条）、遥控器概率失效（第 13 条）
+
+## v223.14（2026-10-31）
+
+本版补上 **issue #52 建议 6**（「app 设为输入法/无障碍 → 采集输入映射到电脑，
+不必把 app 挂前台」）—— v223.13 时该建议标为待定，现两条腿都已落地（PR #54、#56），
+另含 #56 的真机修正（PR #57）。
+
+### 建议 6 · 不把 app 挂前台也能用键鼠
+
+该能力在 Android 上分两条腿，各自独立开关、独立门槛：
+
+- **键盘腿（无需 root，默认关）**——PR #54 已合入
+  - 走**无障碍 `onKeyEvent`** 全局转发：新增 `ui/GlobalKeyForwarder.kt`（不持有
+    Activity，进程起点恢复开关，SharedPreferences 持久化）与 `ui/HidKeyMap.kt`
+    （keyCode → HID usage 的**单一真源**，`PhysKeyBridge` 改调它，两边不再各写一份码表）。
+  - `ApxAccessibilityService` 加 `onKeyEvent` 与静态钩子（:shared 不能反依赖 :app，
+    故用钩子接）：界面不在前台时按键照样转发。
+  - 需要系统「无障碍」里启用本应用；未启用时设置页**直接带到无障碍设置页**，
+    不给假「已开启」。
+  - **隐私边界**：只转发物理按键本身 —— **不读取输入内容、不读剪贴板、不落盘**。
+- **触控板腿（需 root，默认关）**——PR #56 合入，#57 修正
+  - 触控板位移没有对应的无障碍事件：外接指针的原始位移被系统当**光标**消费，
+    App 不在前台时窗口根本收不到 `MotionEvent`。故直接读硬件：
+    `EvdevPointerReader` 从 `/proc/bus/input/devices` 选指针设备，用
+    **`su -c cat <event 节点>`** 读裸 `input_event`（拿到 root 授权 ≠ 有权直接
+    `open` 该字符设备），只解析 `EV_REL`（X/Y/WHEEL/HWHEEL）与
+    `BTN_LEFT/RIGHT/MIDDLE`，在 `EV_SYN` 处成帧。
+  - `RootPointerBridge` 把位移喂 `TouchpadModule.feedPointer`，与屏上触摸、
+    窗口 hover **同一出口**；按钮位图持久保留（否则「按住拖动」会在第二帧断）；
+    接管时令窗口 hover 通路让位，避免位移双计。
+  - 拿不到 root 或没接指针设备时**如实提示**，仍走原窗口通路，不显示假的「已开启」。
+
+### 修正（PR #57）· 真机内核无 mousedev 时指针设备发现必空
+
+真机复验（小米 15 / Android 15）发现 #56 的设备发现逻辑在该内核上**静默失效**：
+
+- `cat /proc/bus/input/handlers` 只注册了 `leds / evdev / input-boost / xiaomi-fp /
+  xiaomi-touch / kgsl` —— **没有 mousedev**；`/dev/input/` 下只有 `eventN`、
+  没有 `mouseN` 节点，全机设备 `mouseN` 出现 **0 次**。
+- 原实现只认 Handlers 里的 `mouseN`，于是恒返回空、开关开了也不接管
+  （与问题 5「状态显示与实际不符」同类）。
+
+修法：判据改为「`mouseN` **或** 能力位图（`EV` 含 `EV_REL` 且 `KEY` 含 `BTN_LEFT`）」
+取或，并改用 `eventN` 定位节点。触摸屏是 `EV_ABS`、键盘无 `EV_REL`、手柄无 `REL`，
+据此都不入选；自家虚拟设备按名字继续排除以防自激。
+
+### 真机验证（本机内核）
+
+- **位图分组顺序**：用真机 `gpio-keys` 的 `KEY=8000000000000 0` 核对 —— 位 115
+  （`KEY_VOLUMEUP`，真机音量键）命中，确认首组为高位组、`gi = size-1-(b/64)`，
+  与内核 `input_print_bitmap` 的逆序输出一致。
+- **解析层端到端**：用 `/dev/uinput` 造真指针设备（该内核 legacy write 返 `EINVAL`，
+  须走 `UI_DEV_SETUP`），发 `EV_REL(7,-3)` / `BTN_LEFT` 按下再松开 / `WHEEL +1`，
+  用与 Kotlin 端**逐行等价**的解析器读 `eventN`：得 `[(7,-3)]` / `[1,0]` / `[1]`,
+  24 字节/帧、`type@16`/`code@18`/`value@20`、`EV_SYN` 成帧、按钮位图全部正确。
+  该设备 Handlers 无 `mouseN`：**新判据认出、旧判据漏掉**。
+- **实际读取路径**：走 App 真正用的 `su -c cat <eventN>`（subprocess stdout 读裸二进制）
+  复验，位移 `[(12,-5)]` / 按钮 `[1,0]` / 滚轮 `[-2]` 全部正确，stderr 未污染 stdout。
+- `com.allperiph` 已在本机 KernelSU 授权列表内（`/data/adb/ksu/.allowlist`），
+  应用侧确实能拿到 root。
+
+### 验证状态
+
+- CI：Android 编译 + lint、PC 三平台、协议校验、mac 构建。
+- 触控板腿已验证到**解析层与 `su -c cat` 读取层**（真机合成设备）；
+  **接真鼠标/触控板的实操端到端仍待真机回验**。
+- v223.13 遗留的待回验项（建议 3 莫奈取色、问题 3/5/6）不变。
+
+---
+
+## v223.13（2026-10-31）
+
+本版是 **issue #52**（v223.12 真机实测）的集中落地：**6 个问题全部修复**，
+7 条功能建议中 **6 条已实现**（建议 6 待定，见文末）。PR #53，12 个提交。
+
+### 问题修复
+
+- **问题 1 · macOS 授权改名与自救出口**（macOS 26/27 把「辅助功能」改叫
+  「设备控制与数据访问」）
+  - 权限面板显示名改由后端按系统版本下发，前端不再写死旧名
+  - 授权横幅改三个按钮：**打开系统设置** / **重新检测** / **重启应用**，说明如实化：
+    TCC 拒绝过一次就不再弹窗，`input.recheck` 只在「未决定」时能拉起系统弹窗；
+    改回决定的唯一入口是系统设置，且**授权后必须重启应用**才生效（系统只在进程启动时
+    读一次授权状态）。这解释了报障者观察到的「app 壳里点了没用、终端启动却会消失」
+  - 新增 `input.openSettings`（深链 + AX prompt 兜底）与 `app.relaunch` 两个面板 act
+  - 注入进程身份随状态下发（`.app` 双击启动 = AllPeriph；终端启动 = 终端 App），
+    用户能对上系统设置里该勾哪一项
+- **问题 2 · 横屏页面/弹窗显示不全**
+  - **弹窗**：快捷键管理、快捷键编辑、设置页模板新建、主页模板新建四处长内容对话框
+    套**限高滚动**（新增 `ui/kit/DialogScroll.kt`）。此前是 `setView(自绘 LinearLayout)`，
+    平台不加滚动 —— 竖屏装得下，横屏可视高度只剩一半多，标题与底部按钮被顶出屏幕。
+    用带硬上限的 ScrollView 子类在 `onMeasure` 里把上限压到屏高 62%（下限 140dp），
+    内容没超就贴合、超了就滚，按钮始终可见
+  - **页面**：横屏底部留白此前被 `layout-land` 覆盖为 16dp，而悬浮底栏占 96dp ——
+    设置页右栏分类列表因此被底栏压住、末项重叠。`layout-land` 已删，横竖屏统一 96dp
+    （详见建议 4）
+- **问题 3 · 无线模式按键映射错 / 无反应**
+  - `input_injector_mac` 方向键左右写反修正（0x4F/0x50 的 kVK 互换）
+  - 补齐标点、F1–F12、编辑键、小键盘、CapsLock 码表 —— 此前这些全部落 `default`
+    返回 -1 被**静默丢弃**（「标点键无反应」的根因）；未映射键现在会打日志，不再无声
+  - `HidKeys` 补反斜杠与反引号的 usage
+- **问题 4 · 双指滚动被误判为双指右键**
+  - `GestureEngine` 加**位移守卫**：双指质心累计位移 ≥ 阈值即锁存「已进入滚动」，
+    550ms 长按定时器判定时不再注入右键；缩放跨阈后重建基线；滚动亚像素累加（慢滚不丢帧）
+- **问题 5 · USB 模式状态显示与实际不符**
+  - 触控板显示「已停止」实则可用：`StatusFragment` 双组模块（触控板 = wifi+usb）
+    此前只把第一组放进刷新表，USB 卡那行是构建时快照、永不更新 —— 改为该模块
+    **所有分组**的行一起刷新
+  - gadget 显示「降级运行」实则正常：`GadgetManager` 不再因**绑定 UDC 之前**的链路速度
+    快照判 DEGRADED（该读数常取到 adb/MTP 的旧速度）；速度差异降为文案说明
+    （「USB 2.0（输入全功能，仅音频带宽受限）」）
+- **问题 6 · 全屏操控面实体键盘/触控板不可用**
+  - `TouchpadActivity`（全屏操控面是独立 Activity）接入 `PhysKeyBridge` ——
+    此前全屏页从没接过这条链路，主页触控板页的桥管不到独立 Activity，实体键盘按键、
+    实体触控板 hover/指针事件全落进系统默认路径，用户看到的就是「实体键盘无法使用、
+    实体触控板单指失效」
+
+### 功能建议落地
+
+- **建议 1 · 被控端居中蓝点**：根因是首次取到屏幕尺寸时把光标预置到屏幕正中，随后
+  `setConnected(true)` 无条件画点 —— 连接成功的一瞬屏幕上就多一颗静止蓝点。改为落点
+  右上角内缩一格 + 新增「对端真的下发过移动帧」才画点的标志；静止的居中蓝点消失，
+  一动鼠标点照旧跟手。浮层本体（大小/颜色/显隐开关 0x32）不变
+- **建议 2 · 悬浮球手势与功能菜单**：单击球 = 展开/收起功能菜单（连接模式
+  无线/蓝牙/USB 三颗 + 触控板/扫描切换设备/文件互传/退出 app），菜单与触控板面板互斥；
+  拖动抬手后贴近左右边缘 < 48dp 自动**吸附侧边停靠**并降到 0.42 透明度，停靠态单击恢复；
+  菜单是独立 overlay 窗口（球在哪侧就贴另一侧，纵向夹回屏内）。退出顺序：
+  `ControlTarget.clear → TvDiscovery.stop → AgentController.stopAll → 停前台服务 → 停悬浮球`
+- **建议 3 · 莫奈取色**：强调色原本是 `@color/md_*` 编译期常量，必须加一层主题属性间接
+  才能跟随系统。新增 `apPrimary/apPrimaryPressed/apPrimaryContainer/apOnPrimary` 四个属性
+  + `APMonetOverlay`（映射 `@android:color/system_accent1_*`，色阶照 androidx material3
+  values-v31 核过）；**只叠加不替换**（surface/outline/error 仍走 md_* 令牌）；对话框单开
+  `.Monet` 变体，34 处 `AlertDialog.Builder` 统一走 `ThemeSkin.dialogStyle()`；设置页新增
+  「取色方案」（品牌蓝/跟随系统取色，默认品牌蓝 —— 默认行为与改动前逐像素一致）。
+  XML 11 处 + Kotlin 26 处取色点改走属性读取
+- **建议 4 · 横屏保持竖屏顶栏/底栏**：`headerBar`/`tabBar` 两种朝向恒可见；右上角 pill
+  按钮组整条下线（此前为躲它做的三处让位写回原值）；横屏不再盖掉状态栏（顶栏回来了，
+  否则标题压到时间/电量上）；删除 `res/layout-land/activity_main.xml`（否则冷启动即横屏
+  时会加载沉浸版布局，与旋屏走同一棵竖屏树的结果不一致），触控板页左右分栏继续由
+  `TouchpadSplit` 在运行时重排
+- **建议 5 · 日志分文件 + 按日期时间范围导出**
+  - 日志行前缀补日期 `[YYYY-MM-DD HH:MM:SS.mmm]`（原只有时分秒，跨天后按日期筛无从下手）
+  - 落盘文件名改 `apxdesktop-YYYYMMDD-HHMMSS.log`（每次启动一份，按最旧淘汰保留 10 份）；
+    原来是固定名 + 超 2MB 先删，等于只有最后一次运行的日志，想挑一段历史挑不到
+  - 新增 `apxpc::logexport`（三端共用，只依赖标准库）：`list` 列类型与文件、
+    `exportRange` 按行首时间戳做窗口过滤后合并写出；兼容旧格式行（用文件 mtime 补日期）
+  - 面板新增 `log.list` / `log.export` 两个 act；web 端新增 `LogExportModal`：类型下拉、
+    起止时间（`datetime-local step=1`，精确到秒）、快捷「近 1 小时/近 24 小时/全部」、
+    导出目录可改、结果显示实际行数与导出路径；底栏加「日志」入口
+- **建议 7 · 虚拟键盘长按连续输入**：按住 400ms 后每 55ms 重复发送同一个键，松开即停；
+  松开时吞掉多出来的那一次 click（否则长按退格会「连发 N 次 + 抬手 1 次」多删一个字符）；
+  修饰键不参与连发；`ACTION_CANCEL`（手指滑出键帽）当场清标志
+
+### 待定
+
+- **建议 6**（「app 设为输入法/无障碍 → 采集输入映射到电脑，不必把 app 挂前台」）：
+  **本版未实现**。该能力在 Android 上分两条腿 —— 键盘可经
+  `InputMethodService.onKeyDown` 转发（无需 root，仓库已有转发桥），但**外接触控板的
+  原始位移被系统当光标消费**，普通 IME/无障碍拿不到，需读 `/dev/input/event*`（evdev，root）。
+  采集范围与隐私边界（是否落盘、默认开关）需先确认，故不在本版
+
+### 验证状态
+
+- 三端 CI 全绿：Android 编译 + lint、PC 三平台（win/mac/lin）、协议校验、mac 构建，共 6 项
+- **建议 3（莫奈取色）仅编译级验证，待真机回验**
+- 问题 2 页面部分（横屏设置页底栏压底）与问题 3/5/6 的修复，均对着真机反馈与代码核实，
+  **待报障者真机回验**
+
+---
+
+## v223.12（2026-10-29）
+
+本版为键盘 UX 修缮 + 机械键帽（PR #50，五问评估后的 P0+P1 落地）。
+v223.11 之后 master 唯一增量，此前未随版发布。
+
+### UX 修复（P0）
+- **编辑器选键缺口**：`KEY_CHOICES` 补反引号（0x35 —— 模板「终端运维」的
+  Ctrl+` 此前选不出）、PrSc/ScrLk/Pause（0x46–0x48）；`KEY_GROUPS` 同步。
+- **自定义布局误删防护**：行内键从「点一下即删」改为**长按删除**，
+  顶部加操作提示 —— 误触不再直接删键。
+- **拖拽排序跨行修正**：`HotkeyBoard.reorder` 从只按中心 X 匹配改为
+  **二维匹配**（先 Y 找最近行，行内再按 X），跨行拖动不再插错行；
+  `ComboChip` 回调补 `dropCenterY`。
+
+### 机械键帽（P1）
+- `KeyPref` 新增**键帽材质**维度（平面/机械）；机械档 = 三层立体键帽
+  （底座 + 侧壁 + 顶面高光）+ 按压下沉动画 + 三段波形震动
+  （按下冲击 → 触点停顿 → 回弹）。
+- 新增**机械轴音**：SoundPool 播 `res/raw/mech_click.wav`
+  （青轴式双响短噪声脉冲），不跟随系统触摸音效开关。
+- 音效档位加「机械轴」；设置页键盘外观段加「键帽材质」行。
+
+### 快捷键更新（P1）
+- 新增 `ROW3` 默认集：重开标签（Ctrl+Shift+T）、任务视图（Win+Tab）、
+  截图（Win+Shift+S）、通知中心（Win+N）、最小化（Win+M）。
+- 管理列表内嵌**自动排序开关**（原埋在设置页深处）。
+- 长按 chip「按住」态加视觉高亮（与轻点按下区分）。
+
+### 其他
+- 键帽 `contentDescription`（无障碍：「发送 X」/「X 修饰键」）。
+- 自定义键盘对话框顶部操作提示行。
+
+---
+
+## v223.11（2026-10-29）
+
+本版集中处理 mac 端四件报障事（互传「提示不支持」、辅助功能检测、托盘状态、
+连接卡模式显示）与 Win 壳连接卡回填；同时把 PR #49 的 mac 双击闪退修复
+正式带上发布线（该修复已在 master，自 v223.10 起未发过版）。
+
+### 修复（mac）：双击 AllPeriph.app 闪退（PR #49，issue #47）
+两层根因，都已修，并加了防回归：
+
+- **bundle 封印破损**：打包管线 `codesign --deep` 签完后又把 `web/` 拷回
+  `Contents/MacOS/web`，`CodeResources` 里没有它的记录 —— Apple Silicon 对
+  「签名后被改动」的 .app 直接 SIGKILL（崩溃报告只在
+  `~/Library/Logs/DiagnosticReports`，界面无任何提示）。修法：`web/` 在签名
+  **前**放进 bundle、改放 `Contents/Resources/web`；签名不用 `--deep`；
+  新增 `codesign --verify --strict` 自证，seal 不完整直接红，不再出带病包。
+  v223.7 起 mac 包全部中招，本版起恢复。
+- **AppKit 必须拥有主线程**：托盘（NSStatusItem）在非主线程初始化抛
+  `NSInternalInconsistencyException`，主线程的 `catch(...)` 接不住别的线程的
+  异常。修法：tray 的 AppKit 初始化回到主线程并 `@try/@catch` 兜底
+  （headless SSH 下无托盘、应用继续跑）；HTTP 面板挪到后台线程，主线程跑
+  托盘事件泵。
+- **CI smoke test**：用 LaunchServices `open` 走真实双击路径启动 .app，
+  封印破损或线程崩溃当场红 —— 这是能抓住这两类问题的「双击模拟」。
+- 顺手：mac zip 的 README 补退出方式说明（托盘菜单已存在）。
+
+### 修复（mac）：浏览器面板互传「提示不支持」—— file.send 真实现
+报障者点的是**文件面板**（FilePanelModal）：它此前没有 HTTP 面板管线适配，
+后端 `file.send` 也只是个桩，点了直接回「本机不支持」。现已接真：
+
+- `file.send` 走 `sendFile`(9512) 直发手机，每 10% 推一次进度事件
+  （`on-file-send-progress` / `on-file-send-done`），FilePanelModal 按 HTTP
+  语义适配：act-response = 已入队，等 done 事件收尾；主按钮补 `label[for]`。
+- 发送白名单与 `file.delete` 同一接收目录，`weakly_canonical` 防路径穿越。
+- 「上传到手机」：`/api/upload` 支持 `?target=file`；未连手机时只落盘并回
+  warn，不假装已发。
+
+### 修复（mac）：辅助功能检测体验
+- 横幅写明**卡住的是哪个进程**、需要哪个权限；解释包里三个 TCC 身份
+  （AllPeriph.app / 裸 apxdesktop / apxhost，各自 ad-hoc 签名）—— 在系统设置
+  里勾错对象就会出现「明明开了还是不行」。
+- 横幅上加「重新检测」（发 `input.recheck`，实时预检授权状态）与
+  「弹出授权引导」（直达系统设置对应开关）两个按钮；勾选后 1 秒内自动消失。
+- 授权预检的 stderr 输出改走 APX_LOG 落盘（`~/Library/Logs/AllPeriph/`），
+  报障可回查。
+
+### 修复（mac+win）：托盘状态回传 + 连接卡如实显示
+- 托盘创建失败的具体原因随 `/api/state` 的 `tray` 字段回传面板（是否创建、
+  是否激活、失败原因），不再只能靠猜；托盘通知改为跨线程排队投递。
+- **Dock 没有图标是设计使然**：纯托盘应用 `setActivationPolicy:Accessory`，
+  README 已注明，不是 bug。
+
+### 修复（win）：连接卡三行永远「未上报」
+- Win 壳此前没把 Ctrl9511Server 的状态喂给面板 buildState，「手机上报 /
+  输入信任 / 受控服务」三行恒为未上报。HostBundle 增加 ctrlSrv 指针，
+  desktop_main 在 Win 下注入，三行恢复真实数据（手机 0x31 解码、
+  `platformInputTrusted()` 实时查询、受控端连接状态）。
+- 新增 `phone.shared` 字段：受控端由**另一实例**提供（ctrlShared）时，
+  本面板读不到手机上报属正常 —— 面板如实显示「受控端由另一实例提供
+  （不是故障）」并加「经另一实例」标记，不再误报为手机未上报。
+
+### 其他
+- CI 抓到 `TrayStatus` 嵌套类型在类外定义返回值需全限定
+  （`TrayIcon::TrayStatus`），mac / Win 三处已修。
+
 ---
 
 ## v223.10（2026-10-27）

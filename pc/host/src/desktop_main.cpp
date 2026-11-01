@@ -21,6 +21,7 @@
 // ScreenPush 在 mac **完全不声明**（见下方链接说明）；Linux 报错退出。
 
 #include "apxpc/log.hpp"
+#include "apxpc/log_export.hpp"
 #include "apxpc/ui/web_panel.hpp"
 #include "apxpc/ui/panel_http.hpp"
 #include "apxpc/wireless/wireless_session.hpp"
@@ -68,6 +69,7 @@
 #endif
 #endif
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -76,6 +78,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 
 #if defined(__APPLE__)
 extern char** environ;   // posix_spawn 要传父进程环境（/usr/bin/open 依赖它）
@@ -508,11 +511,32 @@ void startFileLogging() {
     const std::string dir = logDir();
     std::error_code ec;
     std::filesystem::create_directories(dir, ec);
-    const std::string path = dir + "/apxdesktop.log";
+    // v223.13（issue #52 建议 5）：文件名改成「类型 + 时间戳」——
+    //   apxdesktop-YYYYMMDD-HHMMSS.log，每次启动一份。
+    // 原来是固定 apxdesktop.log + 超 2MB 先删，等于「只有最后一次运行的日志」，
+    // 报障者想按日期时间范围挑一段导出根本无从下手。现在每次启动独立成文件，
+    // 目录里最多留 10 份（按最旧淘汰），导出时按类型 + 时间窗筛。
+    const std::string path = dir + "/apxdesktop-" + apxpc::logexport::stampNow() + ".log";
     {
+        std::vector<std::filesystem::directory_entry> olds;
         std::error_code e2;
-        const auto sz = std::filesystem::file_size(path, e2);
-        if (!e2 && sz > 2u * 1024u * 1024u) std::filesystem::remove(path, e2);
+        for (std::filesystem::directory_iterator it(dir, e2), end; !e2 && it != end; it.increment(e2)) {
+            const std::string n = it->path().filename().string();
+            if (n.rfind("apxdesktop", 0) != 0 || n.size() < 5) continue;
+            if (n.compare(n.size() - 4, 4, ".log") != 0) continue;
+            if (it->path().string() == path) continue;
+            olds.push_back(*it);
+        }
+        std::sort(olds.begin(), olds.end(), [](const auto& a, const auto& b) {
+            std::error_code x, y;
+            return a.last_write_time(x) < b.last_write_time(y);
+        });
+        constexpr std::size_t kKeep = 10;
+        while (olds.size() >= kKeep) {
+            std::error_code e3;
+            std::filesystem::remove(olds.front().path(), e3);
+            olds.erase(olds.begin());
+        }
     }
     static std::mutex mu;
     static std::FILE* f = std::fopen(path.c_str(), "a");
@@ -682,6 +706,9 @@ int runDesktopMain() {
     bundle.micBridge    = micBridge.get();
     bundle.tray         = tray.get();
     bundle.hotkey       = hk.get();
+#if defined(_WIN32)
+    bundle.ctrlSrv      = &ctrlSrv;   // web_panel buildState 读受控端状态（phone/inputTrusted）
+#endif
     bundle.cfg          = &cfg;
     bundle.configPath   = cfgPath;
 
@@ -693,7 +720,22 @@ int runDesktopMain() {
     // 9511 受控端由 runWebPanelHttp 内部的 HttpPanel::ctrlSrv **唯一**创建
     // （本文件上方对 mac 已不再创建 —— 重复创建就是 v223 打开即崩的根因，见上方注释）。
     // 其余（startAuto / 9512 收文件事件 / 媒体泵 / 麦克风接线）由 runWebPanelHttp 统一负责。
-    const int rc = apxpc::ui::runWebPanelHttp(bundle, {});
+    //
+    // ⚠️ 面板必须挪后台线程：托盘（AppKit）必须占**主线程** —— 非主线程建
+    // NSStatusItem/NSApp 会抛 NSInternalInconsistencyException（NSException），
+    // 无人接住就是 std::terminate。CI macOS 26 实锤（issue#47 第二层根因）：
+    // seal 修好后 app 依然「双击秒退」就是这里（旧设计托盘自带 NSThread 上建 AppKit）。
+    // 主线程交给 tray->run() 的 AppKit 事件泵，面板跑后台线程；两条退出路径都会合：
+    //   · 菜单「退出」→ requestPanelQuit() → 面板线程收尾 → tray->quit() → 泵退出；
+    //   · 面板自己退（前端「退出」）→ 面板线程 tray->quit() → 泵退出。
+    std::atomic<int> panelRc{0};
+    std::thread panelThread([&] {
+        panelRc.store(apxpc::ui::runWebPanelHttp(bundle, {}));
+        tray->quit();   // 面板先退：把托盘事件泵放下来（幂等，只置标志）
+    });
+    tray->run();        // 主线程：AppKit 事件泵，阻塞到 quit / 面板线程收尾
+    panelThread.join();
+    const int rc = panelRc.load();
 #else
     std::fprintf(stderr,
                  "apxdesktop 桌面壳暂仅支持 Windows/macOS；Linux 请用 apxhost panel\n");

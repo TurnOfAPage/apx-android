@@ -12,6 +12,7 @@ import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import android.widget.Switch
 import android.widget.TextView
 import com.allperiph.R
 import com.allperiph.hid.HidKeys
@@ -190,7 +191,7 @@ class HotkeyBoard(
         ComboChip.attach(
             this, c,
             onSent = { HotkeyStore.bump(act, c) },
-            onReorder = { from, dropCenterX -> reorder(from, dropCenterX) },
+            onReorder = { from, dropX, dropY -> reorder(from, dropX, dropY) },
         )
     }
 
@@ -210,26 +211,40 @@ class HotkeyBoard(
         setMargins(dp(3), dp(3), dp(3), dp(3))
     }
 
-    /** 拖拽落位：按所有块的中心 X 找最近的一块，把条目插到那个位置并落盘 */
-    private fun reorder(from: Int, dropCenterX: Float) {
-        val views = chipViews()
+    /** 拖拽落位：先按中心 Y 找最近的一行，再在行内按中心 X 找最近的一块——跨行拖动也能落对位置 */
+    private fun reorder(from: Int, dropCenterX: Float, dropCenterY: Float) {
+        val rowViews = chipRows()
+        val views = rowViews.flatten()
         if (views.size < 2 || from !in shortcuts.indices) return
         val displayOrder = views.mapNotNull { it.tag as? Int }
         val movingAt = displayOrder.indexOf(from)
         if (movingAt < 0) return
         val loc = IntArray(2)
-        var nearest = 0
+        // 第一级：按中心 Y 找最近的一行
+        var nearestRow = rowViews.first()
+        var bestRowDist = Float.MAX_VALUE
+        rowViews.forEach { row ->
+            row.first().getLocationInWindow(loc)
+            val d = abs(loc[1] + row.first().height / 2f - dropCenterY)
+            if (d < bestRowDist) {
+                bestRowDist = d
+                nearestRow = row
+            }
+        }
+        // 第二级：行内按中心 X 找最近的块
+        var nearestView = nearestRow.first()
         var best = Float.MAX_VALUE
-        views.forEachIndexed { k, v ->
+        nearestRow.forEach { v ->
             v.getLocationInWindow(loc)
             val d = abs(loc[0] + v.width / 2f - dropCenterX)
             if (d < best) {
                 best = d
-                nearest = k
+                nearestView = v
             }
         }
         val rest = displayOrder.toMutableList().apply { removeAt(movingAt) }
-        val insertAt = if (nearest > movingAt) nearest - 1 else nearest
+        val nearestAt = displayOrder.indexOf(nearestView.tag as Int)
+        val insertAt = if (nearestAt > movingAt) nearestAt - 1 else nearestAt
         rest.add(insertAt.coerceIn(0, rest.size), from)
         shortcuts = rest.map { shortcuts[it] }.toMutableList()
         preferManualOrder()
@@ -238,14 +253,17 @@ class HotkeyBoard(
         onChanged?.invoke()
     }
 
-    private fun chipViews(): List<View> {
-        val out = ArrayList<View>()
+    /** 按行分组的 chip 视图（tag 为 Int 的才算；空格占位块不算） */
+    private fun chipRows(): List<List<View>> {
+        val out = ArrayList<List<View>>()
         for (r in 0 until container.childCount) {
             val row = container.getChildAt(r) as? ViewGroup ?: continue
+            val chips = ArrayList<View>()
             for (k in 0 until row.childCount) {
                 val v = row.getChildAt(k)
-                if (v.tag is Int) out.add(v)
+                if (v.tag is Int) chips.add(v)
             }
+            if (chips.isNotEmpty()) out.add(chips)
         }
         return out
     }
@@ -266,6 +284,19 @@ class HotkeyBoard(
             setPadding(dp(20), dp(4), dp(20), dp(4))
         }
         val box = LinearLayout(act).apply { orientation = LinearLayout.VERTICAL }
+        // 自动排序开关：从设置页挪一个入口到这里，排序模式随手切
+        val sortSw = Switch(act).apply {
+            text = act.getString(R.string.ui_hotkey_auto_sort)
+            textSize = 13f
+            setTextColor(s.textSecondary)
+            isChecked = HotkeyStore.isAutoSort(act)
+        }
+        sortSw.setOnCheckedChangeListener { _, on ->
+            Feedback.tap(sortSw)
+            HotkeyStore.setAutoSort(act, on)
+            render()
+        }
+        box.addView(sortSw, LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(16), dp(4), dp(16), dp(2)) })
         box.addView(ScrollView(act).apply { addView(list) }, LinearLayout.LayoutParams(-1, 0, 1f))
 
         fun rebuild() {
@@ -313,9 +344,10 @@ class HotkeyBoard(
         }
         rebuild()
 
-        val dlg = AlertDialog.Builder(act, R.style.Theme_AllPeriph_Miuix_Dialog)
+        val dlg = AlertDialog.Builder(act, com.allperiph.ui.ThemeSkin.dialogStyle())
             .setTitle(act.getString(R.string.ui_hotkey_title))
-            .setView(box)
+            // 横屏高度只有竖屏一半多：长列表套限高滚动，别把底部按钮顶出屏幕（issue #52 问题 2）
+            .setView(com.allperiph.ui.kit.DialogKit.scrollable(act, box))
             .setPositiveButton(act.getString(R.string.ui_common_new), null)
             .setNeutralButton(act.getString(R.string.ui_common_restore_default), null)
             .setNegativeButton(act.getString(R.string.ui_common_done), null)
@@ -358,7 +390,7 @@ class HotkeyBoard(
     }
 
     private fun confirmReset() {
-        AlertDialog.Builder(act, R.style.Theme_AllPeriph_Miuix_Dialog)
+        AlertDialog.Builder(act, com.allperiph.ui.ThemeSkin.dialogStyle())
             .setTitle(act.getString(R.string.ui_common_restore_default))
             .setMessage(act.getString(R.string.ui_hotkey_reset_msg))
             .setPositiveButton(act.getString(R.string.ui_common_restore)) { _, _ ->
@@ -418,7 +450,9 @@ class HotkeyBoard(
         val keyBtn = TextView(act).apply {
             text = picked.first
             textSize = 15f
-            gravity = Gravity.CENTER_VERTICAL
+            // 整行宽的按键选择器：只给 CENTER_VERTICAL 等于文字贴左（Gravity.CENTER_VERTICAL
+            // 的 horizontal 位是 0 = left）。issue#52 第 10 条「部分按钮文字没居中」。
+            gravity = Gravity.CENTER
             setTextColor(s.accent)
             setPadding(dp(14), dp(12), dp(14), dp(12))
             background = rounded(s.chipBg, dp(12), s.chipStroke)
@@ -435,9 +469,9 @@ class HotkeyBoard(
         }
         box.addView(keyBtn, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
 
-        val dlg = AlertDialog.Builder(act, R.style.Theme_AllPeriph_Miuix_Dialog)
+        val dlg = AlertDialog.Builder(act, com.allperiph.ui.ThemeSkin.dialogStyle())
             .setTitle(act.getString(if (editing) R.string.ui_hotkey_title_edit else R.string.ui_hotkey_title_new))
-            .setView(box)
+            .setView(com.allperiph.ui.kit.DialogKit.scrollable(act, box))
             .setPositiveButton(act.getString(R.string.ui_common_save), null)
             .setNegativeButton(act.getString(R.string.ui_common_cancel), null)
             .apply { if (editing) setNeutralButton(act.getString(R.string.ui_common_delete), null) }
@@ -475,11 +509,11 @@ class HotkeyBoard(
     /** 按键选择：一级选组、二级选键 */
     private fun pickKey(onPicked: (Pair<String, Int>) -> Unit) {
         val groups = HidKeys.KEY_GROUPS.map { it.first }.toTypedArray()
-        AlertDialog.Builder(act, R.style.Theme_AllPeriph_Miuix_Dialog)
+        AlertDialog.Builder(act, com.allperiph.ui.ThemeSkin.dialogStyle())
             .setTitle(act.getString(R.string.ui_hotkey_pick_group))
             .setItems(groups) { _, gi ->
                 val (groupName, keys) = HidKeys.KEY_GROUPS[gi]
-                AlertDialog.Builder(act, R.style.Theme_AllPeriph_Miuix_Dialog)
+                AlertDialog.Builder(act, com.allperiph.ui.ThemeSkin.dialogStyle())
                     .setTitle(act.getString(R.string.ui_hotkey_pick_key, groupName))
                     .setItems(keys.map { it.first }.toTypedArray()) { _, ki -> onPicked(keys[ki]) }
                     .setNegativeButton(act.getString(R.string.ui_common_back), null)
