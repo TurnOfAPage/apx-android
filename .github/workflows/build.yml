@@ -619,6 +619,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           name: 全能外设 ${{ env.REL_VERSION }}
+          tag_name: ${{ env.REL_VERSION }}
           files: out/*
           generate_release_notes: true
           make_latest: true
